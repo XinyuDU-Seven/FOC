@@ -1,0 +1,953 @@
+
+/**
+
+ * @file foc_core.c
+
+ * @brief FOC 核心调度实现 — 主控制循环与状态机
+
+ */
+
+ 
+
+ #include "foc_core.h"
+
+ #include "foc_transform.h"
+
+ #include "foc_pid.h"
+
+ #include "foc_svpwm.h"
+
+ #include "foc_observer.h"
+
+ #include "foc_protection.h"
+
+ #include "foc_math.h"
+
+ #include "foc_hal_if.h"
+
+ #include "foc_config.h"
+
+ #include <stddef.h>
+
+ #include <string.h>
+
+ 
+
+ /* ===================================================================
+
+  *  模块内部状态
+
+  * =================================================================== */
+
+ 
+
+ /** FOC 运行上下文实例 */
+
+FOC_Context_t s_ctx;
+
+ 
+
+ /** 模块配置缓存 */
+
+FOC_Config_t  s_config;
+
+ 
+
+ /** 保护阈值实例 */
+
+FOC_Protection_Threshold_t s_prot_threshold;
+
+/* ===================================================================
+ *  FOC debug log buffer
+ * =================================================================== */
+
+#ifdef __ICCARM__
+#define FOC_DEBUG_ROOT __root
+#else
+#define FOC_DEBUG_ROOT
+#endif
+
+#define FOC_LOG_SIZE        512U
+#define FOC_LOG_DECIMATION  1U
+#define FOC_TEXT_LOG_SIZE   128U
+
+typedef struct {
+    uint32_t seq;
+    uint32_t t_us;
+
+    int16_t speed_ref_rpm;
+    int16_t speed_fdb_rpm;
+
+    int16_t ia_mA;
+    int16_t ib_mA;
+    int16_t ic_mA;
+    int16_t id_mA;
+    int16_t iq_mA;
+    int16_t id_ref_mA;
+    int16_t iq_ref_mA;
+
+    int16_t vd_mV;
+    int16_t vq_mV;
+    int16_t valpha_mV;
+    int16_t vbeta_mV;
+
+    uint16_t vbus_mV;
+    uint16_t duty_a;
+    uint16_t duty_b;
+    uint16_t duty_c;
+
+    uint16_t theta_hall_u16;
+    uint16_t theta_pred_u16;
+    uint16_t theta_ctrl_u16;
+
+    uint16_t current_peak_mA;
+
+    uint8_t hall_raw;
+    uint8_t hall_sector;
+    uint8_t direction;
+    uint8_t fault;
+} FOC_LogSample_t;
+
+FOC_DEBUG_ROOT volatile FOC_LogSample_t g_foc_log[FOC_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_foc_log_idx = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_log_fault_idx = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_log_stop = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_log_seq = 0U;
+
+FOC_DEBUG_ROOT volatile uint16_t g_log_idx = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_log_fault_idx = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_log_seq[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint32_t g_log_t_us[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_speed_ref_rpm[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_speed_fdb_rpm[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_ia_mA[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_ib_mA[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_ic_mA[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_id_mA[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_iq_mA[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_id_ref_mA[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_iq_ref_mA[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_vd_mV[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile int16_t  g_log_vq_mV[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_vbus_mV[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_duty_a[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_duty_b[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_duty_c[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_theta_hall[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_theta_pred[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_theta_ctrl[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_current_peak_mA[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_hall_raw[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_hall_sector[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint16_t g_log_fault[FOC_TEXT_LOG_SIZE];
+
+static uint16_t s_foc_log_decim = 0U;
+
+ 
+
+ /* ===================================================================
+
+  *  内部函数声明
+
+  * =================================================================== */
+
+ 
+
+ static void FOC_StateMachine(void);
+
+ static int16_t FOC_Log_ToI16(float v, float scale)
+ {
+     float x = v * scale;
+
+     if (x > 32767.0f) {
+         return 32767;
+     }
+     if (x < -32768.0f) {
+         return -32768;
+     }
+     return (int16_t)x;
+ }
+
+ static uint16_t FOC_Log_ToU16(float v, float scale)
+ {
+     float x = v * scale;
+
+     if (x > 65535.0f) {
+         return 65535U;
+     }
+     if (x < 0.0f) {
+         return 0U;
+     }
+     return (uint16_t)x;
+ }
+
+ static uint16_t FOC_Log_AngleU16(float angle)
+ {
+     while (angle >= FOC_2PI) {
+         angle -= FOC_2PI;
+     }
+     while (angle < 0.0f) {
+         angle += FOC_2PI;
+     }
+     return (uint16_t)(angle * (65535.0f / FOC_2PI));
+ }
+
+ static void FOC_Log_Reset(void)
+ {
+     g_foc_log_idx = 0U;
+     g_foc_log_fault_idx = 0U;
+     g_foc_log_stop = 0U;
+     g_foc_log_seq = 0U;
+     g_log_idx = 0U;
+     g_log_fault_idx = 0U;
+     s_foc_log_decim = 0U;
+ }
+
+ static void FOC_Log_Record(float theta_ctrl)
+ {
+     uint16_t idx;
+     uint16_t text_idx;
+     volatile FOC_LogSample_t *p;
+
+     if (g_foc_log_stop != 0U) {
+         return;
+     }
+
+     s_foc_log_decim++;
+     if (s_foc_log_decim < FOC_LOG_DECIMATION) {
+         return;
+     }
+     s_foc_log_decim = 0U;
+
+     idx = g_foc_log_idx;
+     p = &g_foc_log[idx];
+
+     p->seq = g_foc_log_seq++;
+     p->t_us = FOC_HAL_GetTimestampUs();
+
+     p->speed_ref_rpm = FOC_Log_ToI16(s_ctx.speed_ref, 1.0f);
+     p->speed_fdb_rpm = FOC_Log_ToI16(s_ctx.speed_fdb, 1.0f);
+
+     p->ia_mA = FOC_Log_ToI16(s_ctx.i_abc.ia, 1000.0f);
+     p->ib_mA = FOC_Log_ToI16(s_ctx.i_abc.ib, 1000.0f);
+     p->ic_mA = FOC_Log_ToI16(s_ctx.i_abc.ic, 1000.0f);
+     p->id_mA = FOC_Log_ToI16(s_ctx.i_dq.d, 1000.0f);
+     p->iq_mA = FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
+     p->id_ref_mA = FOC_Log_ToI16(s_ctx.id_ref, 1000.0f);
+     p->iq_ref_mA = FOC_Log_ToI16(s_ctx.iq_ref, 1000.0f);
+
+     p->vd_mV = FOC_Log_ToI16(s_ctx.v_dq.d, 1000.0f);
+     p->vq_mV = FOC_Log_ToI16(s_ctx.v_dq.q, 1000.0f);
+     p->valpha_mV = FOC_Log_ToI16(s_ctx.v_ab.alpha, 1000.0f);
+     p->vbeta_mV = FOC_Log_ToI16(s_ctx.v_ab.beta, 1000.0f);
+
+     p->vbus_mV = FOC_Log_ToU16(s_ctx.v_bus, 1000.0f);
+     p->duty_a = FOC_Log_ToU16(s_ctx.duty_a, 10000.0f);
+     p->duty_b = FOC_Log_ToU16(s_ctx.duty_b, 10000.0f);
+     p->duty_c = FOC_Log_ToU16(s_ctx.duty_c, 10000.0f);
+
+     p->theta_hall_u16 = FOC_Log_AngleU16(s_ctx.theta_e);
+     p->theta_pred_u16 = FOC_Log_AngleU16(s_ctx.theta_e_predicted);
+     p->theta_ctrl_u16 = FOC_Log_AngleU16(theta_ctrl);
+
+     p->current_peak_mA = FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
+
+     p->hall_raw = (uint8_t)((s_ctx.hall_raw.h1 << 2)
+                           | (s_ctx.hall_raw.h2 << 1)
+                           |  s_ctx.hall_raw.h3);
+     p->hall_sector = s_ctx.hall_sector.sector;
+     p->direction = (uint8_t)s_ctx.direction;
+     p->fault = (uint8_t)s_ctx.fault;
+
+     g_foc_log_fault_idx = idx;
+
+     text_idx = g_log_idx;
+     g_log_seq[text_idx] = p->seq;
+     g_log_t_us[text_idx] = p->t_us;
+     g_log_speed_ref_rpm[text_idx] = p->speed_ref_rpm;
+     g_log_speed_fdb_rpm[text_idx] = p->speed_fdb_rpm;
+     g_log_ia_mA[text_idx] = p->ia_mA;
+     g_log_ib_mA[text_idx] = p->ib_mA;
+     g_log_ic_mA[text_idx] = p->ic_mA;
+     g_log_id_mA[text_idx] = p->id_mA;
+     g_log_iq_mA[text_idx] = p->iq_mA;
+     g_log_id_ref_mA[text_idx] = p->id_ref_mA;
+     g_log_iq_ref_mA[text_idx] = p->iq_ref_mA;
+     g_log_vd_mV[text_idx] = p->vd_mV;
+     g_log_vq_mV[text_idx] = p->vq_mV;
+     g_log_vbus_mV[text_idx] = p->vbus_mV;
+     g_log_duty_a[text_idx] = p->duty_a;
+     g_log_duty_b[text_idx] = p->duty_b;
+     g_log_duty_c[text_idx] = p->duty_c;
+     g_log_theta_hall[text_idx] = p->theta_hall_u16;
+     g_log_theta_pred[text_idx] = p->theta_pred_u16;
+     g_log_theta_ctrl[text_idx] = p->theta_ctrl_u16;
+     g_log_current_peak_mA[text_idx] = p->current_peak_mA;
+     g_log_hall_raw[text_idx] = p->hall_raw;
+     g_log_hall_sector[text_idx] = p->hall_sector;
+     g_log_fault[text_idx] = p->fault;
+
+     g_log_fault_idx = text_idx;
+
+     text_idx++;
+     if (text_idx >= FOC_TEXT_LOG_SIZE) {
+         text_idx = 0U;
+     }
+     g_log_idx = text_idx;
+
+     idx++;
+     if (idx >= FOC_LOG_SIZE) {
+         idx = 0U;
+     }
+     g_foc_log_idx = idx;
+
+     if (s_ctx.fault != FOC_FAULT_NONE) {
+         g_foc_log_stop = 1U;
+     }
+ }
+
+ 
+
+ /* ===================================================================
+
+  *  初始化 / 反初始化
+
+  * =================================================================== */
+
+ 
+
+ int FOC_Core_Init(const FOC_Config_t *config)
+
+ {
+
+     if (config == NULL) {
+
+         return FOC_ERR;
+
+     }
+
+ 
+
+     /* 初始化驱动层 */
+
+     if (FOC_HAL_Init() != 0) {
+
+         return FOC_ERR;
+
+     }
+
+ 
+
+     /* 初始化 sin/cos 查找表 */
+
+     FOC_Math_InitTable();
+
+ 
+
+     /* 保存配置 */
+
+     memcpy(&s_config, config, sizeof(FOC_Config_t));
+
+ 
+
+     /* 从驱动层获取标定参数并缓存，避免 ISR 热路径中反复调用 HAL */
+
+     FOC_HAL_GetCurrentOffset(&s_config.current_calib);
+
+     s_config.current_calib.i_scale = FOC_HAL_GetCurrentScale();
+
+     s_config.current_calib.v_scale = FOC_HAL_GetVoltageScale();
+
+ 
+
+     /* 清零上下文 */
+
+     memset(&s_ctx, 0, sizeof(FOC_Context_t));
+
+ 
+
+     /* 初始化 PID 控制器 */
+
+     FOC_PID_Init(&s_ctx.pid_speed, &config->speed_pid);
+
+     FOC_PID_Init(&s_ctx.pid_id,    &config->current_d_pid);
+
+     FOC_PID_Init(&s_ctx.pid_iq,    &config->current_q_pid);
+
+ 
+
+     /* 初始化观测器 */
+
+     FOC_Observer_Init(&s_ctx);
+
+     FOC_Log_Reset();
+
+ 
+
+     /* 初始化保护模块 */
+
+     FOC_Protection_GetDefaultThreshold(&s_prot_threshold);
+
+     FOC_Protection_SetThreshold(&s_prot_threshold);
+
+ 
+
+     /* 默认 d 轴电流参考为 0（最大转矩电流比控制） */
+
+     s_ctx.id_ref = 0.0f;
+
+ 
+
+     /* 默认方向正转 */
+
+     s_ctx.direction = FOC_DIR_CW;
+
+ 
+
+     /* 进入待机态 */
+
+     s_ctx.state = FOC_STATE_IDLE;
+
+     s_ctx.fault = FOC_FAULT_NONE;
+
+ 
+
+     return FOC_OK;
+
+ }
+
+ 
+
+ int FOC_Core_DeInit(void)
+
+ {
+
+     /* 确保已停止 */
+
+     if (s_ctx.state == FOC_STATE_RUNNING) {
+
+         FOC_Core_Stop();
+
+     }
+
+ 
+
+     FOC_HAL_DisablePWM();
+
+     memset(&s_ctx, 0, sizeof(FOC_Context_t));
+
+     s_ctx.state = FOC_STATE_INIT;
+
+ 
+
+     return FOC_OK;
+
+ }
+
+ 
+
+ /* ===================================================================
+
+  *  启停控制
+
+  * =================================================================== */
+
+ 
+
+ int FOC_Core_Start(void)
+
+ {
+
+     if (s_ctx.state == FOC_STATE_FAULT) {
+
+         return FOC_FAULT;
+
+     }
+
+ 
+
+     if (s_ctx.state != FOC_STATE_IDLE) {
+
+         return FOC_BUSY;
+
+     }
+
+ 
+
+     /* 复位 PID，防止历史积分影响启动 */
+
+     FOC_PID_Reset(&s_ctx.pid_speed);
+
+     FOC_PID_Reset(&s_ctx.pid_id);
+
+     FOC_PID_Reset(&s_ctx.pid_iq);
+
+ 
+
+     /* 复位观测器 */
+
+     FOC_Observer_Init(&s_ctx);
+
+ 
+
+     /* 使能 PWM 输出 */
+
+     FOC_Log_Reset();
+
+     FOC_HAL_EnablePWM();
+
+ 
+
+     /* 进入运行态 */
+
+     s_ctx.state = FOC_STATE_RUNNING;
+
+ 
+
+     return FOC_OK;
+
+ }
+
+ 
+
+ int FOC_Core_Stop(void)
+
+ {
+
+     /* 禁用 PWM 输出 */
+
+     FOC_HAL_DisablePWM();
+
+ 
+
+     /* 占空比归零 */
+
+     s_ctx.duty_a = 0.0f;
+
+     s_ctx.duty_b = 0.0f;
+
+     s_ctx.duty_c = 0.0f;
+
+     FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
+
+ 
+
+     /* 复位 PID */
+
+     FOC_PID_Reset(&s_ctx.pid_speed);
+
+     FOC_PID_Reset(&s_ctx.pid_id);
+
+     FOC_PID_Reset(&s_ctx.pid_iq);
+
+ 
+
+     /* 速度参考归零 */
+
+     s_ctx.speed_ref = 0.0f;
+
+     s_ctx.iq_ref    = 0.0f;
+
+ 
+
+     /* 进入待机态 */
+
+     s_ctx.state = FOC_STATE_IDLE;
+
+ 
+
+     return FOC_OK;
+
+ }
+
+ 
+
+ /* ===================================================================
+
+  *  主控制循环
+
+  * =================================================================== */
+
+ 
+
+ void FOC_Core_MainLoop(void)
+
+ {
+
+     FOC_StateMachine();
+
+ 
+
+     if (s_ctx.state != FOC_STATE_RUNNING) {
+
+         return;
+
+     }
+
+ 
+
+     /* 预计算时间常量，避免热路径中的除法 */
+
+     float dt     = FOC_CONTROL_PERIOD_S;
+
+     float inv_dt = (float)FOC_CONTROL_FREQ_HZ;
+
+ 
+
+     /* ---- 1. 读取驱动层原始传感器数据 ---- */
+
+     FOC_HAL_GetHallRaw(&s_ctx.hall_raw);
+
+     FOC_HAL_GetPhaseCurrentsRaw(&s_ctx.i_abc_raw);
+
+     s_ctx.v_bus_raw  = FOC_HAL_GetBusVoltageRaw();
+
+ 
+
+     /* ---- 2. 原始数据解析（观测器负责物理量换算） ---- */
+
+     FOC_Observer_HallRawToSector(&s_ctx.hall_raw, &s_ctx.hall_sector);
+
+ 
+
+     /* 有效扇区：更新电角度基准；无效扇区：保留上一次角度 */
+
+     if (s_ctx.hall_sector.sector != 0U) {
+
+         s_ctx.theta_e = s_ctx.hall_sector.theta_e;
+
+         s_ctx.theta_m = s_ctx.theta_e / (float)s_config.motor.pole_pairs;
+
+     }
+
+ 
+
+     /* 角度预测：必须在 CalcSpeed 之前调用！
+
+      * CalcSpeed 会更新 hall_sector_prev，若先调 CalcSpeed 则
+
+      * PredictAngle 检测不到扇区跳变，无法同步角度 */
+
+     float theta_e_ctrl = FOC_Observer_PredictAngle(&s_ctx, dt,
+
+                                                     s_config.motor.pole_pairs);
+
+ 
+
+     s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
+
+                                               dt, s_config.motor.pole_pairs);
+
+ 
+
+     FOC_Observer_ParsePhaseCurrents(&s_ctx.i_abc_raw, &s_config.current_calib, &s_ctx.i_abc);
+
+     s_ctx.v_bus = FOC_Observer_ParseBusVoltage(s_ctx.v_bus_raw, &s_config.current_calib);
+
+ 
+
+     /* 方向处理：反转时取反角度 */
+
+     if (s_ctx.direction == FOC_DIR_CCW) {
+
+         theta_e_ctrl = FOC_2PI - theta_e_ctrl;
+
+     }
+
+ 
+
+     /* ---- 3. Clarke 变换 ---- */
+
+     FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
+
+ 
+
+     /* ---- 4. Park 变换 ---- */
+
+     FOC_Park(&s_ctx.i_ab, theta_e_ctrl, &s_ctx.i_dq);
+
+ 
+
+     /* ---- 5. 速度环 PID (降采样) ---- */
+
+     s_ctx.speed_loop_counter++;
+
+     if (s_ctx.speed_loop_counter >= FOC_SPEED_LOOP_DOWNSAMPLE) {
+
+         s_ctx.speed_loop_counter = 0U;
+
+         float speed_dt     = dt * (float)FOC_SPEED_LOOP_DOWNSAMPLE;
+
+         float speed_inv_dt = inv_dt / (float)FOC_SPEED_LOOP_DOWNSAMPLE;
+
+         s_ctx.iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
+
+                                        s_ctx.speed_ref - s_ctx.speed_fdb,
+
+                                        speed_dt, speed_inv_dt);
+
+     }
+
+ 
+
+     /* ---- 6. 电流环 PID ---- */
+
+     s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
+
+                                     s_ctx.id_ref - s_ctx.i_dq.d,
+
+                                     dt, inv_dt);
+
+     s_ctx.v_dq.q = FOC_PID_Update(&s_ctx.pid_iq,
+
+                                     s_ctx.iq_ref - s_ctx.i_dq.q,
+
+                                     dt, inv_dt);
+
+ 
+
+     /* ---- 7. 逆 Park 变换 ---- */
+
+     FOC_InvPark(&s_ctx.v_dq, theta_e_ctrl, &s_ctx.v_ab);
+
+ 
+
+     /* ---- 8. SVPWM 调制 ---- */
+
+     FOC_SVPWM_Calculate(s_ctx.v_ab.alpha, s_ctx.v_ab.beta, s_ctx.v_bus,
+
+                          &s_ctx.duty_a, &s_ctx.duty_b, &s_ctx.duty_c);
+
+ 
+
+     /* ---- 9. 输出 PWM 占空比 ---- */
+
+     FOC_HAL_SetDutyCycle(s_ctx.duty_a, s_ctx.duty_b, s_ctx.duty_c);
+
+ 
+
+     /* ---- 10. 保护检测 ---- */
+
+     FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
+
+     FOC_Log_Record(theta_e_ctrl);
+
+ }
+
+ 
+
+ /* ===================================================================
+
+  *  状态机
+
+  * =================================================================== */
+
+ 
+
+ static void FOC_StateMachine(void)
+
+ {
+
+     switch (s_ctx.state) {
+
+         case FOC_STATE_INIT:
+
+             /* 初始化完成后应已转入 IDLE，不应停留于此 */
+
+             break;
+
+ 
+
+         case FOC_STATE_IDLE:
+
+             /* 待机态，等待 FOC_Core_Start() 启动 */
+
+             break;
+
+ 
+
+         case FOC_STATE_RUNNING:
+
+             /* 检测到故障 → 转入 FAULT 态 */
+
+             if (s_ctx.fault != FOC_FAULT_NONE) {
+
+                 FOC_HAL_DisablePWM();
+
+                 FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
+
+                 s_ctx.state = FOC_STATE_FAULT;
+
+             }
+
+             break;
+
+ 
+
+         case FOC_STATE_FAULT:
+
+             /* 故障态，PWM 已关闭，等待 FOC_Core_ClearFault() */
+
+             break;
+
+ 
+
+         default:
+
+             s_ctx.state = FOC_STATE_IDLE;
+
+             break;
+
+     }
+
+ }
+
+ 
+
+ /* ===================================================================
+
+  *  运行时参数设置（主线程调用，需临界区保护共享变量）
+
+  * =================================================================== */
+
+ 
+
+ const FOC_Context_t *FOC_Core_GetContext(void)
+
+ {
+
+     return &s_ctx;
+
+ }
+
+ 
+
+ int FOC_Core_SetSpeedRef(float rpm)
+
+ {
+
+     /* 限幅到电机最大转速 */
+
+     if (rpm > s_config.motor.max_speed_rpm) {
+
+         rpm = s_config.motor.max_speed_rpm;
+
+     } else if (rpm < -s_config.motor.max_speed_rpm) {
+
+         rpm = -s_config.motor.max_speed_rpm;
+
+     }
+
+ 
+
+     /* 临界区保护：speed_ref 被 ISR 中的主循环读取 */
+
+     FOC_HAL_EnterCritical();
+
+     s_ctx.speed_ref = rpm;
+
+ 
+
+     /* 根据转速正负自动判断方向 */
+
+     if (rpm >= 0.0f) {
+
+         s_ctx.direction = FOC_DIR_CW;
+
+     } else {
+
+         s_ctx.direction = FOC_DIR_CCW;
+
+         s_ctx.speed_ref = -rpm; /* 速度绝对值用于PID，方向由电角度处理 */
+
+     }
+
+     FOC_HAL_ExitCritical();
+
+ 
+
+     return FOC_OK;
+
+ }
+
+ 
+
+ int FOC_Core_SetDirection(FOC_Dir_e dir)
+
+ {
+
+     FOC_HAL_EnterCritical();
+
+     s_ctx.direction = dir;
+
+     FOC_HAL_ExitCritical();
+
+     return FOC_OK;
+
+ }
+
+ 
+
+ int FOC_Core_SetSpeedPID(const FOC_PID_Params_t *pid)
+
+ {
+
+     if (pid == NULL) return FOC_ERR;
+
+     FOC_HAL_EnterCritical();
+
+     FOC_PID_SetParams(&s_ctx.pid_speed, pid);
+
+     FOC_HAL_ExitCritical();
+
+     return FOC_OK;
+
+ }
+
+ 
+
+ int FOC_Core_SetCurrentPID(const FOC_PID_Params_t *pid_d, const FOC_PID_Params_t *pid_q)
+
+ {
+
+     if (pid_d == NULL || pid_q == NULL) return FOC_ERR;
+
+     FOC_HAL_EnterCritical();
+
+     FOC_PID_SetParams(&s_ctx.pid_id, pid_d);
+
+     FOC_PID_SetParams(&s_ctx.pid_iq, pid_q);
+
+     FOC_HAL_ExitCritical();
+
+     return FOC_OK;
+
+ }
+
+ 
+
+ int FOC_Core_ClearFault(void)
+
+ {
+
+     if (s_ctx.state != FOC_STATE_FAULT) {
+
+         return FOC_OK;
+
+     }
+
+ 
+
+     FOC_Protection_ClearFault(&s_ctx);
+
+     s_ctx.state = FOC_STATE_IDLE;
+
+ 
+
+     return FOC_OK;
+
+ }
+
+ 
+
+

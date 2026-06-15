@@ -1,0 +1,289 @@
+
+/**
+
+ * @file foc_config.h
+
+ * @brief FOC 电机控制模块 — 编译期配置参数
+
+ *
+
+ * 本文件定义 FOC 模块的编译期默认值与可配宏。
+
+ * 运行时参数通过 FOC_Config_t 传入，此处仅提供默认值与硬件约束宏。
+
+ */
+
+ 
+
+#ifndef FOC_CONFIG_H
+
+#define FOC_CONFIG_H
+
+ 
+
+#ifdef __cplusplus
+
+extern "C" {
+
+#endif
+
+/* ===================================================================
+
+ *  数学常量
+
+ * =================================================================== */
+
+ 
+
+#ifndef FOC_PI
+
+#define FOC_PI              3.14159265358979323846f
+
+#endif
+
+ 
+
+#ifndef FOC_2PI
+
+#define FOC_2PI             6.28318530717958647692f
+
+#endif
+
+ 
+
+#ifndef FOC_SQRT3
+
+#define FOC_SQRT3           1.73205080756887729352f
+
+#endif
+
+ 
+
+#ifndef FOC_SQRT3_DIV2
+
+#define FOC_SQRT3_DIV2      0.86602540378443864676f
+
+#endif
+
+ 
+
+#ifndef FOC_1_DIV_SQRT3
+
+#define FOC_1_DIV_SQRT3     0.57735026918962576451f
+
+#endif
+
+ 
+
+#ifndef FOC_2_DIV_SQRT3
+
+#define FOC_2_DIV_SQRT3     1.15470053837925152902f
+
+#endif
+
+ 
+
+/* ===================================================================
+
+ *  控制环路默认参数
+
+ * =================================================================== */
+
+ 
+
+/** 默认控制环路频率 (Hz)，典型值 10kHz */
+
+#ifndef FOC_CONTROL_FREQ_HZ
+
+#define FOC_CONTROL_FREQ_HZ     10000U
+
+#endif
+
+ 
+
+/** 默认控制周期 (s) */
+
+#define FOC_CONTROL_PERIOD_S     (1.0f / (float)FOC_CONTROL_FREQ_HZ)
+
+ 
+
+/* ===================================================================
+
+ *  保护阈值默认值
+
+ * =================================================================== */
+
+ 
+
+/** 过流保护阈值 (A)，超过此值触发 FOC_FAULT_OVERCURRENT */
+
+#ifndef FOC_OVERCURRENT_THRESHOLD_A
+
+#define FOC_OVERCURRENT_THRESHOLD_A     10.0f
+
+#endif
+
+ 
+
+/** 过压保护阈值 (V)，母线电压超过此值触发 FOC_FAULT_OVERVOLTAGE */
+
+#ifndef FOC_OVERVOLTAGE_THRESHOLD_V
+
+#define FOC_OVERVOLTAGE_THRESHOLD_V     15.0f
+
+#endif
+
+ 
+
+/** 欠压保护阈值 (V)，母线电压低于此值触发 FOC_FAULT_UNDERVOLTAGE */
+
+#ifndef FOC_UNDERVOLTAGE_THRESHOLD_V
+
+#define FOC_UNDERVOLTAGE_THRESHOLD_V    9.0f
+
+#endif
+
+ 
+
+/** 堵转判定：连续N个控制周期速度误差超过阈值则判定堵转 */
+
+#ifndef FOC_STALL_COUNT_THRESHOLD
+
+#define FOC_STALL_COUNT_THRESHOLD       2000U
+
+#endif
+
+ 
+
+/** 堵转判定速度误差阈值 (rpm) */
+
+#ifndef FOC_STALL_SPEED_ERROR_RPM
+
+#define FOC_STALL_SPEED_ERROR_RPM       200.0f
+
+#endif
+
+ 
+
+/** 霍尔传感器异常检测：无效扇区持续计数阈值 */
+
+#ifndef FOC_HALL_INVALID_COUNT_THRESHOLD
+
+#define FOC_HALL_INVALID_COUNT_THRESHOLD   1000U
+
+#endif
+
+ 
+
+/** 连续无扇区跳变的控制周期数阈值，超过后认为电机已停止 */
+
+#ifndef FOC_SECTOR_NO_CHANGE_THRESHOLD
+
+#define FOC_SECTOR_NO_CHANGE_THRESHOLD  500U
+
+#endif
+
+ 
+
+/** 速度环降采样比：电流环每执行 N 次，速度环执行 1 次 */
+
+#ifndef FOC_SPEED_LOOP_DOWNSAMPLE
+
+#define FOC_SPEED_LOOP_DOWNSAMPLE       10U
+
+#endif
+
+ 
+
+/** 角度预测软同步系数 (0~1)：扇区跳变时预测角度向扇区中心角度靠拢的比例，
+
+ * 1.0=硬同步（立即跳到扇区中心），0.0=不同步。0.2~0.4可避免角度突变 */
+
+#ifndef FOC_ANGLE_SYNC_FACTOR
+
+#define FOC_ANGLE_SYNC_FACTOR           0.3f
+
+#endif
+
+/* Hall electrical angle calibration.
+ * The Hall lookup table stores sector center angles. For synchronization,
+ * use the sector entry edge by default: center - 30 electrical degrees.
+ * Tune this macro after calibration if the measured Id still has a DC bias.
+ */
+#ifndef FOC_HALL_ANGLE_OFFSET_RAD
+#define FOC_HALL_ANGLE_OFFSET_RAD       (-(FOC_PI / 6.0f))
+#endif
+
+ 
+
+/* ===================================================================
+
+ *  算法配置
+
+ * =================================================================== */
+
+ 
+
+/** 速度观测低通滤波系数 (0~1)，值越大跟踪越快但噪声越大 */
+
+#ifndef FOC_SPEED_FILTER_ALPHA
+
+#define FOC_SPEED_FILTER_ALPHA          0.05f
+
+#endif
+
+ 
+
+/** SVPWM 调制系数上限（留余量，避免过调制） */
+
+#ifndef FOC_SVPWM_MODULATION_MAX
+
+#define FOC_SVPWM_MODULATION_MAX        0.95f
+
+#endif
+
+ 
+
+/** PID 积分抗饱和：输出限幅时停止积分累积 */
+
+#ifndef FOC_PID_ANTI_WINDUP
+
+#define FOC_PID_ANTI_WINDUP             1
+
+#endif
+
+ 
+
+/* ===================================================================
+
+ *  返回值定义
+
+ * =================================================================== */
+
+ 
+
+#define FOC_OK      0   /**< 操作成功 */
+
+#define FOC_ERR    (-1)  /**< 通用错误 */
+
+#define FOC_BUSY   (-2)  /**< 模块忙（状态不允许该操作） */
+
+#define FOC_FAULT  (-3)  /**< 模块处于故障态 */
+
+ 
+
+#ifdef __cplusplus
+
+}
+
+#endif
+
+ 
+
+#endif /* FOC_CONFIG_H */
+
+ 
+
+ 
+
+

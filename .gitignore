@@ -1,0 +1,29 @@
+# IAR / embedded build outputs
+Debug/
+Release/
+Exe/
+Obj/
+List/
+settings/
+
+*.o
+*.obj
+*.dep
+*.pbi
+*.pbd
+*.lst
+*.map
+*.out
+*.elf
+*.hex
+*.bin
+*.sim
+
+# IDE / OS noise
+.vscode/
+.idea/
+*.user
+*.tmp
+*.bak
+Thumbs.db
+Desktop.ini
