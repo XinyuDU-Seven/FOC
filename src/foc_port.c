@@ -179,13 +179,19 @@ void FOC_HAL_GetHallRaw(FOC_HallRaw_t *hall)
 
     //目前仅支持单个电机
 
-    /* 读取霍尔传感器A/B/C状态 */
+    /* Read GPIO directly in the control loop; do not depend on Hall IRQ cache. */
 
-    hall->h1 = gstHallState[0].unHA;
+    hall->h1 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_U_0);
 
-    hall->h2 = gstHallState[0].unHB;
+    hall->h2 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_V_0);
 
-    hall->h3 = gstHallState[0].unHC;
+    hall->h3 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_W_0);
+
+    gstHallState[0].unHA = hall->h1;
+
+    gstHallState[0].unHB = hall->h2;
+
+    gstHallState[0].unHC = hall->h3;
 
 }
 
