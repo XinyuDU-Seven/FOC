@@ -141,8 +141,30 @@ FOC_DEBUG_ROOT volatile uint16_t g_log_hall_raw[FOC_TEXT_LOG_SIZE];
 FOC_DEBUG_ROOT volatile uint16_t g_log_hall_sector[FOC_TEXT_LOG_SIZE];
 FOC_DEBUG_ROOT volatile uint16_t g_log_fault[FOC_TEXT_LOG_SIZE];
 
+/* Prof segment id: 1 state, 2 hall, 3 adc, 4 calc/protect, 5 pwm, 6 log. */
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_enter_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_after_state_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_after_hall_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_after_adc_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_after_calc_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_after_pwm_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_exit_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_period_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_loop_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_max_period_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_max_loop_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_loop_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_max_period_loop = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_max_loop_loop = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_max_seg_loop = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_last_seg_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_max_seg_us = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_prof_last_seg_id = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_prof_max_seg_id = 0U;
+
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
+static uint32_t s_foc_prof_last_enter_us = 0U;
 
  
 
@@ -155,6 +177,10 @@ static uint16_t s_hall_illegal_transition_count = 0U;
  
 
  static void FOC_StateMachine(void);
+ static uint32_t FOC_Prof_Enter(void);
+ static void FOC_Prof_RecordSegment(uint32_t start_us, uint32_t end_us, uint8_t seg_id);
+ static void FOC_Prof_Exit(uint32_t enter_us, uint32_t exit_us);
+ static void FOC_Prof_Reset(void);
  static void FOC_EnterFaultState(void);
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
  static uint16_t FOC_HallMinSectorCycles(void);
@@ -197,6 +223,79 @@ static uint16_t s_hall_illegal_transition_count = 0U;
      return (uint16_t)(angle * (65535.0f / FOC_2PI));
  }
 
+ static void FOC_Prof_Reset(void)
+ {
+     g_foc_prof_enter_us = 0U;
+     g_foc_prof_after_state_us = 0U;
+     g_foc_prof_after_hall_us = 0U;
+     g_foc_prof_after_adc_us = 0U;
+     g_foc_prof_after_calc_us = 0U;
+     g_foc_prof_after_pwm_us = 0U;
+     g_foc_prof_exit_us = 0U;
+     g_foc_prof_period_us = 0U;
+     g_foc_prof_loop_us = 0U;
+     g_foc_prof_max_period_us = 0U;
+     g_foc_prof_max_loop_us = 0U;
+     g_foc_prof_loop_count = 0U;
+     g_foc_prof_max_period_loop = 0U;
+     g_foc_prof_max_loop_loop = 0U;
+     g_foc_prof_max_seg_loop = 0U;
+     g_foc_prof_last_seg_us = 0U;
+     g_foc_prof_max_seg_us = 0U;
+     g_foc_prof_last_seg_id = 0U;
+     g_foc_prof_max_seg_id = 0U;
+     s_foc_prof_last_enter_us = 0U;
+ }
+
+ static uint32_t FOC_Prof_Enter(void)
+ {
+     uint32_t now = FOC_HAL_GetTimestampUs();
+     uint32_t period = 0U;
+
+     g_foc_prof_loop_count++;
+
+     if (s_foc_prof_last_enter_us != 0U) {
+         period = now - s_foc_prof_last_enter_us;
+         if (period > g_foc_prof_max_period_us) {
+             g_foc_prof_max_period_us = period;
+             g_foc_prof_max_period_loop = g_foc_prof_loop_count;
+         }
+     }
+
+     s_foc_prof_last_enter_us = now;
+     g_foc_prof_enter_us = now;
+     g_foc_prof_period_us = period;
+
+     return now;
+ }
+
+ static void FOC_Prof_RecordSegment(uint32_t start_us, uint32_t end_us, uint8_t seg_id)
+ {
+     uint32_t seg_us = end_us - start_us;
+
+     g_foc_prof_last_seg_us = seg_us;
+     g_foc_prof_last_seg_id = seg_id;
+
+     if (seg_us > g_foc_prof_max_seg_us) {
+         g_foc_prof_max_seg_us = seg_us;
+         g_foc_prof_max_seg_id = seg_id;
+         g_foc_prof_max_seg_loop = g_foc_prof_loop_count;
+     }
+ }
+
+ static void FOC_Prof_Exit(uint32_t enter_us, uint32_t exit_us)
+ {
+     uint32_t loop_us = exit_us - enter_us;
+
+     g_foc_prof_exit_us = exit_us;
+     g_foc_prof_loop_us = loop_us;
+
+     if (loop_us > g_foc_prof_max_loop_us) {
+         g_foc_prof_max_loop_us = loop_us;
+         g_foc_prof_max_loop_loop = g_foc_prof_loop_count;
+     }
+ }
+
  static void FOC_Log_Reset(void)
  {
      g_foc_log_idx = 0U;
@@ -207,6 +306,7 @@ static uint16_t s_hall_illegal_transition_count = 0U;
      g_log_fault_idx = 0U;
      s_foc_log_decim = 0U;
      s_hall_illegal_transition_count = 0U;
+     FOC_Prof_Reset();
  }
 
  static void FOC_Log_Record(float theta_ctrl)
@@ -664,13 +764,21 @@ static uint16_t s_hall_illegal_transition_count = 0U;
  void FOC_Core_MainLoop(void)
 
  {
+     uint32_t prof_enter_us;
+     uint32_t prof_mark_us;
+     uint32_t prof_next_us;
 
+     prof_enter_us = FOC_Prof_Enter();
      FOC_StateMachine();
+     prof_mark_us = FOC_HAL_GetTimestampUs();
+     g_foc_prof_after_state_us = prof_mark_us;
+     FOC_Prof_RecordSegment(prof_enter_us, prof_mark_us, 1U);
 
  
 
      if (s_ctx.state != FOC_STATE_RUNNING) {
 
+         FOC_Prof_Exit(prof_enter_us, prof_mark_us);
          return;
 
      }
@@ -688,10 +796,18 @@ static uint16_t s_hall_illegal_transition_count = 0U;
      /* ---- 1. 读取驱动层原始传感器数据 ---- */
 
      FOC_HAL_GetHallRaw(&s_ctx.hall_raw);
+     prof_next_us = FOC_HAL_GetTimestampUs();
+     g_foc_prof_after_hall_us = prof_next_us;
+     FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 2U);
+     prof_mark_us = prof_next_us;
 
      FOC_HAL_GetPhaseCurrentsRaw(&s_ctx.i_abc_raw);
 
      s_ctx.v_bus_raw  = FOC_HAL_GetBusVoltageRaw();
+     prof_next_us = FOC_HAL_GetTimestampUs();
+     g_foc_prof_after_adc_us = prof_next_us;
+     FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 3U);
+     prof_mark_us = prof_next_us;
 
  
 
@@ -705,6 +821,9 @@ static uint16_t s_hall_illegal_transition_count = 0U;
      if (s_ctx.fault != FOC_FAULT_NONE) {
          FOC_EnterFaultState();
          FOC_Log_Record(s_ctx.theta_e_predicted);
+         prof_next_us = FOC_HAL_GetTimestampUs();
+         FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 4U);
+         FOC_Prof_Exit(prof_enter_us, prof_next_us);
          return;
      }
 
@@ -772,6 +891,9 @@ static uint16_t s_hall_illegal_transition_count = 0U;
      if (s_ctx.fault != FOC_FAULT_NONE) {
          FOC_EnterFaultState();
          FOC_Log_Record(theta_e_ctrl);
+         prof_next_us = FOC_HAL_GetTimestampUs();
+         FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 4U);
+         FOC_Prof_Exit(prof_enter_us, prof_next_us);
          return;
      }
 
@@ -826,16 +948,27 @@ static uint16_t s_hall_illegal_transition_count = 0U;
      FOC_SVPWM_Calculate(s_ctx.v_ab.alpha, s_ctx.v_ab.beta, s_ctx.v_bus,
 
                           &s_ctx.duty_a, &s_ctx.duty_b, &s_ctx.duty_c);
+     prof_next_us = FOC_HAL_GetTimestampUs();
+     g_foc_prof_after_calc_us = prof_next_us;
+     FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 4U);
+     prof_mark_us = prof_next_us;
 
  
 
      /* ---- 10. 输出 PWM 占空比 ---- */
 
      FOC_HAL_SetDutyCycle(s_ctx.duty_a, s_ctx.duty_b, s_ctx.duty_c);
+     prof_next_us = FOC_HAL_GetTimestampUs();
+     g_foc_prof_after_pwm_us = prof_next_us;
+     FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 5U);
+     prof_mark_us = prof_next_us;
 
  
 
      FOC_Log_Record(theta_e_ctrl);
+     prof_next_us = FOC_HAL_GetTimestampUs();
+     FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 6U);
+     FOC_Prof_Exit(prof_enter_us, prof_next_us);
 
  }
 
