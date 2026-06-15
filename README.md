@@ -17,6 +17,7 @@ Key files:
 inc/foc_config.h      Compile-time defaults and protection thresholds
 inc/foc_types.h       Common FOC data structures
 inc/foc_hal_if.h      Hardware abstraction interface required by FOC
+inc/foc_api.h         Unified public API for application code
 inc/foc_core.h        Main FOC control API
 
 src/foc_core.c        Main state machine and control loop
@@ -189,4 +190,3 @@ git add .
 git commit -m "Describe the change"
 git push
 ```
-
