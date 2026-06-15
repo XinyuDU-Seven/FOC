@@ -73,6 +73,17 @@ typedef struct {
 
 HallState_t gstHallState[2] = {0};
 
+static uint16_t s_foc_adc_raw[4] = {0};
+static uint8_t s_foc_adc_cache_valid = 0U;
+
+static void FOC_HAL_UpdateAdcCache(void)
+{
+    int unId = 0;
+
+    Adc_GetBldcFocCurrentVoltage(unId, s_foc_adc_raw);
+    s_foc_adc_cache_valid = 1U;
+}
+
  
 
 //霍尔回调处理函数
@@ -209,21 +220,17 @@ void FOC_HAL_GetPhaseCurrentsRaw(FOC_PhaseCurrentRaw_t *raw)
 
 {
 
-    uint16_t pBuffer[4] = {0};
+    FOC_HAL_UpdateAdcCache();
 
  
 
     /* 获取ADC值 */
 
-    int unId = 0;
+    raw->ia_raw = s_foc_adc_raw[1];
 
-    Adc_GetBldcFocCurrentVoltage(unId, pBuffer);
+    raw->ib_raw = s_foc_adc_raw[2];
 
-    raw->ia_raw = pBuffer[1];
-
-    raw->ib_raw = pBuffer[2];
-
-    raw->ic_raw = pBuffer[3];
+    raw->ic_raw = s_foc_adc_raw[3];
 
 }
 
@@ -355,17 +362,18 @@ uint32_t FOC_HAL_GetBusVoltageRaw(void)
 
 {
 
-    uint16_t pBuffer[4] = {0};
+    uint32_t unUdc;
 
  
 
     /* 获取ADC值 */
 
-    int unId = 0;
+    if (s_foc_adc_cache_valid == 0U) {
+        FOC_HAL_UpdateAdcCache();
+    }
 
-    Adc_GetBldcFocCurrentVoltage(unId, pBuffer);
-
-    uint32_t unUdc= pBuffer[0];
+    unUdc = s_foc_adc_raw[0];
+    s_foc_adc_cache_valid = 0U;
 
     return unUdc;
 
