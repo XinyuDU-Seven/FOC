@@ -221,6 +221,13 @@ extern "C" {
 #define FOC_HALL_MIN_SECTOR_TIME_RATIO  0.65f
 #endif
 
+/* Consecutive illegal Hall transitions required before entering fault state.
+ * Single-sample non-adjacent jumps are treated as glitches and ignored.
+ */
+#ifndef FOC_HALL_ILLEGAL_TRANSITION_FAULT_COUNT
+#define FOC_HALL_ILLEGAL_TRANSITION_FAULT_COUNT  5U
+#endif
+
  
 
 /* ===================================================================

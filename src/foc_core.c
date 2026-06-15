@@ -142,6 +142,7 @@ FOC_DEBUG_ROOT volatile uint16_t g_log_hall_sector[FOC_TEXT_LOG_SIZE];
 FOC_DEBUG_ROOT volatile uint16_t g_log_fault[FOC_TEXT_LOG_SIZE];
 
 static uint16_t s_foc_log_decim = 0U;
+static uint16_t s_hall_illegal_transition_count = 0U;
 
  
 
@@ -205,6 +206,7 @@ static uint16_t s_foc_log_decim = 0U;
      g_log_idx = 0U;
      g_log_fault_idx = 0U;
      s_foc_log_decim = 0U;
+     s_hall_illegal_transition_count = 0U;
  }
 
  static void FOC_Log_Record(float theta_ctrl)
@@ -372,11 +374,17 @@ static uint16_t s_foc_log_decim = 0U;
 
      if ((prev_sector == 0U) || (cur_sector == prev_sector)) {
          s_ctx.hall_sector = *candidate;
+         s_hall_illegal_transition_count = 0U;
          return 1U;
      }
 
      if (FOC_HallSectorsAreAdjacent(prev_sector, cur_sector) == 0U) {
-         s_ctx.fault |= FOC_FAULT_HALL;
+         if (s_hall_illegal_transition_count < 65535U) {
+             s_hall_illegal_transition_count++;
+         }
+         if (s_hall_illegal_transition_count >= FOC_HALL_ILLEGAL_TRANSITION_FAULT_COUNT) {
+             s_ctx.fault |= FOC_FAULT_HALL;
+         }
          return 0U;
      }
 
@@ -385,6 +393,7 @@ static uint16_t s_foc_log_decim = 0U;
      }
 
      s_ctx.hall_sector = *candidate;
+     s_hall_illegal_transition_count = 0U;
      return 1U;
  }
 
@@ -1031,6 +1040,7 @@ static uint16_t s_foc_log_decim = 0U;
  
 
      FOC_Protection_ClearFault(&s_ctx);
+     s_hall_illegal_transition_count = 0U;
 
      s_ctx.state = FOC_STATE_IDLE;
 
