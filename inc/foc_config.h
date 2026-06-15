@@ -214,6 +214,13 @@ extern "C" {
 #define FOC_HALL_ANGLE_OFFSET_RAD       (-(FOC_PI / 6.0f))
 #endif
 
+/* Reject Hall sector changes faster than this fraction of the theoretical
+ * sector time at FOC_SPEED_ESTIMATE_MAX_RPM.
+ */
+#ifndef FOC_HALL_MIN_SECTOR_TIME_RATIO
+#define FOC_HALL_MIN_SECTOR_TIME_RATIO  0.65f
+#endif
+
  
 
 /* ===================================================================

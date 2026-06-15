@@ -154,6 +154,10 @@ static uint16_t s_foc_log_decim = 0U;
  
 
  static void FOC_StateMachine(void);
+ static void FOC_EnterFaultState(void);
+ static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
+ static uint16_t FOC_HallMinSectorCycles(void);
+ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate);
 
  static int16_t FOC_Log_ToI16(float v, float scale)
  {
@@ -304,6 +308,84 @@ static uint16_t s_foc_log_decim = 0U;
      if (s_ctx.fault != FOC_FAULT_NONE) {
          g_foc_log_stop = 1U;
      }
+ }
+
+ static void FOC_EnterFaultState(void)
+ {
+     FOC_HAL_DisablePWM();
+     FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
+
+     s_ctx.duty_a = 0.0f;
+     s_ctx.duty_b = 0.0f;
+     s_ctx.duty_c = 0.0f;
+     s_ctx.state = FOC_STATE_FAULT;
+ }
+
+ static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to)
+ {
+     uint8_t next;
+     uint8_t prev;
+
+     if ((from < 1U) || (from > 6U) || (to < 1U) || (to > 6U)) {
+         return 0U;
+     }
+
+     next = (from == 6U) ? 1U : (uint8_t)(from + 1U);
+     prev = (from == 1U) ? 6U : (uint8_t)(from - 1U);
+
+     return (uint8_t)((to == next) || (to == prev));
+ }
+
+ static uint16_t FOC_HallMinSectorCycles(void)
+ {
+     float max_rpm = FOC_SPEED_ESTIMATE_MAX_RPM;
+     float pole_pairs = (s_config.motor.pole_pairs > 0U)
+                      ? (float)s_config.motor.pole_pairs
+                      : 1.0f;
+     float cycles;
+
+     if (max_rpm < 1.0f) {
+         return 1U;
+     }
+
+     cycles = ((float)FOC_CONTROL_FREQ_HZ * 10.0f) / (max_rpm * pole_pairs);
+     cycles *= FOC_HALL_MIN_SECTOR_TIME_RATIO;
+
+     if (cycles < 1.0f) {
+         return 1U;
+     }
+     if (cycles > 65535.0f) {
+         return 65535U;
+     }
+
+     return (uint16_t)cycles;
+ }
+
+ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate)
+ {
+     uint8_t cur_sector = candidate->sector;
+     uint8_t prev_sector = s_ctx.hall_sector_prev;
+
+     if (cur_sector == 0U) {
+         return 0U;
+     }
+
+     if ((prev_sector == 0U) || (cur_sector == prev_sector)) {
+         s_ctx.hall_sector = *candidate;
+         return 1U;
+     }
+
+     if (FOC_HallSectorsAreAdjacent(prev_sector, cur_sector) == 0U) {
+         s_ctx.fault |= FOC_FAULT_HALL;
+         return 0U;
+     }
+
+     if (s_ctx.sector_no_change_count < FOC_HallMinSectorCycles()) {
+         return 0U;
+     }
+
+     s_ctx.hall_sector = *candidate;
+     return 1U;
  }
 
  
@@ -606,7 +688,16 @@ static uint16_t s_foc_log_decim = 0U;
 
      /* ---- 2. 原始数据解析（观测器负责物理量换算） ---- */
 
-     FOC_Observer_HallRawToSector(&s_ctx.hall_raw, &s_ctx.hall_sector);
+     FOC_HallSector_t hall_candidate;
+
+     FOC_Observer_HallRawToSector(&s_ctx.hall_raw, &hall_candidate);
+     FOC_ApplyHallSector(&hall_candidate);
+
+     if (s_ctx.fault != FOC_FAULT_NONE) {
+         FOC_EnterFaultState();
+         FOC_Log_Record(s_ctx.theta_e_predicted);
+         return;
+     }
 
  
 
@@ -666,9 +757,18 @@ static uint16_t s_foc_log_decim = 0U;
 
      FOC_Park(&s_ctx.i_ab, theta_e_ctrl, &s_ctx.i_dq);
 
+     /* ---- 5. 保护检测：必须早于 PID / SVPWM / PWM 输出 ---- */
+
+     FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
+     if (s_ctx.fault != FOC_FAULT_NONE) {
+         FOC_EnterFaultState();
+         FOC_Log_Record(theta_e_ctrl);
+         return;
+     }
+
  
 
-     /* ---- 5. 速度环 PID (降采样) ---- */
+     /* ---- 6. 速度环 PID (降采样) ---- */
 
      s_ctx.speed_loop_counter++;
 
@@ -690,7 +790,7 @@ static uint16_t s_foc_log_decim = 0U;
 
  
 
-     /* ---- 6. 电流环 PID ---- */
+     /* ---- 7. 电流环 PID ---- */
 
      s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
 
@@ -706,13 +806,13 @@ static uint16_t s_foc_log_decim = 0U;
 
  
 
-     /* ---- 7. 逆 Park 变换 ---- */
+     /* ---- 8. 逆 Park 变换 ---- */
 
      FOC_InvPark(&s_ctx.v_dq, theta_e_ctrl, &s_ctx.v_ab);
 
  
 
-     /* ---- 8. SVPWM 调制 ---- */
+     /* ---- 9. SVPWM 调制 ---- */
 
      FOC_SVPWM_Calculate(s_ctx.v_ab.alpha, s_ctx.v_ab.beta, s_ctx.v_bus,
 
@@ -720,15 +820,11 @@ static uint16_t s_foc_log_decim = 0U;
 
  
 
-     /* ---- 9. 输出 PWM 占空比 ---- */
+     /* ---- 10. 输出 PWM 占空比 ---- */
 
      FOC_HAL_SetDutyCycle(s_ctx.duty_a, s_ctx.duty_b, s_ctx.duty_c);
 
  
-
-     /* ---- 10. 保护检测 ---- */
-
-     FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
 
      FOC_Log_Record(theta_e_ctrl);
 
@@ -772,11 +868,7 @@ static uint16_t s_foc_log_decim = 0U;
 
              if (s_ctx.fault != FOC_FAULT_NONE) {
 
-                 FOC_HAL_DisablePWM();
-
-                 FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
-
-                 s_ctx.state = FOC_STATE_FAULT;
+                 FOC_EnterFaultState();
 
              }
 
