@@ -234,6 +234,16 @@ extern "C" {
 
  
 
+/** Speed estimate clamp (rpm), used to reject abnormal Hall jump spikes. */
+
+#ifndef FOC_SPEED_ESTIMATE_MAX_RPM
+
+#define FOC_SPEED_ESTIMATE_MAX_RPM      4000.0f
+
+#endif
+
+ 
+
 /** SVPWM 调制系数上限（留余量，避免过调制） */
 
 #ifndef FOC_SVPWM_MODULATION_MAX

@@ -279,15 +279,15 @@ static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
 
                 /* 限幅：防止异常跳变产生速度尖峰 */
 
-                if (speed_rpm > 2000.0f) {
+                if (speed_rpm > FOC_SPEED_ESTIMATE_MAX_RPM) {
 
-                    speed_rpm = 2000.0f;
+                    speed_rpm = FOC_SPEED_ESTIMATE_MAX_RPM;
 
                 }
 
-                if (speed_rpm < -2000.0f) {
+                if (speed_rpm < -FOC_SPEED_ESTIMATE_MAX_RPM) {
 
-                    speed_rpm = -2000.0f;
+                    speed_rpm = -FOC_SPEED_ESTIMATE_MAX_RPM;
 
                 }
 
