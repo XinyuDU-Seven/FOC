@@ -172,12 +172,16 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_late_recovery_period_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_recovery_accept_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_recovery_accept_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_recovery_accept_cur_sector = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_post_recovery_duty_slew_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_post_recovery_duty_slew_remaining = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_post_recovery_duty_slew_active = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
 static uint32_t s_foc_prof_last_enter_us = 0U;
 static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
 static uint16_t s_hall_recovery_accept_cycles = 0U;
+static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 
  
 
@@ -199,6 +203,11 @@ static uint16_t s_hall_recovery_accept_cycles = 0U;
  static float FOC_ControlDtFromUs(uint32_t period_us, uint32_t max_us);
  static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
  static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us);
+ static void FOC_BeginPostRecoveryDutySlew(void);
+ static float FOC_LimitDutyStep(float target, float previous);
+ static void FOC_ApplyPostRecoveryDutySlew(float prev_a,
+                                           float prev_b,
+                                           float prev_c);
  static void FOC_EnterFaultState(void);
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
  static uint16_t FOC_HallMinSectorCycles(void);
@@ -274,9 +283,13 @@ static uint16_t s_hall_recovery_accept_cycles = 0U;
      g_foc_hall_recovery_accept_count = 0U;
      g_foc_hall_recovery_accept_prev_sector = 0U;
      g_foc_hall_recovery_accept_cur_sector = 0U;
+     g_foc_post_recovery_duty_slew_count = 0U;
+     g_foc_post_recovery_duty_slew_remaining = 0U;
+     g_foc_post_recovery_duty_slew_active = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
+     s_post_recovery_duty_slew_cycles = 0U;
  }
 
  static uint32_t FOC_Prof_Enter(void)
@@ -384,6 +397,53 @@ static uint16_t s_hall_recovery_accept_cycles = 0U;
      }
 
      return 0U;
+ }
+
+ static void FOC_BeginPostRecoveryDutySlew(void)
+ {
+     s_post_recovery_duty_slew_cycles = FOC_POST_RECOVERY_DUTY_SLEW_CYCLES;
+     g_foc_post_recovery_duty_slew_remaining = s_post_recovery_duty_slew_cycles;
+     g_foc_post_recovery_duty_slew_active =
+         (s_post_recovery_duty_slew_cycles > 0U) ? 1U : 0U;
+ }
+
+ static float FOC_LimitDutyStep(float target, float previous)
+ {
+     float max_step = FOC_POST_RECOVERY_DUTY_STEP_MAX;
+
+     if (max_step > 0.0f) {
+         float upper = previous + max_step;
+         float lower = previous - max_step;
+
+         if (target > upper) {
+             target = upper;
+         } else if (target < lower) {
+             target = lower;
+         }
+     }
+
+     return FOC_CLAMP(target, 0.0f, 1.0f);
+ }
+
+ static void FOC_ApplyPostRecoveryDutySlew(float prev_a,
+                                           float prev_b,
+                                           float prev_c)
+ {
+     if (s_post_recovery_duty_slew_cycles == 0U) {
+         g_foc_post_recovery_duty_slew_active = 0U;
+         g_foc_post_recovery_duty_slew_remaining = 0U;
+         return;
+     }
+
+     s_ctx.duty_a = FOC_LimitDutyStep(s_ctx.duty_a, prev_a);
+     s_ctx.duty_b = FOC_LimitDutyStep(s_ctx.duty_b, prev_b);
+     s_ctx.duty_c = FOC_LimitDutyStep(s_ctx.duty_c, prev_c);
+
+     s_post_recovery_duty_slew_cycles--;
+     g_foc_post_recovery_duty_slew_count++;
+     g_foc_post_recovery_duty_slew_remaining = s_post_recovery_duty_slew_cycles;
+     g_foc_post_recovery_duty_slew_active =
+         (s_post_recovery_duty_slew_cycles > 0U) ? 1U : 0U;
  }
 
  static void FOC_Log_Reset(void)
@@ -984,6 +1044,7 @@ static uint16_t s_hall_recovery_accept_cycles = 0U;
 
          FOC_PID_Reset(&s_ctx.pid_id);
          FOC_PID_Reset(&s_ctx.pid_iq);
+         FOC_BeginPostRecoveryDutySlew();
 
          FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
          if (s_ctx.fault != FOC_FAULT_NONE) {
@@ -1108,9 +1169,14 @@ static uint16_t s_hall_recovery_accept_cycles = 0U;
 
      /* ---- 9. SVPWM 调制 ---- */
 
+     float duty_prev_a = s_ctx.duty_a;
+     float duty_prev_b = s_ctx.duty_b;
+     float duty_prev_c = s_ctx.duty_c;
+
      FOC_SVPWM_Calculate(s_ctx.v_ab.alpha, s_ctx.v_ab.beta, s_ctx.v_bus,
 
                           &s_ctx.duty_a, &s_ctx.duty_b, &s_ctx.duty_c);
+     FOC_ApplyPostRecoveryDutySlew(duty_prev_a, duty_prev_b, duty_prev_c);
      prof_next_us = FOC_HAL_GetTimestampUs();
      g_foc_prof_after_calc_us = prof_next_us;
      FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 4U);

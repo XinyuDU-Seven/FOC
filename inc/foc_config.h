@@ -135,6 +135,18 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_POST_RECOVERY_DUTY_SLEW_CYCLES
+
+#define FOC_POST_RECOVERY_DUTY_SLEW_CYCLES  8U
+
+#endif
+
+#ifndef FOC_POST_RECOVERY_DUTY_STEP_MAX
+
+#define FOC_POST_RECOVERY_DUTY_STEP_MAX  0.05f
+
+#endif
+
 #ifndef FOC_CONTROL_PID_DT_MAX_US
 
 #define FOC_CONTROL_PID_DT_MAX_US       300U
