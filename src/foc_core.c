@@ -178,6 +178,7 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_post_recovery_duty_slew_active = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_zero_vector_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_pwm_off_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_pwm_hold_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_current_control_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_zero_vector_remaining = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_current_wait_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_release_current_mA = 0U;
@@ -216,7 +217,9 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
  static void FOC_BeginRecoveryZeroVectorHold(void);
  static void FOC_ServiceRecoveryZeroVectorHold(void);
  static void FOC_BeginPostRecoveryDutySlew(void);
- static void FOC_HoldRecoveryPwmOutput(void);
+ static void FOC_RunRecoveryCurrentControl(float theta_ctrl,
+                                           float pid_dt,
+                                           float pid_inv_dt);
  static float FOC_LimitDutyStep(float target, float previous);
  static void FOC_ApplyPostRecoveryDutySlew(float prev_a,
                                            float prev_b,
@@ -302,6 +305,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      g_foc_recovery_zero_vector_count = 0U;
      g_foc_recovery_pwm_off_count = 0U;
      g_foc_recovery_pwm_hold_count = 0U;
+     g_foc_recovery_current_control_count = 0U;
      g_foc_recovery_zero_vector_remaining = 0U;
      g_foc_recovery_current_wait_count = 0U;
      g_foc_recovery_release_current_mA = 0U;
@@ -469,7 +473,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
          g_foc_recovery_current_wait_count++;
      }
 
-     FOC_HoldRecoveryPwmOutput();
+     g_foc_recovery_zero_vector_count++;
 
      if (s_recovery_zero_vector_cycles > 0U) {
          s_recovery_zero_vector_cycles--;
@@ -496,11 +500,33 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
          (s_post_recovery_duty_slew_cycles > 0U) ? 1U : 0U;
  }
 
- static void FOC_HoldRecoveryPwmOutput(void)
+ static void FOC_RunRecoveryCurrentControl(float theta_ctrl,
+                                           float pid_dt,
+                                           float pid_inv_dt)
  {
-     /* Keep the last applied PWM vector; do not force zero vector or disable. */
-     g_foc_recovery_zero_vector_count++;
-     g_foc_recovery_pwm_hold_count++;
+     float duty_prev_a = s_ctx.duty_a;
+     float duty_prev_b = s_ctx.duty_b;
+     float duty_prev_c = s_ctx.duty_c;
+
+     s_ctx.iq_ref = 0.0f;
+     s_ctx.speed_loop_counter = 0U;
+
+     s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
+                                   s_ctx.id_ref - s_ctx.i_dq.d,
+                                   pid_dt,
+                                   pid_inv_dt);
+     s_ctx.v_dq.q = FOC_PID_Update(&s_ctx.pid_iq,
+                                   -s_ctx.i_dq.q,
+                                   pid_dt,
+                                   pid_inv_dt);
+
+     FOC_InvPark(&s_ctx.v_dq, theta_ctrl, &s_ctx.v_ab);
+     FOC_SVPWM_Calculate(s_ctx.v_ab.alpha, s_ctx.v_ab.beta, s_ctx.v_bus,
+                         &s_ctx.duty_a, &s_ctx.duty_b, &s_ctx.duty_c);
+     FOC_ApplyPostRecoveryDutySlew(duty_prev_a, duty_prev_b, duty_prev_c);
+
+     g_foc_recovery_current_control_count++;
+     FOC_HAL_SetDutyCycle(s_ctx.duty_a, s_ctx.duty_b, s_ctx.duty_c);
  }
 
  static float FOC_LimitDutyStep(float target, float previous)
@@ -1164,6 +1190,9 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
          }
          FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
          FOC_Park(&s_ctx.i_ab, theta_recovery, &s_ctx.i_dq);
+         if (s_ctx.fault == FOC_FAULT_NONE) {
+             FOC_RunRecoveryCurrentControl(theta_recovery, pid_dt, pid_inv_dt);
+         }
          FOC_Log_Record(theta_recovery);
 
          prof_next_us = FOC_HAL_GetTimestampUs();
@@ -1192,7 +1221,9 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
              theta_recovery = s_ctx.theta_e_predicted;
          }
 
-         FOC_ResetClosedLoopForRecovery();
+         FOC_PID_Reset(&s_ctx.pid_speed);
+         s_ctx.iq_ref = 0.0f;
+         s_ctx.speed_loop_counter = 0U;
 
          FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
          if (s_ctx.fault != FOC_FAULT_NONE) {
@@ -1206,6 +1237,9 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
          }
          FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
          FOC_Park(&s_ctx.i_ab, theta_recovery, &s_ctx.i_dq);
+         if (s_ctx.fault == FOC_FAULT_NONE) {
+             FOC_RunRecoveryCurrentControl(theta_recovery, pid_dt, pid_inv_dt);
+         }
          FOC_Log_Record(theta_recovery);
 
          prof_next_us = FOC_HAL_GetTimestampUs();
