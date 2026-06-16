@@ -108,6 +108,8 @@ For bring-up, use conservative current and speed limits first. Do not jump direc
 
 The project includes flattened debug log arrays for IAR Watch / Live Watch export. These are easier to copy as text than nested structures.
 
+For loop timing diagnosis, watch `g_foc_prof_*` variables to confirm whether the 100us scheduler is missing control periods.
+
 Useful variables:
 
 ```text
