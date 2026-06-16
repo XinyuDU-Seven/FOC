@@ -129,6 +129,12 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_HALL_RECOVERY_ACCEPT_CYCLES
+
+#define FOC_HALL_RECOVERY_ACCEPT_CYCLES  10U
+
+#endif
+
 #ifndef FOC_CONTROL_PID_DT_MAX_US
 
 #define FOC_CONTROL_PID_DT_MAX_US       300U

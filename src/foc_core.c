@@ -169,11 +169,15 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_resync_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_resync_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_late_recovery_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_late_recovery_period_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_recovery_accept_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_recovery_accept_prev_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_recovery_accept_cur_sector = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
 static uint32_t s_foc_prof_last_enter_us = 0U;
 static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
+static uint16_t s_hall_recovery_accept_cycles = 0U;
 
  
 
@@ -267,8 +271,12 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      g_foc_hall_resync_cur_sector = 0U;
      g_foc_late_recovery_count = 0U;
      g_foc_late_recovery_period_us = 0U;
+     g_foc_hall_recovery_accept_count = 0U;
+     g_foc_hall_recovery_accept_prev_sector = 0U;
+     g_foc_hall_recovery_accept_cur_sector = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
+     s_hall_recovery_accept_cycles = 0U;
  }
 
  static uint32_t FOC_Prof_Enter(void)
@@ -550,9 +558,14 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
  {
      uint8_t cur_sector = candidate->sector;
      uint8_t prev_sector = s_ctx.hall_sector_prev;
+     uint8_t recovery_accept = (s_hall_recovery_accept_cycles > 0U) ? 1U : 0U;
 
      if (cur_sector == 0U) {
          return 0U;
+     }
+
+     if (s_hall_recovery_accept_cycles > 0U) {
+         s_hall_recovery_accept_cycles--;
      }
 
      if ((prev_sector == 0U) || (cur_sector == prev_sector)) {
@@ -581,6 +594,16 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
              s_ctx.fault |= FOC_FAULT_HALL;
          }
          return 0U;
+     }
+
+     if (recovery_accept != 0U) {
+         s_ctx.hall_sector = *candidate;
+         s_ctx.theta_e_predicted = candidate->theta_e;
+         s_hall_illegal_transition_count = 0U;
+         g_foc_hall_recovery_accept_count++;
+         g_foc_hall_recovery_accept_prev_sector = prev_sector;
+         g_foc_hall_recovery_accept_cur_sector = cur_sector;
+         return 1U;
      }
 
      if (s_ctx.sector_no_change_count < FOC_HallMinSectorCycles()) {
@@ -956,6 +979,7 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
                                                        observer_dt,
                                                        s_config.motor.pole_pairs);
              s_ctx.theta_e_predicted = s_ctx.theta_e;
+             s_hall_recovery_accept_cycles = FOC_HALL_RECOVERY_ACCEPT_CYCLES;
          }
 
          s_ctx.v_dq.d = 0.0f;
