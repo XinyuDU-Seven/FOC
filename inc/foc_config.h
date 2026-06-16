@@ -203,6 +203,20 @@ extern "C" {
 
 /** 霍尔传感器异常检测：无效扇区持续计数阈值 */
 
+/* Start-fail/stall detection: valid command but feedback remains near zero. */
+#ifndef FOC_STALL_MIN_SPEED_REF_RPM
+
+#define FOC_STALL_MIN_SPEED_REF_RPM     300.0f
+
+#endif
+
+#ifndef FOC_STALL_MAX_FEEDBACK_RPM
+
+#define FOC_STALL_MAX_FEEDBACK_RPM      100.0f
+
+#endif
+
+/* Hall invalid-sector persistence threshold. */
 #ifndef FOC_HALL_INVALID_COUNT_THRESHOLD
 
 #define FOC_HALL_INVALID_COUNT_THRESHOLD   1000U
