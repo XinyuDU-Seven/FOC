@@ -263,6 +263,14 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_HALL_STOP_TIMEOUT_RATIO
+#define FOC_HALL_STOP_TIMEOUT_RATIO  3U
+#endif
+
+#ifndef FOC_HALL_STOP_TIMEOUT_MIN_US
+#define FOC_HALL_STOP_TIMEOUT_MIN_US  1000U
+#endif
+
  
 
 /** 速度环降采样比：电流环每执行 N 次，速度环执行 1 次 */

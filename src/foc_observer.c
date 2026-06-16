@@ -320,6 +320,8 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
             }
 
+            ctx->hall_sector_dt_us = dt_us;
+
         }
 
         /* else: first valid sector from startup, skip speed calc */
@@ -338,11 +340,33 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
         ctx->sector_no_change_count++;
 
+        {
+            uint32_t ts_now = FOC_HAL_GetTimestampUs();
+            uint32_t stop_timeout_us = ctx->hall_sector_dt_us *
+                                       FOC_HALL_STOP_TIMEOUT_RATIO;
+
+            if (stop_timeout_us < FOC_HALL_STOP_TIMEOUT_MIN_US) {
+                stop_timeout_us = FOC_HALL_STOP_TIMEOUT_MIN_US;
+            }
+
+            if ((ctx->hall_sector_dt_us != 0U) &&
+                ((ts_now - ctx->timestamp_prev) >= stop_timeout_us)) {
+                ctx->sector_no_change_count = FOC_SECTOR_NO_CHANGE_THRESHOLD;
+            }
+        }
+
         if (ctx->sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
 
             /* 长时间无跳变，电机已停止，速度衰减到零 */
 
             speed_rpm = 0.0f;
+            ctx->speed_raw = 0.0f;
+            ctx->speed_filtered = 0.0f;
+            if (ctx->hall_sector.sector != 0U) {
+                ctx->theta_e_predicted = ctx->hall_sector.theta_e;
+            }
+            ctx->hall_sector_prev = cur_sector;
+            return 0.0f;
 
         }
 
