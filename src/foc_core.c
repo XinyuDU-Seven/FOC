@@ -163,6 +163,12 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_prof_last_seg_id = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_prof_max_seg_id = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_late_period_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_late_period_us = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_last_fault_latched = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_last_fault_state = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_last_fault_seq = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_last_fault_current_peak_mA = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_last_fault_speed_ref_rpm = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_last_fault_speed_fdb_rpm = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_resync_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_resync_period_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_resync_prev_sector = 0U;
@@ -576,6 +582,12 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      g_foc_log_fault_idx = 0U;
      g_foc_log_stop = 0U;
      g_foc_log_seq = 0U;
+     g_foc_last_fault_latched = 0U;
+     g_foc_last_fault_state = 0U;
+     g_foc_last_fault_seq = 0U;
+     g_foc_last_fault_current_peak_mA = 0U;
+     g_foc_last_fault_speed_ref_rpm = 0U;
+     g_foc_last_fault_speed_fdb_rpm = 0U;
      g_log_idx = 0U;
      g_log_fault_idx = 0U;
      s_foc_log_decim = 0U;
@@ -688,6 +700,19 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 
  static void FOC_EnterFaultState(void)
  {
+     if ((s_ctx.fault != FOC_FAULT_NONE) &&
+         (g_foc_last_fault_latched == 0U)) {
+         g_foc_last_fault_latched = (uint8_t)s_ctx.fault;
+         g_foc_last_fault_state = (uint8_t)s_ctx.state;
+         g_foc_last_fault_seq = g_foc_log_seq;
+         g_foc_last_fault_current_peak_mA =
+             (uint32_t)FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
+         g_foc_last_fault_speed_ref_rpm =
+             FOC_Log_ToU16(s_ctx.speed_ref, 1.0f);
+         g_foc_last_fault_speed_fdb_rpm =
+             FOC_Log_ToU16(s_ctx.speed_fdb, 1.0f);
+     }
+
      FOC_HAL_DisablePWM();
      FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
 
