@@ -176,6 +176,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_post_recovery_duty_slew_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_post_recovery_duty_slew_remaining = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_post_recovery_duty_slew_active = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_zero_vector_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_pwm_off_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_zero_vector_remaining = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_current_wait_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_release_current_mA = 0U;
@@ -214,7 +215,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
  static void FOC_BeginRecoveryZeroVectorHold(void);
  static void FOC_ServiceRecoveryZeroVectorHold(void);
  static void FOC_BeginPostRecoveryDutySlew(void);
- static void FOC_OutputZeroVoltageVector(void);
+ static void FOC_OutputRecoveryCoast(void);
  static float FOC_LimitDutyStep(float target, float previous);
  static void FOC_ApplyPostRecoveryDutySlew(float prev_a,
                                            float prev_b,
@@ -298,6 +299,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      g_foc_post_recovery_duty_slew_remaining = 0U;
      g_foc_post_recovery_duty_slew_active = 0U;
      g_foc_recovery_zero_vector_count = 0U;
+     g_foc_recovery_pwm_off_count = 0U;
      g_foc_recovery_zero_vector_remaining = 0U;
      g_foc_recovery_current_wait_count = 0U;
      g_foc_recovery_release_current_mA = 0U;
@@ -465,7 +467,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
          g_foc_recovery_current_wait_count++;
      }
 
-     FOC_OutputZeroVoltageVector();
+     FOC_OutputRecoveryCoast();
 
      if (s_recovery_zero_vector_cycles > 0U) {
          s_recovery_zero_vector_cycles--;
@@ -477,6 +479,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
          s_recovery_zero_vector_min_cycles = 0U;
          g_foc_recovery_release_current_mA =
              FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
+         FOC_HAL_EnablePWM();
      }
 
      g_foc_recovery_zero_vector_remaining = s_recovery_zero_vector_cycles;
@@ -492,13 +495,14 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
          (s_post_recovery_duty_slew_cycles > 0U) ? 1U : 0U;
  }
 
- static void FOC_OutputZeroVoltageVector(void)
+ static void FOC_OutputRecoveryCoast(void)
  {
-     s_ctx.duty_a = 0.5f;
-     s_ctx.duty_b = 0.5f;
-     s_ctx.duty_c = 0.5f;
+     s_ctx.duty_a = 0.0f;
+     s_ctx.duty_b = 0.0f;
+     s_ctx.duty_c = 0.0f;
      g_foc_recovery_zero_vector_count++;
-     FOC_HAL_SetDutyCycle(s_ctx.duty_a, s_ctx.duty_b, s_ctx.duty_c);
+     g_foc_recovery_pwm_off_count++;
+     FOC_HAL_DisablePWM();
  }
 
  static float FOC_LimitDutyStep(float target, float previous)
