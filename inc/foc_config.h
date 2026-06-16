@@ -261,6 +261,24 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_STARTUP_PREDICT_START_RPM
+
+#define FOC_STARTUP_PREDICT_START_RPM   200.0f
+
+#endif
+
+#ifndef FOC_STARTUP_PREDICT_MAX_RPM
+
+#define FOC_STARTUP_PREDICT_MAX_RPM     600.0f
+
+#endif
+
+#ifndef FOC_STARTUP_PREDICT_RAMP_RPM_PER_S
+
+#define FOC_STARTUP_PREDICT_RAMP_RPM_PER_S  3000.0f
+
+#endif
+
 /* Hall electrical angle calibration.
  * The Hall lookup table stores sector center angles. For synchronization,
  * use the sector entry edge by default: center - 30 electrical degrees.

@@ -101,6 +101,8 @@
 
  };
 
+static float s_startup_predict_speed_rpm = 0.0f;
+
 static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
 {
     if (sector >= 1U && sector <= 6U) {
@@ -163,6 +165,7 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
      ctx->sector_no_change_count   = 0U;
 
      ctx->theta_e_predicted        = 0.0f;
+     s_startup_predict_speed_rpm   = 0.0f;
 
  
 
@@ -420,12 +423,31 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
          * 速度收敛后自然切换到 speed_filtered，避免稳态角度超前 */
 
+        /* During startup, ramp predicted angle speed instead of jumping to speed_ref. */
         float speed_for_predict = ctx->speed_filtered;
 
-        if (speed_for_predict < ctx->speed_ref * 0.5f) {
+        if ((ctx->speed_ref > 0.0f) &&
+            (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
+            float startup_target = ctx->speed_ref;
+            float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
 
-            speed_for_predict = ctx->speed_ref;
-
+            if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {
+                startup_target = FOC_STARTUP_PREDICT_MAX_RPM;
+            }
+            if (s_startup_predict_speed_rpm < FOC_STARTUP_PREDICT_START_RPM) {
+                s_startup_predict_speed_rpm = FOC_STARTUP_PREDICT_START_RPM;
+            }
+            if (s_startup_predict_speed_rpm < startup_target) {
+                s_startup_predict_speed_rpm += ramp_step;
+                if (s_startup_predict_speed_rpm > startup_target) {
+                    s_startup_predict_speed_rpm = startup_target;
+                }
+            } else if (s_startup_predict_speed_rpm > startup_target) {
+                s_startup_predict_speed_rpm = startup_target;
+            }
+            speed_for_predict = s_startup_predict_speed_rpm;
+        } else {
+            s_startup_predict_speed_rpm = speed_for_predict;
         }
 
         if (speed_for_predict > 0.0f) {
