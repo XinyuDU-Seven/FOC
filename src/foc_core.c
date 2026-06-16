@@ -982,14 +982,8 @@ static uint16_t s_hall_recovery_accept_cycles = 0U;
              s_hall_recovery_accept_cycles = FOC_HALL_RECOVERY_ACCEPT_CYCLES;
          }
 
-         s_ctx.v_dq.d = 0.0f;
-         s_ctx.v_dq.q = 0.0f;
-         s_ctx.v_ab.alpha = 0.0f;
-         s_ctx.v_ab.beta = 0.0f;
-         s_ctx.duty_a = 0.0f;
-         s_ctx.duty_b = 0.0f;
-         s_ctx.duty_c = 0.0f;
-         FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
+         FOC_PID_Reset(&s_ctx.pid_id);
+         FOC_PID_Reset(&s_ctx.pid_iq);
 
          FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
          if (s_ctx.fault != FOC_FAULT_NONE) {
