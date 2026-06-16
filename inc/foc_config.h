@@ -137,13 +137,13 @@ extern "C" {
 
 #ifndef FOC_POST_RECOVERY_DUTY_SLEW_CYCLES
 
-#define FOC_POST_RECOVERY_DUTY_SLEW_CYCLES  8U
+#define FOC_POST_RECOVERY_DUTY_SLEW_CYCLES  3U
 
 #endif
 
 #ifndef FOC_POST_RECOVERY_DUTY_STEP_MAX
 
-#define FOC_POST_RECOVERY_DUTY_STEP_MAX  0.05f
+#define FOC_POST_RECOVERY_DUTY_STEP_MAX  0.15f
 
 #endif
 
@@ -292,12 +292,12 @@ extern "C" {
 #endif
 
 /* Hall electrical angle calibration.
- * The Hall lookup table stores sector center angles. For synchronization,
- * use the sector entry edge by default: center - 30 electrical degrees.
- * Tune this macro after calibration if the measured Id still has a DC bias.
+ * The Hall lookup table stores sector center angles. Use the center by
+ * default; edge-based sync is too sensitive when a long FOC period skips
+ * one or more Hall transitions.
  */
 #ifndef FOC_HALL_ANGLE_OFFSET_RAD
-#define FOC_HALL_ANGLE_OFFSET_RAD       (-(FOC_PI / 6.0f))
+#define FOC_HALL_ANGLE_OFFSET_RAD       0.0f
 #endif
 
 /* Reject Hall sector changes faster than this fraction of the theoretical

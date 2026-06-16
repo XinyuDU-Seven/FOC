@@ -175,6 +175,7 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_recovery_accept_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_post_recovery_duty_slew_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_post_recovery_duty_slew_remaining = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_post_recovery_duty_slew_active = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_zero_vector_count = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -204,6 +205,7 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
  static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
  static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us);
  static void FOC_BeginPostRecoveryDutySlew(void);
+ static void FOC_OutputZeroVoltageVector(void);
  static float FOC_LimitDutyStep(float target, float previous);
  static void FOC_ApplyPostRecoveryDutySlew(float prev_a,
                                            float prev_b,
@@ -286,6 +288,7 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
      g_foc_post_recovery_duty_slew_count = 0U;
      g_foc_post_recovery_duty_slew_remaining = 0U;
      g_foc_post_recovery_duty_slew_active = 0U;
+     g_foc_recovery_zero_vector_count = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -405,6 +408,15 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
      g_foc_post_recovery_duty_slew_remaining = s_post_recovery_duty_slew_cycles;
      g_foc_post_recovery_duty_slew_active =
          (s_post_recovery_duty_slew_cycles > 0U) ? 1U : 0U;
+ }
+
+ static void FOC_OutputZeroVoltageVector(void)
+ {
+     s_ctx.duty_a = 0.5f;
+     s_ctx.duty_b = 0.5f;
+     s_ctx.duty_c = 0.5f;
+     g_foc_recovery_zero_vector_count++;
+     FOC_HAL_SetDutyCycle(s_ctx.duty_a, s_ctx.duty_b, s_ctx.duty_c);
  }
 
  static float FOC_LimitDutyStep(float target, float previous)
@@ -1044,6 +1056,7 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 
          FOC_PID_Reset(&s_ctx.pid_id);
          FOC_PID_Reset(&s_ctx.pid_iq);
+         FOC_OutputZeroVoltageVector();
          FOC_BeginPostRecoveryDutySlew();
 
          FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
