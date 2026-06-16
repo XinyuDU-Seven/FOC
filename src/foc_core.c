@@ -165,6 +165,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_late_period_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_late_period_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_last_fault_latched = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_last_fault_state = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_last_fault_latch_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_last_fault_seq = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_last_fault_current_peak_mA = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_last_fault_speed_ref_rpm = 0U;
@@ -214,6 +215,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
  static void FOC_Prof_RecordSegment(uint32_t start_us, uint32_t end_us, uint8_t seg_id);
  static void FOC_Prof_Exit(uint32_t enter_us, uint32_t exit_us);
  static void FOC_Prof_Reset(void);
+ static void FOC_LastFault_Reset(void);
  static uint32_t FOC_ControlPeriodUs(void);
  static uint8_t FOC_ControlPeriodIsLate(uint32_t period_us);
  static float FOC_ControlDtFromUs(uint32_t period_us, uint32_t max_us);
@@ -322,6 +324,17 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      s_post_recovery_duty_slew_cycles = 0U;
      s_recovery_zero_vector_cycles = 0U;
      s_recovery_zero_vector_min_cycles = 0U;
+ }
+
+ static void FOC_LastFault_Reset(void)
+ {
+     g_foc_last_fault_latched = 0U;
+     g_foc_last_fault_state = 0U;
+     g_foc_last_fault_latch_count = 0U;
+     g_foc_last_fault_seq = 0U;
+     g_foc_last_fault_current_peak_mA = 0U;
+     g_foc_last_fault_speed_ref_rpm = 0U;
+     g_foc_last_fault_speed_fdb_rpm = 0U;
  }
 
  static uint32_t FOC_Prof_Enter(void)
@@ -582,12 +595,6 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      g_foc_log_fault_idx = 0U;
      g_foc_log_stop = 0U;
      g_foc_log_seq = 0U;
-     g_foc_last_fault_latched = 0U;
-     g_foc_last_fault_state = 0U;
-     g_foc_last_fault_seq = 0U;
-     g_foc_last_fault_current_peak_mA = 0U;
-     g_foc_last_fault_speed_ref_rpm = 0U;
-     g_foc_last_fault_speed_fdb_rpm = 0U;
      g_log_idx = 0U;
      g_log_fault_idx = 0U;
      s_foc_log_decim = 0U;
@@ -700,10 +707,10 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 
  static void FOC_EnterFaultState(void)
  {
-     if ((s_ctx.fault != FOC_FAULT_NONE) &&
-         (g_foc_last_fault_latched == 0U)) {
+     if (s_ctx.fault != FOC_FAULT_NONE) {
          g_foc_last_fault_latched = (uint8_t)s_ctx.fault;
          g_foc_last_fault_state = (uint8_t)s_ctx.state;
+         g_foc_last_fault_latch_count++;
          g_foc_last_fault_seq = g_foc_log_seq;
          g_foc_last_fault_current_peak_mA =
              (uint32_t)FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
@@ -901,6 +908,8 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      /* 初始化观测器 */
 
      FOC_Observer_Init(&s_ctx);
+
+     FOC_LastFault_Reset();
 
      FOC_Log_Reset();
 
