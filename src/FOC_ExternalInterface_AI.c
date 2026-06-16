@@ -3,7 +3,13 @@
 
 #include "foc_api.h"
 
- 
+#ifdef __ICCARM__
+#define FOC_AI_DEBUG_ROOT __root
+#else
+#define FOC_AI_DEBUG_ROOT
+#endif
+
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
 
 /*******************************************************************************************
 
@@ -20,6 +26,8 @@
  *******************************************************************************************/
 
 void Foc_AlgorithmControlCallback_AI(void){
+
+  g_foc_ai_callback_count++;
 
   FOC_MainLoop();
 
