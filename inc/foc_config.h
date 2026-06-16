@@ -105,6 +105,30 @@ extern "C" {
 
 #define FOC_CONTROL_PERIOD_S     (1.0f / (float)FOC_CONTROL_FREQ_HZ)
 
+#ifndef FOC_CONTROL_PERIOD_US
+
+#define FOC_CONTROL_PERIOD_US    (1000000U / FOC_CONTROL_FREQ_HZ)
+
+#endif
+
+#ifndef FOC_CONTROL_LATE_PERIOD_US
+
+#define FOC_CONTROL_LATE_PERIOD_US      ((FOC_CONTROL_PERIOD_US * 3U) / 2U)
+
+#endif
+
+#ifndef FOC_CONTROL_OBSERVER_DT_MAX_US
+
+#define FOC_CONTROL_OBSERVER_DT_MAX_US  3000U
+
+#endif
+
+#ifndef FOC_CONTROL_PID_DT_MAX_US
+
+#define FOC_CONTROL_PID_DT_MAX_US       300U
+
+#endif
+
  
 
 /* ===================================================================
@@ -202,6 +226,12 @@ extern "C" {
 #ifndef FOC_ANGLE_SYNC_FACTOR
 
 #define FOC_ANGLE_SYNC_FACTOR           0.3f
+
+#endif
+
+#ifndef FOC_LATE_PERIOD_ANGLE_SYNC_FACTOR
+
+#define FOC_LATE_PERIOD_ANGLE_SYNC_FACTOR  1.0f
 
 #endif
 

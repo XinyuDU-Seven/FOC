@@ -111,7 +111,28 @@ static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
     return 0.0f;
 }
 
- 
+static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
+                                                uint8_t prev_sector,
+                                                uint8_t cur_sector)
+{
+    uint8_t steps;
+
+    if ((prev_sector < 1U) || (prev_sector > 6U) ||
+        (cur_sector < 1U) || (cur_sector > 6U) ||
+        (prev_sector == cur_sector)) {
+        return 1U;
+    }
+
+    if (ctx->direction == FOC_DIR_CCW) {
+        steps = (uint8_t)((prev_sector + 6U - cur_sector) % 6U);
+    } else {
+        steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
+    }
+
+    return (steps == 0U) ? 1U : steps;
+}
+
+
 
  /* ===================================================================
 
@@ -269,7 +290,10 @@ static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
 
             if (pole_pairs > 0U && dt_sec > 1e-6f) {
 
-                float delta_theta_e = FOC_PI / 3.0f;
+                uint8_t sector_steps = FOC_Observer_GetSectorStepCount(ctx,
+                                                                        prev_sector,
+                                                                        cur_sector);
+                float delta_theta_e = (FOC_PI / 3.0f) * (float)sector_steps;
 
                 speed_rpm = (delta_theta_e / (float)pole_pairs) / dt_sec
 
@@ -368,6 +392,7 @@ static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
      if (cur_sector != ctx->hall_sector_prev && cur_sector != 0U) {
 
          float target = ctx->hall_sector.theta_e;
+         float sync_factor = FOC_ANGLE_SYNC_FACTOR;
 
          float diff = target - ctx->theta_e_predicted;
 
@@ -377,7 +402,17 @@ static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
 
          if (diff < -FOC_PI) diff += FOC_2PI;
 
-         ctx->theta_e_predicted += diff * FOC_ANGLE_SYNC_FACTOR;
+         if (dt > ((float)FOC_CONTROL_LATE_PERIOD_US * 1.0e-6f)) {
+             sync_factor = FOC_LATE_PERIOD_ANGLE_SYNC_FACTOR;
+         }
+
+         if (sync_factor > 1.0f) {
+             sync_factor = 1.0f;
+         } else if (sync_factor < 0.0f) {
+             sync_factor = 0.0f;
+         }
+
+         ctx->theta_e_predicted += diff * sync_factor;
 
      } else {
 

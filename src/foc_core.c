@@ -161,10 +161,17 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_last_seg_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_max_seg_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_prof_last_seg_id = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_prof_max_seg_id = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_late_period_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_late_period_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_resync_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_resync_period_us = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_resync_prev_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_resync_cur_sector = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
 static uint32_t s_foc_prof_last_enter_us = 0U;
+static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
 
  
 
@@ -181,10 +188,15 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
  static void FOC_Prof_RecordSegment(uint32_t start_us, uint32_t end_us, uint8_t seg_id);
  static void FOC_Prof_Exit(uint32_t enter_us, uint32_t exit_us);
  static void FOC_Prof_Reset(void);
+ static uint32_t FOC_ControlPeriodUs(void);
+ static uint8_t FOC_ControlPeriodIsLate(uint32_t period_us);
+ static float FOC_ControlDtFromUs(uint32_t period_us, uint32_t max_us);
+ static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
  static void FOC_EnterFaultState(void);
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
  static uint16_t FOC_HallMinSectorCycles(void);
- static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate);
+ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
+                                    uint8_t allow_missed_transition);
 
  static int16_t FOC_Log_ToI16(float v, float scale)
  {
@@ -244,7 +256,14 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
      g_foc_prof_max_seg_us = 0U;
      g_foc_prof_last_seg_id = 0U;
      g_foc_prof_max_seg_id = 0U;
+     g_foc_late_period_count = 0U;
+     g_foc_late_period_us = 0U;
+     g_foc_hall_resync_count = 0U;
+     g_foc_hall_resync_period_us = 0U;
+     g_foc_hall_resync_prev_sector = 0U;
+     g_foc_hall_resync_cur_sector = 0U;
      s_foc_prof_last_enter_us = 0U;
+     s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
  }
 
  static uint32_t FOC_Prof_Enter(void)
@@ -294,6 +313,53 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
          g_foc_prof_max_loop_us = loop_us;
          g_foc_prof_max_loop_loop = g_foc_prof_loop_count;
      }
+ }
+
+ static uint32_t FOC_ControlPeriodUs(void)
+ {
+     uint32_t period_us = g_foc_prof_period_us;
+
+     if (period_us == 0U) {
+         period_us = FOC_CONTROL_PERIOD_US;
+     }
+
+     s_foc_control_period_us = period_us;
+     return period_us;
+ }
+
+ static uint8_t FOC_ControlPeriodIsLate(uint32_t period_us)
+ {
+     if (period_us > FOC_CONTROL_LATE_PERIOD_US) {
+         g_foc_late_period_count++;
+         g_foc_late_period_us = period_us;
+         return 1U;
+     }
+
+     return 0U;
+ }
+
+ static float FOC_ControlDtFromUs(uint32_t period_us, uint32_t max_us)
+ {
+     if (period_us == 0U) {
+         period_us = FOC_CONTROL_PERIOD_US;
+     }
+     if (period_us > max_us) {
+         period_us = max_us;
+     }
+
+     return (float)period_us * 1.0e-6f;
+ }
+
+ static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us)
+ {
+     if (period_us == 0U) {
+         period_us = FOC_CONTROL_PERIOD_US;
+     }
+     if (period_us > max_us) {
+         period_us = max_us;
+     }
+
+     return 1000000.0f / (float)period_us;
  }
 
  static void FOC_Log_Reset(void)
@@ -463,7 +529,8 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
      return (uint16_t)cycles;
  }
 
- static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate)
+ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
+                                    uint8_t allow_missed_transition)
  {
      uint8_t cur_sector = candidate->sector;
      uint8_t prev_sector = s_ctx.hall_sector_prev;
@@ -475,6 +542,18 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
      if ((prev_sector == 0U) || (cur_sector == prev_sector)) {
          s_ctx.hall_sector = *candidate;
          s_hall_illegal_transition_count = 0U;
+         return 1U;
+     }
+
+     if (allow_missed_transition != 0U) {
+         s_ctx.hall_sector = *candidate;
+         s_hall_illegal_transition_count = 0U;
+         g_foc_hall_resync_count++;
+         g_foc_hall_resync_period_us = (s_foc_control_period_us > 65535U)
+                                     ? 65535U
+                                     : (uint16_t)s_foc_control_period_us;
+         g_foc_hall_resync_prev_sector = prev_sector;
+         g_foc_hall_resync_cur_sector = cur_sector;
          return 1U;
      }
 
@@ -767,8 +846,12 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
      uint32_t prof_enter_us;
      uint32_t prof_mark_us;
      uint32_t prof_next_us;
+     uint32_t control_period_us;
+     uint8_t control_period_late;
 
      prof_enter_us = FOC_Prof_Enter();
+     control_period_us = FOC_ControlPeriodUs();
+     control_period_late = FOC_ControlPeriodIsLate(control_period_us);
      FOC_StateMachine();
      prof_mark_us = FOC_HAL_GetTimestampUs();
      g_foc_prof_after_state_us = prof_mark_us;
@@ -787,9 +870,14 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
 
      /* 预计算时间常量，避免热路径中的除法 */
 
-     float dt     = FOC_CONTROL_PERIOD_S;
+     float observer_dt = FOC_ControlDtFromUs(control_period_us,
+                                             FOC_CONTROL_OBSERVER_DT_MAX_US);
 
-     float inv_dt = (float)FOC_CONTROL_FREQ_HZ;
+     float pid_dt = FOC_ControlDtFromUs(control_period_us,
+                                        FOC_CONTROL_PID_DT_MAX_US);
+
+     float pid_inv_dt = FOC_ControlInvDtFromUs(control_period_us,
+                                               FOC_CONTROL_PID_DT_MAX_US);
 
  
 
@@ -816,7 +904,7 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
      FOC_HallSector_t hall_candidate;
 
      FOC_Observer_HallRawToSector(&s_ctx.hall_raw, &hall_candidate);
-     FOC_ApplyHallSector(&hall_candidate);
+     FOC_ApplyHallSector(&hall_candidate, control_period_late);
 
      if (s_ctx.fault != FOC_FAULT_NONE) {
          FOC_EnterFaultState();
@@ -847,7 +935,7 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
 
       * PredictAngle 检测不到扇区跳变，无法同步角度 */
 
-     float theta_e_ctrl = FOC_Observer_PredictAngle(&s_ctx, dt,
+     float theta_e_ctrl = FOC_Observer_PredictAngle(&s_ctx, observer_dt,
 
                                                      s_config.motor.pole_pairs);
 
@@ -855,7 +943,7 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
 
      s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
 
-                                               dt, s_config.motor.pole_pairs);
+                                               observer_dt, s_config.motor.pole_pairs);
 
  
 
@@ -907,9 +995,9 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
 
          s_ctx.speed_loop_counter = 0U;
 
-         float speed_dt     = dt * (float)FOC_SPEED_LOOP_DOWNSAMPLE;
+         float speed_dt     = pid_dt * (float)FOC_SPEED_LOOP_DOWNSAMPLE;
 
-         float speed_inv_dt = inv_dt / (float)FOC_SPEED_LOOP_DOWNSAMPLE;
+         float speed_inv_dt = pid_inv_dt / (float)FOC_SPEED_LOOP_DOWNSAMPLE;
 
          s_ctx.iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
 
@@ -927,13 +1015,13 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
 
                                      s_ctx.id_ref - s_ctx.i_dq.d,
 
-                                     dt, inv_dt);
+                                     pid_dt, pid_inv_dt);
 
      s_ctx.v_dq.q = FOC_PID_Update(&s_ctx.pid_iq,
 
                                      s_ctx.iq_ref - s_ctx.i_dq.q,
 
-                                     dt, inv_dt);
+                                     pid_dt, pid_inv_dt);
 
  
 
