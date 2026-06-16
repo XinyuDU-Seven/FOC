@@ -419,7 +419,9 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      if (period_us > FOC_CONTROL_RECOVERY_PERIOD_US) {
          g_foc_late_recovery_count++;
          g_foc_late_recovery_period_us = period_us;
+#if FOC_CONTROL_RECOVERY_ENABLE
          return 1U;
+#endif
      }
 
      return 0U;
