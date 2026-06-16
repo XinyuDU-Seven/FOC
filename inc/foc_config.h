@@ -105,6 +105,18 @@ extern "C" {
 
 #define FOC_CONTROL_PERIOD_S     (1.0f / (float)FOC_CONTROL_FREQ_HZ)
 
+#ifndef FOC_EMPTY_LOOP_TIMING_TEST
+
+#define FOC_EMPTY_LOOP_TIMING_TEST      1U
+
+#endif
+
+#ifndef FOC_EMPTY_LOOP_TIMEOUT_US
+
+#define FOC_EMPTY_LOOP_TIMEOUT_US       200U
+
+#endif
+
  
 
 /* ===================================================================

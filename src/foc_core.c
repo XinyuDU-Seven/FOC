@@ -161,10 +161,24 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_last_seg_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_prof_max_seg_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_prof_last_seg_id = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_prof_max_seg_id = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_start_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_period_idx = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_period_wrap = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_period_loop[FOC_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_period_us[FOC_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_idx = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_wrap = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_loop[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_t_us[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_period_us[FOC_TEXT_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_since_prev_us[FOC_TEXT_LOG_SIZE];
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
 static uint32_t s_foc_prof_last_enter_us = 0U;
+static uint32_t s_foc_empty_loop_last_timeout_us = 0U;
+static uint8_t s_foc_empty_loop_started = 0U;
 
  
 
@@ -225,6 +239,8 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
 
  static void FOC_Prof_Reset(void)
  {
+     uint16_t i;
+
      g_foc_prof_enter_us = 0U;
      g_foc_prof_after_state_us = 0U;
      g_foc_prof_after_hall_us = 0U;
@@ -244,7 +260,27 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
      g_foc_prof_max_seg_us = 0U;
      g_foc_prof_last_seg_id = 0U;
      g_foc_prof_max_seg_id = 0U;
+     g_foc_empty_loop_start_us = 0U;
+     g_foc_empty_loop_period_idx = 0U;
+     g_foc_empty_loop_period_wrap = 0U;
+     g_foc_empty_loop_timeout_idx = 0U;
+     g_foc_empty_loop_timeout_wrap = 0U;
+     g_foc_empty_loop_timeout_count = 0U;
      s_foc_prof_last_enter_us = 0U;
+     s_foc_empty_loop_last_timeout_us = 0U;
+     s_foc_empty_loop_started = 0U;
+
+     for (i = 0U; i < FOC_LOG_SIZE; i++) {
+         g_foc_empty_loop_period_loop[i] = 0U;
+         g_foc_empty_loop_period_us[i] = 0U;
+     }
+
+     for (i = 0U; i < FOC_TEXT_LOG_SIZE; i++) {
+         g_foc_empty_loop_timeout_loop[i] = 0U;
+         g_foc_empty_loop_timeout_t_us[i] = 0U;
+         g_foc_empty_loop_timeout_period_us[i] = 0U;
+         g_foc_empty_loop_timeout_since_prev_us[i] = 0U;
+     }
  }
 
  static uint32_t FOC_Prof_Enter(void)
@@ -764,6 +800,61 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
  void FOC_Core_MainLoop(void)
 
  {
+#if FOC_EMPTY_LOOP_TIMING_TEST
+     uint32_t prof_enter_us;
+     uint32_t prof_exit_us;
+     uint32_t period_us;
+     uint32_t period_idx;
+     uint32_t timeout_idx;
+     uint32_t since_prev_timeout_us;
+
+     prof_enter_us = FOC_Prof_Enter();
+     period_us = g_foc_prof_period_us;
+
+     if (s_foc_empty_loop_started == 0U) {
+         g_foc_empty_loop_start_us = prof_enter_us;
+         s_foc_empty_loop_last_timeout_us = prof_enter_us;
+         s_foc_empty_loop_started = 1U;
+     }
+
+     period_idx = g_foc_empty_loop_period_idx;
+     if (period_idx >= FOC_LOG_SIZE) {
+         period_idx = 0U;
+     }
+     g_foc_empty_loop_period_loop[period_idx] = g_foc_prof_loop_count;
+     g_foc_empty_loop_period_us[period_idx] = period_us;
+     period_idx++;
+     if (period_idx >= FOC_LOG_SIZE) {
+         period_idx = 0U;
+         g_foc_empty_loop_period_wrap = 1U;
+     }
+     g_foc_empty_loop_period_idx = period_idx;
+
+     if (period_us > FOC_EMPTY_LOOP_TIMEOUT_US) {
+         since_prev_timeout_us = prof_enter_us - s_foc_empty_loop_last_timeout_us;
+         s_foc_empty_loop_last_timeout_us = prof_enter_us;
+
+         timeout_idx = g_foc_empty_loop_timeout_idx;
+         if (timeout_idx >= FOC_TEXT_LOG_SIZE) {
+             timeout_idx = 0U;
+         }
+         g_foc_empty_loop_timeout_loop[timeout_idx] = g_foc_prof_loop_count;
+         g_foc_empty_loop_timeout_t_us[timeout_idx] = prof_enter_us;
+         g_foc_empty_loop_timeout_period_us[timeout_idx] = period_us;
+         g_foc_empty_loop_timeout_since_prev_us[timeout_idx] = since_prev_timeout_us;
+         g_foc_empty_loop_timeout_count++;
+
+         timeout_idx++;
+         if (timeout_idx >= FOC_TEXT_LOG_SIZE) {
+             timeout_idx = 0U;
+             g_foc_empty_loop_timeout_wrap = 1U;
+         }
+         g_foc_empty_loop_timeout_idx = timeout_idx;
+     }
+
+     prof_exit_us = FOC_HAL_GetTimestampUs();
+     FOC_Prof_Exit(prof_enter_us, prof_exit_us);
+#else
      uint32_t prof_enter_us;
      uint32_t prof_mark_us;
      uint32_t prof_next_us;
@@ -969,6 +1060,7 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
      prof_next_us = FOC_HAL_GetTimestampUs();
      FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 6U);
      FOC_Prof_Exit(prof_enter_us, prof_next_us);
+#endif
 
  }
 
