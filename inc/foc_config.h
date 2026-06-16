@@ -117,6 +117,12 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_EMPTY_LOOP_RECENT_PERIOD_SIZE
+
+#define FOC_EMPTY_LOOP_RECENT_PERIOD_SIZE  100U
+
+#endif
+
  
 
 /* ===================================================================

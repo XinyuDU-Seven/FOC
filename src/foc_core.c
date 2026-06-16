@@ -166,6 +166,9 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_period_idx = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_period_wrap = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_period_loop[FOC_LOG_SIZE];
 FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_period_us[FOC_LOG_SIZE];
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_recent_period_idx = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_recent_period_wrap = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_recent_period_us[FOC_EMPTY_LOOP_RECENT_PERIOD_SIZE];
 FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_idx = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_wrap = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_empty_loop_timeout_count = 0U;
@@ -263,12 +266,18 @@ static uint8_t s_foc_empty_loop_started = 0U;
      g_foc_empty_loop_start_us = 0U;
      g_foc_empty_loop_period_idx = 0U;
      g_foc_empty_loop_period_wrap = 0U;
+     g_foc_empty_loop_recent_period_idx = 0U;
+     g_foc_empty_loop_recent_period_wrap = 0U;
      g_foc_empty_loop_timeout_idx = 0U;
      g_foc_empty_loop_timeout_wrap = 0U;
      g_foc_empty_loop_timeout_count = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_empty_loop_last_timeout_us = 0U;
      s_foc_empty_loop_started = 0U;
+
+     for (i = 0U; i < FOC_EMPTY_LOOP_RECENT_PERIOD_SIZE; i++) {
+         g_foc_empty_loop_recent_period_us[i] = 0U;
+     }
 
      for (i = 0U; i < FOC_LOG_SIZE; i++) {
          g_foc_empty_loop_period_loop[i] = 0U;
@@ -804,6 +813,7 @@ static uint8_t s_foc_empty_loop_started = 0U;
      uint32_t prof_enter_us;
      uint32_t prof_exit_us;
      uint32_t period_us;
+     uint32_t recent_idx;
      uint32_t period_idx;
      uint32_t timeout_idx;
      uint32_t since_prev_timeout_us;
@@ -816,6 +826,18 @@ static uint8_t s_foc_empty_loop_started = 0U;
          s_foc_empty_loop_last_timeout_us = prof_enter_us;
          s_foc_empty_loop_started = 1U;
      }
+
+     recent_idx = g_foc_empty_loop_recent_period_idx;
+     if (recent_idx >= FOC_EMPTY_LOOP_RECENT_PERIOD_SIZE) {
+         recent_idx = 0U;
+     }
+     g_foc_empty_loop_recent_period_us[recent_idx] = period_us;
+     recent_idx++;
+     if (recent_idx >= FOC_EMPTY_LOOP_RECENT_PERIOD_SIZE) {
+         recent_idx = 0U;
+         g_foc_empty_loop_recent_period_wrap = 1U;
+     }
+     g_foc_empty_loop_recent_period_idx = recent_idx;
 
      period_idx = g_foc_empty_loop_period_idx;
      if (period_idx >= FOC_LOG_SIZE) {
