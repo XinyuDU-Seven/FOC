@@ -176,6 +176,10 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_post_recovery_duty_slew_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_post_recovery_duty_slew_remaining = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_post_recovery_duty_slew_active = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_zero_vector_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_zero_vector_remaining = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_current_wait_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_release_current_mA = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_recovery_current_wait_active = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -183,6 +187,8 @@ static uint32_t s_foc_prof_last_enter_us = 0U;
 static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
 static uint16_t s_hall_recovery_accept_cycles = 0U;
 static uint16_t s_post_recovery_duty_slew_cycles = 0U;
+static uint16_t s_recovery_zero_vector_cycles = 0U;
+static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 
  
 
@@ -204,6 +210,9 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
  static float FOC_ControlDtFromUs(uint32_t period_us, uint32_t max_us);
  static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
  static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us);
+ static void FOC_ResetClosedLoopForRecovery(void);
+ static void FOC_BeginRecoveryZeroVectorHold(void);
+ static void FOC_ServiceRecoveryZeroVectorHold(void);
  static void FOC_BeginPostRecoveryDutySlew(void);
  static void FOC_OutputZeroVoltageVector(void);
  static float FOC_LimitDutyStep(float target, float previous);
@@ -289,10 +298,16 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
      g_foc_post_recovery_duty_slew_remaining = 0U;
      g_foc_post_recovery_duty_slew_active = 0U;
      g_foc_recovery_zero_vector_count = 0U;
+     g_foc_recovery_zero_vector_remaining = 0U;
+     g_foc_recovery_current_wait_count = 0U;
+     g_foc_recovery_release_current_mA = 0U;
+     g_foc_recovery_current_wait_active = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
      s_post_recovery_duty_slew_cycles = 0U;
+     s_recovery_zero_vector_cycles = 0U;
+     s_recovery_zero_vector_min_cycles = 0U;
  }
 
  static uint32_t FOC_Prof_Enter(void)
@@ -400,6 +415,73 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
      }
 
      return 0U;
+ }
+
+ static void FOC_ResetClosedLoopForRecovery(void)
+ {
+     FOC_PID_Reset(&s_ctx.pid_speed);
+     FOC_PID_Reset(&s_ctx.pid_id);
+     FOC_PID_Reset(&s_ctx.pid_iq);
+
+     s_ctx.iq_ref = 0.0f;
+     s_ctx.speed_loop_counter = 0U;
+
+     s_ctx.v_dq.d = 0.0f;
+     s_ctx.v_dq.q = 0.0f;
+     s_ctx.v_ab.alpha = 0.0f;
+     s_ctx.v_ab.beta = 0.0f;
+ }
+
+ static void FOC_BeginRecoveryZeroVectorHold(void)
+ {
+     uint16_t min_cycles = FOC_RECOVERY_ZERO_VECTOR_MIN_CYCLES;
+     uint16_t max_cycles = FOC_RECOVERY_ZERO_VECTOR_MAX_CYCLES;
+
+     if (max_cycles < min_cycles) {
+         max_cycles = min_cycles;
+     }
+
+     s_recovery_zero_vector_cycles = max_cycles;
+     s_recovery_zero_vector_min_cycles = min_cycles;
+     g_foc_recovery_zero_vector_remaining = s_recovery_zero_vector_cycles;
+     g_foc_recovery_current_wait_active = 1U;
+ }
+
+ static void FOC_ServiceRecoveryZeroVectorHold(void)
+ {
+     uint8_t release_after_this_cycle = 0U;
+
+     if (s_recovery_zero_vector_cycles == 0U) {
+         g_foc_recovery_zero_vector_remaining = 0U;
+         g_foc_recovery_current_wait_active = 0U;
+         return;
+     }
+
+     if (s_recovery_zero_vector_min_cycles > 0U) {
+         s_recovery_zero_vector_min_cycles--;
+     } else if (s_ctx.current_peak <= FOC_RECOVERY_RELEASE_CURRENT_A) {
+         release_after_this_cycle = 1U;
+     } else {
+         g_foc_recovery_current_wait_count++;
+     }
+
+     FOC_OutputZeroVoltageVector();
+
+     if (s_recovery_zero_vector_cycles > 0U) {
+         s_recovery_zero_vector_cycles--;
+     }
+
+     if ((release_after_this_cycle != 0U) ||
+         (s_recovery_zero_vector_cycles == 0U)) {
+         s_recovery_zero_vector_cycles = 0U;
+         s_recovery_zero_vector_min_cycles = 0U;
+         g_foc_recovery_release_current_mA =
+             FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
+     }
+
+     g_foc_recovery_zero_vector_remaining = s_recovery_zero_vector_cycles;
+     g_foc_recovery_current_wait_active =
+         (s_recovery_zero_vector_cycles > 0U) ? 1U : 0U;
  }
 
  static void FOC_BeginPostRecoveryDutySlew(void)
@@ -582,6 +664,10 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
      s_ctx.duty_a = 0.0f;
      s_ctx.duty_b = 0.0f;
      s_ctx.duty_c = 0.0f;
+     s_recovery_zero_vector_cycles = 0U;
+     s_recovery_zero_vector_min_cycles = 0U;
+     g_foc_recovery_zero_vector_remaining = 0U;
+     g_foc_recovery_current_wait_active = 0U;
      s_ctx.state = FOC_STATE_FAULT;
  }
 
@@ -925,6 +1011,11 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 
      /* 速度参考归零 */
 
+     s_recovery_zero_vector_cycles = 0U;
+     s_recovery_zero_vector_min_cycles = 0U;
+     g_foc_recovery_zero_vector_remaining = 0U;
+     g_foc_recovery_current_wait_active = 0U;
+
      s_ctx.speed_ref = 0.0f;
 
      s_ctx.iq_ref    = 0.0f;
@@ -1040,11 +1131,11 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 
      }
 
+     FOC_Observer_ParsePhaseCurrents(&s_ctx.i_abc_raw, &s_config.current_calib, &s_ctx.i_abc);
+     s_ctx.v_bus = FOC_Observer_ParseBusVoltage(s_ctx.v_bus_raw, &s_config.current_calib);
+
      if (control_period_recovery != 0U) {
          float theta_recovery;
-
-         FOC_Observer_ParsePhaseCurrents(&s_ctx.i_abc_raw, &s_config.current_calib, &s_ctx.i_abc);
-         s_ctx.v_bus = FOC_Observer_ParseBusVoltage(s_ctx.v_bus_raw, &s_config.current_calib);
 
          if (s_ctx.hall_sector.sector != 0U) {
              s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
@@ -1054,20 +1145,23 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
              s_hall_recovery_accept_cycles = FOC_HALL_RECOVERY_ACCEPT_CYCLES;
          }
 
-         FOC_PID_Reset(&s_ctx.pid_id);
-         FOC_PID_Reset(&s_ctx.pid_iq);
-         FOC_OutputZeroVoltageVector();
+         FOC_ResetClosedLoopForRecovery();
+         FOC_BeginRecoveryZeroVectorHold();
          FOC_BeginPostRecoveryDutySlew();
 
          FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
          if (s_ctx.fault != FOC_FAULT_NONE) {
              FOC_EnterFaultState();
+         } else {
+             FOC_ServiceRecoveryZeroVectorHold();
          }
 
          theta_recovery = s_ctx.theta_e_predicted;
          if (s_ctx.direction == FOC_DIR_CCW) {
              theta_recovery = FOC_2PI - theta_recovery;
          }
+         FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
+         FOC_Park(&s_ctx.i_ab, theta_recovery, &s_ctx.i_dq);
          FOC_Log_Record(theta_recovery);
 
          prof_next_us = FOC_HAL_GetTimestampUs();
@@ -1084,6 +1178,36 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 
       * PredictAngle 检测不到扇区跳变，无法同步角度 */
 
+     if (s_recovery_zero_vector_cycles > 0U) {
+         float theta_recovery = FOC_Observer_PredictAngle(&s_ctx, observer_dt,
+                                                          s_config.motor.pole_pairs);
+
+         s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
+                                                   observer_dt,
+                                                   s_config.motor.pole_pairs);
+
+         FOC_ResetClosedLoopForRecovery();
+
+         FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
+         if (s_ctx.fault != FOC_FAULT_NONE) {
+             FOC_EnterFaultState();
+         } else {
+             FOC_ServiceRecoveryZeroVectorHold();
+         }
+
+         if (s_ctx.direction == FOC_DIR_CCW) {
+             theta_recovery = FOC_2PI - theta_recovery;
+         }
+         FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
+         FOC_Park(&s_ctx.i_ab, theta_recovery, &s_ctx.i_dq);
+         FOC_Log_Record(theta_recovery);
+
+         prof_next_us = FOC_HAL_GetTimestampUs();
+         FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 4U);
+         FOC_Prof_Exit(prof_enter_us, prof_next_us);
+         return;
+     }
+
      float theta_e_ctrl = FOC_Observer_PredictAngle(&s_ctx, observer_dt,
 
                                                      s_config.motor.pole_pairs);
@@ -1096,9 +1220,6 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 
  
 
-     FOC_Observer_ParsePhaseCurrents(&s_ctx.i_abc_raw, &s_config.current_calib, &s_ctx.i_abc);
-
-     s_ctx.v_bus = FOC_Observer_ParseBusVoltage(s_ctx.v_bus_raw, &s_config.current_calib);
 
  
 
