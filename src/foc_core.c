@@ -167,6 +167,8 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_resync_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_resync_period_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_resync_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_resync_cur_sector = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_late_recovery_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_late_recovery_period_us = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -192,6 +194,7 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
  static uint8_t FOC_ControlPeriodIsLate(uint32_t period_us);
  static float FOC_ControlDtFromUs(uint32_t period_us, uint32_t max_us);
  static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
+ static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us);
  static void FOC_EnterFaultState(void);
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
  static uint16_t FOC_HallMinSectorCycles(void);
@@ -262,6 +265,8 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      g_foc_hall_resync_period_us = 0U;
      g_foc_hall_resync_prev_sector = 0U;
      g_foc_hall_resync_cur_sector = 0U;
+     g_foc_late_recovery_count = 0U;
+     g_foc_late_recovery_period_us = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
  }
@@ -360,6 +365,17 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      }
 
      return 1000000.0f / (float)period_us;
+ }
+
+ static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us)
+ {
+     if (period_us > FOC_CONTROL_RECOVERY_PERIOD_US) {
+         g_foc_late_recovery_count++;
+         g_foc_late_recovery_period_us = period_us;
+         return 1U;
+     }
+
+     return 0U;
  }
 
  static void FOC_Log_Reset(void)
@@ -848,10 +864,12 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      uint32_t prof_next_us;
      uint32_t control_period_us;
      uint8_t control_period_late;
+     uint8_t control_period_recovery;
 
      prof_enter_us = FOC_Prof_Enter();
      control_period_us = FOC_ControlPeriodUs();
      control_period_late = FOC_ControlPeriodIsLate(control_period_us);
+     control_period_recovery = FOC_ControlPeriodNeedsRecovery(control_period_us);
      FOC_StateMachine();
      prof_mark_us = FOC_HAL_GetTimestampUs();
      g_foc_prof_after_state_us = prof_mark_us;
@@ -904,7 +922,7 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      FOC_HallSector_t hall_candidate;
 
      FOC_Observer_HallRawToSector(&s_ctx.hall_raw, &hall_candidate);
-     FOC_ApplyHallSector(&hall_candidate, control_period_late);
+     FOC_ApplyHallSector(&hall_candidate, control_period_recovery);
 
      if (s_ctx.fault != FOC_FAULT_NONE) {
          FOC_EnterFaultState();
@@ -925,6 +943,45 @@ static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
 
          s_ctx.theta_m = s_ctx.theta_e / (float)s_config.motor.pole_pairs;
 
+     }
+
+     if (control_period_recovery != 0U) {
+         float theta_recovery;
+
+         FOC_Observer_ParsePhaseCurrents(&s_ctx.i_abc_raw, &s_config.current_calib, &s_ctx.i_abc);
+         s_ctx.v_bus = FOC_Observer_ParseBusVoltage(s_ctx.v_bus_raw, &s_config.current_calib);
+
+         if (s_ctx.hall_sector.sector != 0U) {
+             s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
+                                                       observer_dt,
+                                                       s_config.motor.pole_pairs);
+             s_ctx.theta_e_predicted = s_ctx.theta_e;
+         }
+
+         s_ctx.v_dq.d = 0.0f;
+         s_ctx.v_dq.q = 0.0f;
+         s_ctx.v_ab.alpha = 0.0f;
+         s_ctx.v_ab.beta = 0.0f;
+         s_ctx.duty_a = 0.0f;
+         s_ctx.duty_b = 0.0f;
+         s_ctx.duty_c = 0.0f;
+         FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
+
+         FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
+         if (s_ctx.fault != FOC_FAULT_NONE) {
+             FOC_EnterFaultState();
+         }
+
+         theta_recovery = s_ctx.theta_e_predicted;
+         if (s_ctx.direction == FOC_DIR_CCW) {
+             theta_recovery = FOC_2PI - theta_recovery;
+         }
+         FOC_Log_Record(theta_recovery);
+
+         prof_next_us = FOC_HAL_GetTimestampUs();
+         FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 4U);
+         FOC_Prof_Exit(prof_enter_us, prof_next_us);
+         return;
      }
 
  
