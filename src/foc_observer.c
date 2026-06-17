@@ -102,19 +102,6 @@
  };
 
 static float s_startup_predict_speed_rpm = 0.0f;
-static float s_angle_sync_pending_rad = 0.0f;
-
-static float FOC_Observer_Clamp(float value, float min_value, float max_value)
-{
-    if (value < min_value) {
-        return min_value;
-    }
-    if (value > max_value) {
-        return max_value;
-    }
-
-    return value;
-}
 
 static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
 {
@@ -152,38 +139,6 @@ static float FOC_Observer_GetHallEdgeSyncAngle(uint8_t sector,
     }
 
     return FOC_NormalizeAngle(target + advance);
-}
-
-static void FOC_Observer_AddAngleSyncPending(float sync_step)
-{
-    s_angle_sync_pending_rad += sync_step;
-    s_angle_sync_pending_rad =
-        FOC_Observer_Clamp(s_angle_sync_pending_rad,
-                           -FOC_ANGLE_SYNC_PENDING_MAX_RAD,
-                            FOC_ANGLE_SYNC_PENDING_MAX_RAD);
-}
-
-static void FOC_Observer_ApplyAngleSyncPending(FOC_Context_t *ctx, float dt)
-{
-    float max_step = FOC_ANGLE_SYNC_SLEW_RATE_RAD_PER_S * dt;
-    float step;
-
-    if ((dt <= 0.0f) || (s_angle_sync_pending_rad == 0.0f)) {
-        return;
-    }
-    if (max_step <= 0.0f) {
-        return;
-    }
-
-    step = s_angle_sync_pending_rad;
-    if (step > max_step) {
-        step = max_step;
-    } else if (step < -max_step) {
-        step = -max_step;
-    }
-
-    ctx->theta_e_predicted += step;
-    s_angle_sync_pending_rad -= step;
 }
 
 static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
@@ -239,7 +194,6 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
      ctx->theta_e_predicted        = 0.0f;
      s_startup_predict_speed_rpm   = 0.0f;
-     s_angle_sync_pending_rad      = 0.0f;
 
  
 
@@ -528,10 +482,8 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
          float sync_factor = FOC_ANGLE_SYNC_FACTOR;
          float sync_step_max = FOC_ANGLE_SYNC_STEP_MAX_RAD;
          float speed_err = FOC_FABS(ctx->speed_ref - ctx->speed_filtered);
-         float diff;
          float diff_abs;
          float sync_step;
-         uint8_t immediate_sync = 0U;
 
 #if FOC_HALL_EDGE_SYNC_ENABLE
          target = FOC_Observer_GetHallEdgeSyncAngle(cur_sector, omega_e, dt);
@@ -539,7 +491,7 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
          sync_step_max = FOC_HALL_EDGE_SYNC_STEP_MAX_RAD;
 #endif
 
-         diff = target - ctx->theta_e_predicted;
+         float diff = target - ctx->theta_e_predicted;
 
          /* 处理角度环绕 */
 
@@ -556,7 +508,6 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
          if ((speed_err > FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM) ||
              (diff_abs > FOC_ANGLE_SYNC_RECOVERY_DIFF_RAD)) {
-             immediate_sync = 1U;
              if (sync_factor < FOC_ANGLE_SYNC_RECOVERY_FACTOR) {
                  sync_factor = FOC_ANGLE_SYNC_RECOVERY_FACTOR;
              }
@@ -569,7 +520,6 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
          /* A full-sector error means the extrapolator is no longer usable. */
          if (diff_abs > FOC_ANGLE_SYNC_RESYNC_DIFF_RAD) {
-             immediate_sync = 1U;
              sync_factor = 1.0f;
              sync_step_max = 0.0f;
          }
@@ -590,12 +540,7 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
              }
          }
 
-         if (immediate_sync != 0U) {
-             ctx->theta_e_predicted += sync_step;
-             s_angle_sync_pending_rad = 0.0f;
-         } else {
-             FOC_Observer_AddAngleSyncPending(sync_step);
-         }
+         ctx->theta_e_predicted += sync_step;
 
      } else {
 
@@ -608,8 +553,6 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
  
 
      /* 归一化到 [0, 2π) */
-
-     FOC_Observer_ApplyAngleSyncPending(ctx, dt);
 
      while (ctx->theta_e_predicted >= FOC_2PI) {
 
