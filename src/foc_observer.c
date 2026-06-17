@@ -451,6 +451,9 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
          float target = ctx->hall_sector.theta_e;
          float sync_factor = FOC_ANGLE_SYNC_FACTOR;
+         float sync_step_max = FOC_ANGLE_SYNC_STEP_MAX_RAD;
+         float speed_err = FOC_FABS(ctx->speed_ref - ctx->speed_filtered);
+         float diff_abs;
          float sync_step;
 
          float diff = target - ctx->theta_e_predicted;
@@ -461,8 +464,29 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
          if (diff < -FOC_PI) diff += FOC_2PI;
 
+         diff_abs = FOC_FABS(diff);
+
          if (dt > ((float)FOC_CONTROL_LATE_PERIOD_US * 1.0e-6f)) {
              sync_factor = FOC_LATE_PERIOD_ANGLE_SYNC_FACTOR;
+             sync_step_max = FOC_LATE_PERIOD_ANGLE_SYNC_STEP_MAX_RAD;
+         }
+
+         if ((speed_err > FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM) ||
+             (diff_abs > FOC_ANGLE_SYNC_RECOVERY_DIFF_RAD)) {
+             if (sync_factor < FOC_ANGLE_SYNC_RECOVERY_FACTOR) {
+                 sync_factor = FOC_ANGLE_SYNC_RECOVERY_FACTOR;
+             }
+             if ((sync_step_max > 0.0f) &&
+                 ((FOC_ANGLE_SYNC_RECOVERY_STEP_MAX_RAD <= 0.0f) ||
+                  (sync_step_max < FOC_ANGLE_SYNC_RECOVERY_STEP_MAX_RAD))) {
+                 sync_step_max = FOC_ANGLE_SYNC_RECOVERY_STEP_MAX_RAD;
+             }
+         }
+
+         /* A full-sector error means the extrapolator is no longer usable. */
+         if (diff_abs > FOC_ANGLE_SYNC_RESYNC_DIFF_RAD) {
+             sync_factor = 1.0f;
+             sync_step_max = 0.0f;
          }
 
          if (sync_factor > 1.0f) {
@@ -473,11 +497,11 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
          sync_step = diff * sync_factor;
 
-         if (FOC_ANGLE_SYNC_STEP_MAX_RAD > 0.0f) {
-             if (sync_step > FOC_ANGLE_SYNC_STEP_MAX_RAD) {
-                 sync_step = FOC_ANGLE_SYNC_STEP_MAX_RAD;
-             } else if (sync_step < -FOC_ANGLE_SYNC_STEP_MAX_RAD) {
-                 sync_step = -FOC_ANGLE_SYNC_STEP_MAX_RAD;
+         if (sync_step_max > 0.0f) {
+             if (sync_step > sync_step_max) {
+                 sync_step = sync_step_max;
+             } else if (sync_step < -sync_step_max) {
+                 sync_step = -sync_step_max;
              }
          }
 
