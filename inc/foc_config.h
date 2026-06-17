@@ -447,7 +447,7 @@ extern "C" {
 #endif
 
 #ifndef FOC_HALL_ANGLE_TRIM_S1_RAD
-#define FOC_HALL_ANGLE_TRIM_S1_RAD      (-(3.0f  / 180.0f) * FOC_PI)
+#define FOC_HALL_ANGLE_TRIM_S1_RAD      (-(5.0f  / 180.0f) * FOC_PI)
 #endif
 
 #ifndef FOC_HALL_ANGLE_TRIM_S2_RAD
@@ -455,7 +455,7 @@ extern "C" {
 #endif
 
 #ifndef FOC_HALL_ANGLE_TRIM_S3_RAD
-#define FOC_HALL_ANGLE_TRIM_S3_RAD      (-(2.0f  / 180.0f) * FOC_PI)
+#define FOC_HALL_ANGLE_TRIM_S3_RAD      (-(4.0f  / 180.0f) * FOC_PI)
 #endif
 
 #ifndef FOC_HALL_ANGLE_TRIM_S4_RAD
@@ -467,7 +467,7 @@ extern "C" {
 #endif
 
 #ifndef FOC_HALL_ANGLE_TRIM_S6_RAD
-#define FOC_HALL_ANGLE_TRIM_S6_RAD      (-(3.0f  / 180.0f) * FOC_PI)
+#define FOC_HALL_ANGLE_TRIM_S6_RAD      (-(6.0f  / 180.0f) * FOC_PI)
 #endif
 
 /* Reject Hall sector changes faster than this fraction of the theoretical
