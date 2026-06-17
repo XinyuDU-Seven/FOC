@@ -196,6 +196,8 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
      ctx->speed_filtered           = 0.0f;
 
+     ctx->speed_ctrl_fdb           = 0.0f;
+
      ctx->timestamp_prev           = FOC_HAL_GetTimestampUs();
      ctx->hall_sector_timestamp_us = ctx->timestamp_prev;
 

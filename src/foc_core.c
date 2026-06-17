@@ -200,6 +200,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_used_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -235,10 +236,11 @@ static uint32_t s_hall_event_seq_seen = 0U;
  static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
  static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us);
  static void FOC_ResetClosedLoopForRecovery(void);
- static void FOC_ResetCurrentAngleTrim(void);
- static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
- static void FOC_UpdateCurrentAngleTrim(float dt);
- static void FOC_BeginRecoveryZeroVectorHold(void);
+static void FOC_ResetCurrentAngleTrim(void);
+static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
+static void FOC_UpdateCurrentAngleTrim(float dt);
+static void FOC_UpdateSpeedControlFeedback(void);
+static void FOC_BeginRecoveryZeroVectorHold(void);
  static void FOC_ServiceRecoveryZeroVectorHold(void);
  static void FOC_BeginPostRecoveryDutySlew(void);
  static void FOC_RunRecoveryCurrentControl(float theta_ctrl,
@@ -310,8 +312,8 @@ static uint32_t s_hall_event_seq_seen = 0U;
 #endif
  }
 
- static void FOC_UpdateCurrentAngleTrim(float dt)
- {
+static void FOC_UpdateCurrentAngleTrim(float dt)
+{
 #if FOC_CURRENT_ANGLE_TRIM_ENABLE
      float speed_ref_abs = FOC_FABS(s_ctx.speed_ref);
      float speed_err = FOC_FABS(s_ctx.speed_ref - s_ctx.speed_fdb);
@@ -342,10 +344,30 @@ static uint32_t s_hall_event_seq_seen = 0U;
      (void)dt;
      FOC_ResetCurrentAngleTrim();
 #endif
- }
+}
 
- static void FOC_Prof_Reset(void)
- {
+static void FOC_UpdateSpeedControlFeedback(void)
+{
+    float alpha = FOC_SPEED_CTRL_FILTER_ALPHA;
+
+    if ((FOC_FABS(s_ctx.speed_ref) < 1.0f) &&
+        (FOC_FABS(s_ctx.speed_fdb) < 1.0f)) {
+        s_ctx.speed_ctrl_fdb = 0.0f;
+    } else if ((FOC_FABS(s_ctx.speed_ctrl_fdb) < 1.0f) &&
+               (FOC_FABS(s_ctx.speed_fdb) >= 1.0f)) {
+        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+    } else if (alpha >= 1.0f) {
+        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+    } else if (alpha > 0.0f) {
+        s_ctx.speed_ctrl_fdb =
+            alpha * s_ctx.speed_fdb + (1.0f - alpha) * s_ctx.speed_ctrl_fdb;
+    }
+
+    g_foc_speed_ctrl_fdb_rpm = FOC_Log_ToI16(s_ctx.speed_ctrl_fdb, 1.0f);
+}
+
+static void FOC_Prof_Reset(void)
+{
      g_foc_prof_enter_us = 0U;
      g_foc_prof_after_state_us = 0U;
      g_foc_prof_after_hall_us = 0U;
@@ -396,6 +418,7 @@ static uint32_t s_hall_event_seq_seen = 0U;
      g_foc_hall_event_seq = 0U;
      g_foc_hall_event_age_us = 0U;
      g_foc_hall_poll_count = 0U;
+     g_foc_speed_ctrl_fdb_rpm = 0;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -534,6 +557,8 @@ static uint32_t s_hall_event_seq_seen = 0U;
      FOC_ResetCurrentAngleTrim();
 
      s_ctx.iq_ref = 0.0f;
+     s_ctx.speed_ctrl_fdb = 0.0f;
+     g_foc_speed_ctrl_fdb_rpm = 0;
      s_ctx.speed_loop_counter = 0U;
      s_speed_loop_accum_us = 0U;
 
@@ -1192,6 +1217,8 @@ static uint32_t s_hall_event_seq_seen = 0U;
      s_ctx.speed_ref = 0.0f;
 
      s_ctx.iq_ref    = 0.0f;
+     s_ctx.speed_ctrl_fdb = 0.0f;
+     g_foc_speed_ctrl_fdb_rpm = 0;
      s_ctx.speed_loop_counter = 0U;
      s_speed_loop_accum_us = 0U;
 
@@ -1395,6 +1422,8 @@ static uint32_t s_hall_event_seq_seen = 0U;
 
          FOC_PID_Reset(&s_ctx.pid_speed);
          s_ctx.iq_ref = 0.0f;
+         s_ctx.speed_ctrl_fdb = 0.0f;
+         g_foc_speed_ctrl_fdb_rpm = 0;
          s_ctx.speed_loop_counter = 0U;
 
          FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
@@ -1429,6 +1458,7 @@ static uint32_t s_hall_event_seq_seen = 0U;
      s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
 
                                                observer_dt, s_config.motor.pole_pairs);
+     FOC_UpdateSpeedControlFeedback();
 
      if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
          theta_e_ctrl = s_ctx.theta_e_predicted;
@@ -1512,7 +1542,7 @@ static uint32_t s_hall_event_seq_seen = 0U;
 
              s_ctx.iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
 
-                                            s_ctx.speed_ref - s_ctx.speed_fdb,
+                                            s_ctx.speed_ref - s_ctx.speed_ctrl_fdb,
 
                                             speed_dt, speed_inv_dt);
 

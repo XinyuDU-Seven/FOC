@@ -409,6 +409,8 @@
 
      float                  speed_filtered;   /**< 滤波后转速 (rpm) */
 
+     float                  speed_ctrl_fdb;   /**< Speed feedback filtered for speed PID (rpm) */
+
      uint32_t               timestamp_prev;   /**< 上一次扇区跳变时间戳 (us) */
 
      uint32_t               hall_sector_dt_us; /**< 上一次有效扇区间隔 (us) */
