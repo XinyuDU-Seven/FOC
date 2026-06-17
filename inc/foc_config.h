@@ -335,7 +335,7 @@ extern "C" {
  * one or more Hall transitions.
  */
 #ifndef FOC_HALL_ANGLE_OFFSET_RAD
-#define FOC_HALL_ANGLE_OFFSET_RAD       (FOC_PI / 12.0f)
+#define FOC_HALL_ANGLE_OFFSET_RAD       (-(FOC_PI / 12.0f))
 #endif
 
 /* Reject Hall sector changes faster than this fraction of the theoretical
