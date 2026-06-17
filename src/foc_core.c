@@ -190,6 +190,8 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_zero_vector_remaining = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_current_wait_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_release_current_mA = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_recovery_current_wait_active = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_current_limit_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_current_limit_peak_mA = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -228,6 +230,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
  static void FOC_RunRecoveryCurrentControl(float theta_ctrl,
                                            float pid_dt,
                                            float pid_inv_dt);
+ static void FOC_ApplyMeasuredCurrentLimit(void);
  static float FOC_LimitDutyStep(float target, float previous);
  static void FOC_ApplyPostRecoveryDutySlew(float prev_a,
                                            float prev_b,
@@ -318,6 +321,8 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      g_foc_recovery_current_wait_count = 0U;
      g_foc_recovery_release_current_mA = 0U;
      g_foc_recovery_current_wait_active = 0U;
+     g_foc_current_limit_count = 0U;
+     g_foc_current_limit_peak_mA = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -548,6 +553,37 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 
      g_foc_recovery_current_control_count++;
      FOC_HAL_SetDutyCycle(s_ctx.duty_a, s_ctx.duty_b, s_ctx.duty_c);
+ }
+
+ static void FOC_ApplyMeasuredCurrentLimit(void)
+ {
+     float limit_a = s_config.motor.max_current_a;
+
+     if (limit_a <= 0.0f) {
+         return;
+     }
+
+     if (s_ctx.current_peak <= limit_a) {
+         return;
+     }
+
+     /*
+      * max_current_a is the running current limit, while the protection
+      * overcurrent threshold is the final fault cutoff.  Once measured phase
+      * current exceeds the running limit, remove torque demand and clear PI
+      * windup immediately so the next voltage vector pulls current down
+      * instead of waiting for the hard fault threshold.
+      */
+     s_ctx.iq_ref = 0.0f;
+     s_ctx.speed_loop_counter = 0U;
+
+     FOC_PID_Reset(&s_ctx.pid_speed);
+     FOC_PID_Reset(&s_ctx.pid_id);
+     FOC_PID_Reset(&s_ctx.pid_iq);
+
+     g_foc_current_limit_count++;
+     g_foc_current_limit_peak_mA =
+         FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
  }
 
  static float FOC_LimitDutyStep(float target, float previous)
@@ -1357,7 +1393,9 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 
      }
 
- 
+     FOC_ApplyMeasuredCurrentLimit();
+
+
 
      /* ---- 7. 电流环 PID ---- */
 
