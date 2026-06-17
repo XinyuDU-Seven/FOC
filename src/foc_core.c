@@ -190,6 +190,11 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_zero_vector_remaining = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_current_wait_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_release_current_mA = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_recovery_current_wait_active = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_cycle_reject_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_min_cycle_last_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_min_cycle_last_min = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_cycle_prev_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_cycle_cur_sector = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -318,6 +323,11 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      g_foc_recovery_current_wait_count = 0U;
      g_foc_recovery_release_current_mA = 0U;
      g_foc_recovery_current_wait_active = 0U;
+     g_foc_hall_min_cycle_reject_count = 0U;
+     g_foc_hall_min_cycle_last_count = 0U;
+     g_foc_hall_min_cycle_last_min = 0U;
+     g_foc_hall_min_cycle_prev_sector = 0U;
+     g_foc_hall_min_cycle_cur_sector = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -826,8 +836,28 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
          return 1U;
      }
 
-     if (s_ctx.sector_no_change_count < FOC_HallMinSectorCycles()) {
-         return 0U;
+     {
+         uint16_t min_cycles = FOC_HallMinSectorCycles();
+         uint16_t waited_cycles = s_ctx.sector_no_change_count;
+
+         /*
+          * FOC_ApplyHallSector() runs before CalcSpeed(), where the current
+          * loop's no-change count would normally be incremented. Include the
+          * current sample so a legal high-speed Hall transition is not delayed
+          * by one control period.
+          */
+         if (waited_cycles < 65535U) {
+             waited_cycles++;
+         }
+
+         if (waited_cycles < min_cycles) {
+             g_foc_hall_min_cycle_reject_count++;
+             g_foc_hall_min_cycle_last_count = waited_cycles;
+             g_foc_hall_min_cycle_last_min = min_cycles;
+             g_foc_hall_min_cycle_prev_sector = prev_sector;
+             g_foc_hall_min_cycle_cur_sector = cur_sector;
+             return 0U;
+         }
      }
 
      s_ctx.hall_sector = *candidate;
