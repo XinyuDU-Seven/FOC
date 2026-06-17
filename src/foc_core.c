@@ -196,6 +196,11 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_min_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_current_angle_trim_mrad = 0;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_angle_loss_recovery_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_angle_loss_current_mA = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_angle_loss_id_mA = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_angle_loss_iq_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_angle_loss_sector = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -233,6 +238,8 @@ static float s_current_angle_trim_rad = 0.0f;
  static void FOC_ResetCurrentAngleTrim(void);
  static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
  static void FOC_UpdateCurrentAngleTrim(float dt);
+ static float FOC_GetPhaseCurrentPeak(void);
+ static uint8_t FOC_RecoverAngleLoss(float *theta_ctrl);
  static void FOC_BeginRecoveryZeroVectorHold(void);
  static void FOC_ServiceRecoveryZeroVectorHold(void);
  static void FOC_BeginPostRecoveryDutySlew(void);
@@ -337,6 +344,74 @@ static float s_current_angle_trim_rad = 0.0f;
 #endif
  }
 
+ static float FOC_GetPhaseCurrentPeak(void)
+ {
+     float peak = FOC_FABS(s_ctx.i_abc.ia);
+     float ib_abs = FOC_FABS(s_ctx.i_abc.ib);
+     float ic_abs = FOC_FABS(s_ctx.i_abc.ic);
+
+     if (ib_abs > peak) {
+         peak = ib_abs;
+     }
+     if (ic_abs > peak) {
+         peak = ic_abs;
+     }
+
+     return peak;
+ }
+
+ static uint8_t FOC_RecoverAngleLoss(float *theta_ctrl)
+ {
+#if FOC_ANGLE_LOSS_RECOVERY_ENABLE
+     float phase_peak;
+     float id_before;
+     float iq_before;
+     float id_abs;
+     float iq_abs;
+     float theta_resync;
+
+     if ((theta_ctrl == NULL) || (s_ctx.hall_sector.sector == 0U)) {
+         return 0U;
+     }
+
+     phase_peak = FOC_GetPhaseCurrentPeak();
+     id_before = s_ctx.i_dq.d;
+     iq_before = s_ctx.i_dq.q;
+     id_abs = FOC_FABS(id_before);
+     iq_abs = FOC_FABS(iq_before);
+
+     if ((phase_peak < FOC_ANGLE_LOSS_RECOVERY_CURRENT_A) ||
+         (id_abs < FOC_ANGLE_LOSS_RECOVERY_ID_A) ||
+         (id_abs < (iq_abs * FOC_ANGLE_LOSS_RECOVERY_ID_IQ_RATIO))) {
+         return 0U;
+     }
+
+     theta_resync = s_ctx.hall_sector.theta_e;
+     s_ctx.theta_e_predicted = theta_resync;
+
+     if (s_ctx.direction == FOC_DIR_CCW) {
+         theta_resync = FOC_2PI - theta_resync;
+     }
+     theta_resync = FOC_ApplyCurrentAngleTrim(theta_resync);
+
+     *theta_ctrl = theta_resync;
+     FOC_Park(&s_ctx.i_ab, theta_resync, &s_ctx.i_dq);
+     FOC_PID_Reset(&s_ctx.pid_id);
+     FOC_PID_Reset(&s_ctx.pid_iq);
+
+     g_foc_angle_loss_recovery_count++;
+     g_foc_angle_loss_current_mA = FOC_Log_ToU16(phase_peak, 1000.0f);
+     g_foc_angle_loss_id_mA = FOC_Log_ToI16(id_before, 1000.0f);
+     g_foc_angle_loss_iq_mA = FOC_Log_ToI16(iq_before, 1000.0f);
+     g_foc_angle_loss_sector = s_ctx.hall_sector.sector;
+
+     return 1U;
+#else
+     (void)theta_ctrl;
+     return 0U;
+#endif
+ }
+
  static void FOC_Prof_Reset(void)
  {
      g_foc_prof_enter_us = 0U;
@@ -385,6 +460,11 @@ static float s_current_angle_trim_rad = 0.0f;
      g_foc_hall_min_time_last_min_us = 0U;
      g_foc_hall_min_time_prev_sector = 0U;
      g_foc_hall_min_time_cur_sector = 0U;
+     g_foc_angle_loss_recovery_count = 0U;
+     g_foc_angle_loss_current_mA = 0U;
+     g_foc_angle_loss_id_mA = 0;
+     g_foc_angle_loss_iq_mA = 0;
+     g_foc_angle_loss_sector = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -1413,6 +1493,7 @@ static float s_current_angle_trim_rad = 0.0f;
      /* ---- 4. Park 变换 ---- */
 
      FOC_Park(&s_ctx.i_ab, theta_e_ctrl, &s_ctx.i_dq);
+     FOC_RecoverAngleLoss(&theta_e_ctrl);
      FOC_UpdateCurrentAngleTrim(pid_dt);
 
      /* ---- 5. 保护检测：必须早于 PID / SVPWM / PWM 输出 ---- */
