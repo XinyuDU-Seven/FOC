@@ -195,6 +195,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_elapsed_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_min_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_cur_sector = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_current_angle_trim_mrad = 0;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -205,6 +206,7 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 static uint16_t s_recovery_zero_vector_cycles = 0U;
 static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 static uint32_t s_speed_loop_accum_us = 0U;
+static float s_current_angle_trim_rad = 0.0f;
 
  
 
@@ -228,6 +230,9 @@ static uint32_t s_speed_loop_accum_us = 0U;
  static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
  static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us);
  static void FOC_ResetClosedLoopForRecovery(void);
+ static void FOC_ResetCurrentAngleTrim(void);
+ static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
+ static void FOC_UpdateCurrentAngleTrim(float dt);
  static void FOC_BeginRecoveryZeroVectorHold(void);
  static void FOC_ServiceRecoveryZeroVectorHold(void);
  static void FOC_BeginPostRecoveryDutySlew(void);
@@ -279,6 +284,57 @@ static uint32_t s_speed_loop_accum_us = 0U;
          angle += FOC_2PI;
      }
      return (uint16_t)(angle * (65535.0f / FOC_2PI));
+ }
+
+ static void FOC_ResetCurrentAngleTrim(void)
+ {
+     s_current_angle_trim_rad = 0.0f;
+     g_foc_current_angle_trim_mrad = 0;
+ }
+
+ static float FOC_ApplyCurrentAngleTrim(float theta_ctrl)
+ {
+#if FOC_CURRENT_ANGLE_TRIM_ENABLE
+     theta_ctrl += s_current_angle_trim_rad;
+     return FOC_NormalizeAngle(theta_ctrl);
+#else
+     (void)theta_ctrl;
+     return theta_ctrl;
+#endif
+ }
+
+ static void FOC_UpdateCurrentAngleTrim(float dt)
+ {
+#if FOC_CURRENT_ANGLE_TRIM_ENABLE
+     float speed_ref_abs = FOC_FABS(s_ctx.speed_ref);
+     float speed_err = FOC_FABS(s_ctx.speed_ref - s_ctx.speed_fdb);
+     float iq_abs = FOC_FABS(s_ctx.i_dq.q);
+
+     if ((dt > 0.0f) &&
+         (speed_ref_abs >= FOC_CURRENT_ANGLE_TRIM_MIN_SPEED_RPM) &&
+         (speed_err <= FOC_CURRENT_ANGLE_TRIM_MAX_SPEED_ERR_RPM) &&
+         (iq_abs >= FOC_CURRENT_ANGLE_TRIM_MIN_IQ_A)) {
+         float id_norm = s_ctx.i_dq.d / iq_abs;
+
+         id_norm = FOC_CLAMP(id_norm, -1.0f, 1.0f);
+         s_current_angle_trim_rad -=
+             FOC_CURRENT_ANGLE_TRIM_GAIN * dt * id_norm;
+         s_current_angle_trim_rad = FOC_CLAMP(s_current_angle_trim_rad,
+                                              -FOC_CURRENT_ANGLE_TRIM_MAX_RAD,
+                                               FOC_CURRENT_ANGLE_TRIM_MAX_RAD);
+     } else {
+         s_current_angle_trim_rad *= FOC_CURRENT_ANGLE_TRIM_DECAY;
+         if (FOC_FABS(s_current_angle_trim_rad) < 0.0005f) {
+             s_current_angle_trim_rad = 0.0f;
+         }
+     }
+
+     g_foc_current_angle_trim_mrad =
+         FOC_Log_ToI16(s_current_angle_trim_rad, 1000.0f);
+#else
+     (void)dt;
+     FOC_ResetCurrentAngleTrim();
+#endif
  }
 
  static void FOC_Prof_Reset(void)
@@ -463,6 +519,7 @@ static uint32_t s_speed_loop_accum_us = 0U;
      FOC_PID_Reset(&s_ctx.pid_speed);
      FOC_PID_Reset(&s_ctx.pid_id);
      FOC_PID_Reset(&s_ctx.pid_iq);
+     FOC_ResetCurrentAngleTrim();
 
      s_ctx.iq_ref = 0.0f;
      s_ctx.speed_loop_counter = 0U;
@@ -937,6 +994,7 @@ static uint32_t s_speed_loop_accum_us = 0U;
      FOC_LastFault_Reset();
 
      FOC_Log_Reset();
+     FOC_ResetCurrentAngleTrim();
 
  
 
@@ -1037,6 +1095,7 @@ static uint32_t s_speed_loop_accum_us = 0U;
      FOC_PID_Reset(&s_ctx.pid_id);
 
      FOC_PID_Reset(&s_ctx.pid_iq);
+     FOC_ResetCurrentAngleTrim();
      s_speed_loop_accum_us = 0U;
 
 
@@ -1096,6 +1155,7 @@ static uint32_t s_speed_loop_accum_us = 0U;
      FOC_PID_Reset(&s_ctx.pid_id);
 
      FOC_PID_Reset(&s_ctx.pid_iq);
+     FOC_ResetCurrentAngleTrim();
      s_speed_loop_accum_us = 0U;
 
  
@@ -1340,6 +1400,8 @@ static uint32_t s_speed_loop_accum_us = 0U;
 
      }
 
+     theta_e_ctrl = FOC_ApplyCurrentAngleTrim(theta_e_ctrl);
+
  
 
      /* ---- 3. Clarke 变换 ---- */
@@ -1351,6 +1413,7 @@ static uint32_t s_speed_loop_accum_us = 0U;
      /* ---- 4. Park 变换 ---- */
 
      FOC_Park(&s_ctx.i_ab, theta_e_ctrl, &s_ctx.i_dq);
+     FOC_UpdateCurrentAngleTrim(pid_dt);
 
      /* ---- 5. 保护检测：必须早于 PID / SVPWM / PWM 输出 ---- */
 
