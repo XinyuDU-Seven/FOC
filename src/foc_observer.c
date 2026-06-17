@@ -409,6 +409,37 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
  {
 
      uint8_t cur_sector = ctx->hall_sector.sector;
+     float speed_for_predict = ctx->speed_filtered;
+
+     /* Always extrapolate by the real control interval first. */
+     if ((ctx->speed_ref > 0.0f) &&
+         (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
+         float startup_target = ctx->speed_ref;
+         float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
+
+         if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {
+             startup_target = FOC_STARTUP_PREDICT_MAX_RPM;
+         }
+         if (s_startup_predict_speed_rpm < FOC_STARTUP_PREDICT_START_RPM) {
+             s_startup_predict_speed_rpm = FOC_STARTUP_PREDICT_START_RPM;
+         }
+         if (s_startup_predict_speed_rpm < startup_target) {
+             s_startup_predict_speed_rpm += ramp_step;
+             if (s_startup_predict_speed_rpm > startup_target) {
+                 s_startup_predict_speed_rpm = startup_target;
+             }
+         } else if (s_startup_predict_speed_rpm > startup_target) {
+             s_startup_predict_speed_rpm = startup_target;
+         }
+         speed_for_predict = s_startup_predict_speed_rpm;
+     } else {
+         s_startup_predict_speed_rpm = speed_for_predict;
+     }
+
+     if (speed_for_predict > 0.0f) {
+         float omega_e = speed_for_predict * (FOC_2PI / 60.0f) * (float)pole_pairs;
+         ctx->theta_e_predicted += omega_e * dt;
+     }
 
  
 
@@ -457,41 +488,6 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
         /* 角度外推：启动阶段 speed_filtered 尚未收敛，使用 speed_ref 驱动角度推进；
 
          * 速度收敛后自然切换到 speed_filtered，避免稳态角度超前 */
-
-        /* During startup, ramp predicted angle speed instead of jumping to speed_ref. */
-        float speed_for_predict = ctx->speed_filtered;
-
-        if ((ctx->speed_ref > 0.0f) &&
-            (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
-            float startup_target = ctx->speed_ref;
-            float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
-
-            if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {
-                startup_target = FOC_STARTUP_PREDICT_MAX_RPM;
-            }
-            if (s_startup_predict_speed_rpm < FOC_STARTUP_PREDICT_START_RPM) {
-                s_startup_predict_speed_rpm = FOC_STARTUP_PREDICT_START_RPM;
-            }
-            if (s_startup_predict_speed_rpm < startup_target) {
-                s_startup_predict_speed_rpm += ramp_step;
-                if (s_startup_predict_speed_rpm > startup_target) {
-                    s_startup_predict_speed_rpm = startup_target;
-                }
-            } else if (s_startup_predict_speed_rpm > startup_target) {
-                s_startup_predict_speed_rpm = startup_target;
-            }
-            speed_for_predict = s_startup_predict_speed_rpm;
-        } else {
-            s_startup_predict_speed_rpm = speed_for_predict;
-        }
-
-        if (speed_for_predict > 0.0f) {
-
-            float omega_e = speed_for_predict * (FOC_2PI / 60.0f) * (float)pole_pairs;
-
-            ctx->theta_e_predicted += omega_e * dt;
-
-        }
 
     }
 
