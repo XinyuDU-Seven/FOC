@@ -113,6 +113,34 @@ static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
     return 0.0f;
 }
 
+static float FOC_Observer_GetHallEntryAngle(uint8_t sector)
+{
+    if (sector >= 1U && sector <= 6U) {
+        return FOC_NormalizeAngle(s_hall_sector_angle_lut[sector]
+                                - (FOC_PI / 6.0f)
+                                + FOC_HALL_ANGLE_OFFSET_RAD);
+    }
+
+    return 0.0f;
+}
+
+static float FOC_Observer_GetHallEdgeSyncAngle(uint8_t sector,
+                                                float omega_e,
+                                                float dt)
+{
+    float target = FOC_Observer_GetHallEntryAngle(sector);
+    float advance = omega_e * dt * FOC_HALL_EDGE_SYNC_DT_FRACTION;
+
+    if (advance < 0.0f) {
+        advance = 0.0f;
+    }
+    if (advance > FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD) {
+        advance = FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD;
+    }
+
+    return FOC_NormalizeAngle(target + advance);
+}
+
 static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
                                                 uint8_t prev_sector,
                                                 uint8_t cur_sector)
@@ -410,6 +438,7 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
      uint8_t cur_sector = ctx->hall_sector.sector;
      float speed_for_predict = ctx->speed_filtered;
+     float omega_e = 0.0f;
 
      /* Always extrapolate by the real control interval first. */
      if ((ctx->speed_ref > 0.0f) &&
@@ -437,7 +466,7 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
      }
 
      if (speed_for_predict > 0.0f) {
-         float omega_e = speed_for_predict * (FOC_2PI / 60.0f) * (float)pole_pairs;
+         omega_e = speed_for_predict * (FOC_2PI / 60.0f) * (float)pole_pairs;
          ctx->theta_e_predicted += omega_e * dt;
      }
 
@@ -455,6 +484,12 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
          float speed_err = FOC_FABS(ctx->speed_ref - ctx->speed_filtered);
          float diff_abs;
          float sync_step;
+
+#if FOC_HALL_EDGE_SYNC_ENABLE
+         target = FOC_Observer_GetHallEdgeSyncAngle(cur_sector, omega_e, dt);
+         sync_factor = FOC_HALL_EDGE_SYNC_FACTOR;
+         sync_step_max = FOC_HALL_EDGE_SYNC_STEP_MAX_RAD;
+#endif
 
          float diff = target - ctx->theta_e_predicted;
 

@@ -305,6 +305,36 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_HALL_EDGE_SYNC_ENABLE
+
+#define FOC_HALL_EDGE_SYNC_ENABLE       1
+
+#endif
+
+#ifndef FOC_HALL_EDGE_SYNC_FACTOR
+
+#define FOC_HALL_EDGE_SYNC_FACTOR       1.0f
+
+#endif
+
+#ifndef FOC_HALL_EDGE_SYNC_STEP_MAX_RAD
+
+#define FOC_HALL_EDGE_SYNC_STEP_MAX_RAD (FOC_PI / 12.0f)
+
+#endif
+
+#ifndef FOC_HALL_EDGE_SYNC_DT_FRACTION
+
+#define FOC_HALL_EDGE_SYNC_DT_FRACTION  0.5f
+
+#endif
+
+#ifndef FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD
+
+#define FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD  (FOC_PI / 12.0f)
+
+#endif
+
 #ifndef FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM
 
 #define FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM  200.0f
@@ -366,9 +396,9 @@ extern "C" {
 #endif
 
 /* Hall electrical angle calibration.
- * The Hall lookup table stores sector center angles. Use the center by
- * default; edge-based sync is too sensitive when a long FOC period skips
- * one or more Hall transitions.
+ * The Hall lookup table stores sector center angles for compatibility.
+ * Control-angle synchronization uses the sector entry edge when
+ * FOC_HALL_EDGE_SYNC_ENABLE is set.
  */
 #ifndef FOC_HALL_ANGLE_OFFSET_RAD
 #define FOC_HALL_ANGLE_OFFSET_RAD       0.0f
