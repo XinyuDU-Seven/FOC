@@ -103,10 +103,30 @@
 
 static float s_startup_predict_speed_rpm = 0.0f;
 
+static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
+{
+    static const float trim_lut[7] = {
+        0.0f,
+        FOC_HALL_ANGLE_TRIM_S1_RAD,
+        FOC_HALL_ANGLE_TRIM_S2_RAD,
+        FOC_HALL_ANGLE_TRIM_S3_RAD,
+        FOC_HALL_ANGLE_TRIM_S4_RAD,
+        FOC_HALL_ANGLE_TRIM_S5_RAD,
+        FOC_HALL_ANGLE_TRIM_S6_RAD,
+    };
+
+    if (sector >= 1U && sector <= 6U) {
+        return trim_lut[sector];
+    }
+
+    return 0.0f;
+}
+
 static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
 {
     if (sector >= 1U && sector <= 6U) {
         return FOC_NormalizeAngle(s_hall_sector_angle_lut[sector]
+                                + FOC_Observer_GetHallAngleTrim(sector)
                                 + FOC_HALL_ANGLE_OFFSET_RAD);
     }
 
@@ -122,6 +142,7 @@ static float FOC_Observer_GetHallEntryAngle(uint8_t sector, FOC_Dir_e direction)
 
         return FOC_NormalizeAngle(s_hall_sector_angle_lut[sector]
                                 + edge_offset
+                                + FOC_Observer_GetHallAngleTrim(sector)
                                 + FOC_HALL_ANGLE_OFFSET_RAD);
     }
 
