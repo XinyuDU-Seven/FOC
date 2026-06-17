@@ -342,7 +342,7 @@ extern "C" {
  * sector time at FOC_SPEED_ESTIMATE_MAX_RPM.
  */
 #ifndef FOC_HALL_MIN_SECTOR_TIME_RATIO
-#define FOC_HALL_MIN_SECTOR_TIME_RATIO  0.50f
+#define FOC_HALL_MIN_SECTOR_TIME_RATIO  0.45f
 #endif
 
 /* Consecutive illegal Hall transitions required before entering fault state.

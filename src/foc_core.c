@@ -190,11 +190,11 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_zero_vector_remaining = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_recovery_current_wait_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_recovery_release_current_mA = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_recovery_current_wait_active = 0U;
-FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_cycle_reject_count = 0U;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_min_cycle_last_count = 0U;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_min_cycle_last_min = 0U;
-FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_cycle_prev_sector = 0U;
-FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_cycle_cur_sector = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_reject_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_elapsed_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_min_us = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_prev_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_cur_sector = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -239,7 +239,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
                                            float prev_c);
  static void FOC_EnterFaultState(void);
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
- static uint16_t FOC_HallMinSectorCycles(void);
+ static uint32_t FOC_HallMinSectorTimeUs(void);
  static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
                                     uint8_t allow_missed_transition);
 
@@ -323,11 +323,11 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      g_foc_recovery_current_wait_count = 0U;
      g_foc_recovery_release_current_mA = 0U;
      g_foc_recovery_current_wait_active = 0U;
-     g_foc_hall_min_cycle_reject_count = 0U;
-     g_foc_hall_min_cycle_last_count = 0U;
-     g_foc_hall_min_cycle_last_min = 0U;
-     g_foc_hall_min_cycle_prev_sector = 0U;
-     g_foc_hall_min_cycle_cur_sector = 0U;
+     g_foc_hall_min_time_reject_count = 0U;
+     g_foc_hall_min_time_last_elapsed_us = 0U;
+     g_foc_hall_min_time_last_min_us = 0U;
+     g_foc_hall_min_time_prev_sector = 0U;
+     g_foc_hall_min_time_cur_sector = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -758,29 +758,29 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      return (uint8_t)((to == next) || (to == prev));
  }
 
- static uint16_t FOC_HallMinSectorCycles(void)
+ static uint32_t FOC_HallMinSectorTimeUs(void)
  {
      float max_rpm = FOC_SPEED_ESTIMATE_MAX_RPM;
      float pole_pairs = (s_config.motor.pole_pairs > 0U)
-                      ? (float)s_config.motor.pole_pairs
-                      : 1.0f;
-     float cycles;
+                       ? (float)s_config.motor.pole_pairs
+                       : 1.0f;
+     float min_us;
 
      if (max_rpm < 1.0f) {
          return 1U;
      }
 
-     cycles = ((float)FOC_CONTROL_FREQ_HZ * 10.0f) / (max_rpm * pole_pairs);
-     cycles *= FOC_HALL_MIN_SECTOR_TIME_RATIO;
+     min_us = 10000000.0f / (max_rpm * pole_pairs);
+     min_us *= FOC_HALL_MIN_SECTOR_TIME_RATIO;
 
-     if (cycles < 1.0f) {
+     if (min_us < 1.0f) {
          return 1U;
      }
-     if (cycles > 65535.0f) {
-         return 65535U;
+     if (min_us > 4294967295.0f) {
+         return 0xFFFFFFFFU;
      }
 
-     return (uint16_t)cycles;
+     return (uint32_t)min_us;
  }
 
  static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
@@ -837,25 +837,16 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      }
 
      {
-         uint16_t min_cycles = FOC_HallMinSectorCycles();
-         uint16_t waited_cycles = s_ctx.sector_no_change_count;
+         uint32_t now_us = FOC_HAL_GetTimestampUs();
+         uint32_t elapsed_us = now_us - s_ctx.timestamp_prev;
+         uint32_t min_us = FOC_HallMinSectorTimeUs();
 
-         /*
-          * FOC_ApplyHallSector() runs before CalcSpeed(), where the current
-          * loop's no-change count would normally be incremented. Include the
-          * current sample so a legal high-speed Hall transition is not delayed
-          * by one control period.
-          */
-         if (waited_cycles < 65535U) {
-             waited_cycles++;
-         }
-
-         if (waited_cycles < min_cycles) {
-             g_foc_hall_min_cycle_reject_count++;
-             g_foc_hall_min_cycle_last_count = waited_cycles;
-             g_foc_hall_min_cycle_last_min = min_cycles;
-             g_foc_hall_min_cycle_prev_sector = prev_sector;
-             g_foc_hall_min_cycle_cur_sector = cur_sector;
+         if (elapsed_us < min_us) {
+             g_foc_hall_min_time_reject_count++;
+             g_foc_hall_min_time_last_elapsed_us = elapsed_us;
+             g_foc_hall_min_time_last_min_us = min_us;
+             g_foc_hall_min_time_prev_sector = prev_sector;
+             g_foc_hall_min_time_cur_sector = cur_sector;
              return 0U;
          }
      }
