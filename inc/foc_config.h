@@ -295,7 +295,7 @@ extern "C" {
 
 #ifndef FOC_ANGLE_SYNC_FACTOR
 
-#define FOC_ANGLE_SYNC_FACTOR           0.3f
+#define FOC_ANGLE_SYNC_FACTOR           0.2f
 
 #endif
 
@@ -307,7 +307,7 @@ extern "C" {
 
 #ifndef FOC_ANGLE_SYNC_STEP_MAX_RAD
 
-#define FOC_ANGLE_SYNC_STEP_MAX_RAD     (FOC_PI / 9.0f)
+#define FOC_ANGLE_SYNC_STEP_MAX_RAD     (FOC_PI / 18.0f)
 
 #endif
 

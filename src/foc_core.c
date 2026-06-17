@@ -204,6 +204,7 @@ static uint16_t s_hall_recovery_accept_cycles = 0U;
 static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 static uint16_t s_recovery_zero_vector_cycles = 0U;
 static uint16_t s_recovery_zero_vector_min_cycles = 0U;
+static uint32_t s_speed_loop_accum_us = 0U;
 
  
 
@@ -334,6 +335,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      s_post_recovery_duty_slew_cycles = 0U;
      s_recovery_zero_vector_cycles = 0U;
      s_recovery_zero_vector_min_cycles = 0U;
+     s_speed_loop_accum_us = 0U;
  }
 
  static void FOC_LastFault_Reset(void)
@@ -464,6 +466,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 
      s_ctx.iq_ref = 0.0f;
      s_ctx.speed_loop_counter = 0U;
+     s_speed_loop_accum_us = 0U;
 
      s_ctx.v_dq.d = 0.0f;
      s_ctx.v_dq.q = 0.0f;
@@ -541,6 +544,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 
      s_ctx.iq_ref = 0.0f;
      s_ctx.speed_loop_counter = 0U;
+     s_speed_loop_accum_us = 0U;
 
      s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
                                    s_ctx.id_ref - s_ctx.i_dq.d,
@@ -1033,8 +1037,9 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      FOC_PID_Reset(&s_ctx.pid_id);
 
      FOC_PID_Reset(&s_ctx.pid_iq);
+     s_speed_loop_accum_us = 0U;
 
- 
+
 
      /* 复位观测器 */
 
@@ -1091,6 +1096,7 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      FOC_PID_Reset(&s_ctx.pid_id);
 
      FOC_PID_Reset(&s_ctx.pid_iq);
+     s_speed_loop_accum_us = 0U;
 
  
 
@@ -1104,8 +1110,10 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
      s_ctx.speed_ref = 0.0f;
 
      s_ctx.iq_ref    = 0.0f;
+     s_ctx.speed_loop_counter = 0U;
+     s_speed_loop_accum_us = 0U;
 
- 
+
 
      /* 进入待机态 */
 
@@ -1360,22 +1368,45 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 
      /* ---- 6. 速度环 PID (降采样) ---- */
 
-     s_ctx.speed_loop_counter++;
+     {
+         uint32_t speed_step_us = control_period_us;
+         uint32_t speed_loop_period_us =
+             FOC_CONTROL_PERIOD_US * (uint32_t)FOC_SPEED_LOOP_DOWNSAMPLE;
 
-     if (s_ctx.speed_loop_counter >= FOC_SPEED_LOOP_DOWNSAMPLE) {
+         if (speed_loop_period_us == 0U) {
+             speed_loop_period_us = FOC_CONTROL_PERIOD_US;
+         }
+         if (speed_step_us == 0U) {
+             speed_step_us = FOC_CONTROL_PERIOD_US;
+         }
+         if (speed_step_us > FOC_CONTROL_PID_DT_MAX_US) {
+             speed_step_us = FOC_CONTROL_PID_DT_MAX_US;
+         }
 
-         s_ctx.speed_loop_counter = 0U;
+         if ((0xFFFFFFFFU - s_speed_loop_accum_us) >= speed_step_us) {
+             s_speed_loop_accum_us += speed_step_us;
+         } else {
+             s_speed_loop_accum_us = speed_loop_period_us;
+         }
 
-         float speed_dt     = pid_dt * (float)FOC_SPEED_LOOP_DOWNSAMPLE;
+         if (s_ctx.speed_loop_counter < 65535U) {
+             s_ctx.speed_loop_counter++;
+         }
 
-         float speed_inv_dt = pid_inv_dt / (float)FOC_SPEED_LOOP_DOWNSAMPLE;
+         if (s_speed_loop_accum_us >= speed_loop_period_us) {
+             float speed_dt = (float)s_speed_loop_accum_us * 1.0e-6f;
+             float speed_inv_dt = 1000000.0f / (float)s_speed_loop_accum_us;
 
-         s_ctx.iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
+             s_speed_loop_accum_us = 0U;
+             s_ctx.speed_loop_counter = 0U;
 
-                                        s_ctx.speed_ref - s_ctx.speed_fdb,
+             s_ctx.iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
 
-                                        speed_dt, speed_inv_dt);
+                                            s_ctx.speed_ref - s_ctx.speed_fdb,
 
+                                            speed_dt, speed_inv_dt);
+
+         }
      }
 
  
