@@ -69,9 +69,9 @@ void Foc_Init_AI(void){
 
   config.motor.max_current_a = 5;
 
-  config.current_d_pid.kp = 0.1;
+  config.current_d_pid.kp = 0.18f;
 
-  config.current_d_pid.ki = 10;
+  config.current_d_pid.ki = 30.0f;
 
   config.current_d_pid.kd = 0;
 
@@ -79,9 +79,9 @@ void Foc_Init_AI(void){
 
   config.current_d_pid.out_min = -10;
 
-  config.current_q_pid.kp = 0.1;
+  config.current_q_pid.kp = 0.18f;
 
-  config.current_q_pid.ki = 10;
+  config.current_q_pid.ki = 30.0f;
 
   config.current_q_pid.kd = 0;
 
