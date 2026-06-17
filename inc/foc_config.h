@@ -295,7 +295,7 @@ extern "C" {
 
 #ifndef FOC_ANGLE_SYNC_FACTOR
 
-#define FOC_ANGLE_SYNC_FACTOR           0.2f
+#define FOC_ANGLE_SYNC_FACTOR           0.1f
 
 #endif
 
@@ -307,7 +307,7 @@ extern "C" {
 
 #ifndef FOC_ANGLE_SYNC_STEP_MAX_RAD
 
-#define FOC_ANGLE_SYNC_STEP_MAX_RAD     (FOC_PI / 18.0f)
+#define FOC_ANGLE_SYNC_STEP_MAX_RAD     (FOC_PI / 36.0f)
 
 #endif
 
@@ -335,7 +335,7 @@ extern "C" {
  * one or more Hall transitions.
  */
 #ifndef FOC_HALL_ANGLE_OFFSET_RAD
-#define FOC_HALL_ANGLE_OFFSET_RAD       (-(FOC_PI / 24.0f))
+#define FOC_HALL_ANGLE_OFFSET_RAD       0.0f
 #endif
 
 /* Reject Hall sector changes faster than this fraction of the theoretical
