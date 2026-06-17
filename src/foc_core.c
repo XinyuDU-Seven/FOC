@@ -833,7 +833,7 @@ static uint32_t s_hall_event_seq_seen = 0U;
 
  static uint32_t FOC_HallMinSectorTimeUs(void)
  {
-     float max_rpm = FOC_SPEED_ESTIMATE_MAX_RPM;
+     float max_rpm = FOC_HALL_MIN_SECTOR_TIME_MAX_RPM;
      float pole_pairs = (s_config.motor.pole_pairs > 0U)
                        ? (float)s_config.motor.pole_pairs
                        : 1.0f;

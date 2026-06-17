@@ -447,10 +447,14 @@ extern "C" {
 #endif
 
 /* Reject Hall sector changes faster than this fraction of the theoretical
- * sector time at FOC_SPEED_ESTIMATE_MAX_RPM.
+ * sector time at FOC_HALL_MIN_SECTOR_TIME_MAX_RPM.
  */
 #ifndef FOC_HALL_MIN_SECTOR_TIME_RATIO
 #define FOC_HALL_MIN_SECTOR_TIME_RATIO  0.40f
+#endif
+
+#ifndef FOC_HALL_MIN_SECTOR_TIME_MAX_RPM
+#define FOC_HALL_MIN_SECTOR_TIME_MAX_RPM  4000.0f
 #endif
 
 /* Consecutive illegal Hall transitions required before entering fault state.
@@ -480,11 +484,11 @@ extern "C" {
 
  
 
-/** Speed estimate clamp (rpm), used to reject abnormal Hall jump spikes. */
+/** Speed estimate clamp (rpm), above motor max to avoid clipping sector-width ripple. */
 
 #ifndef FOC_SPEED_ESTIMATE_MAX_RPM
 
-#define FOC_SPEED_ESTIMATE_MAX_RPM      4000.0f
+#define FOC_SPEED_ESTIMATE_MAX_RPM      6000.0f
 
 #endif
 
