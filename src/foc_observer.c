@@ -420,6 +420,7 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
          float target = ctx->hall_sector.theta_e;
          float sync_factor = FOC_ANGLE_SYNC_FACTOR;
+         float sync_step;
 
          float diff = target - ctx->theta_e_predicted;
 
@@ -439,7 +440,17 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
              sync_factor = 0.0f;
          }
 
-         ctx->theta_e_predicted += diff * sync_factor;
+         sync_step = diff * sync_factor;
+
+         if (FOC_ANGLE_SYNC_STEP_MAX_RAD > 0.0f) {
+             if (sync_step > FOC_ANGLE_SYNC_STEP_MAX_RAD) {
+                 sync_step = FOC_ANGLE_SYNC_STEP_MAX_RAD;
+             } else if (sync_step < -FOC_ANGLE_SYNC_STEP_MAX_RAD) {
+                 sync_step = -FOC_ANGLE_SYNC_STEP_MAX_RAD;
+             }
+         }
+
+         ctx->theta_e_predicted += sync_step;
 
      } else {
 
