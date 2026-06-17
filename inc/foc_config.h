@@ -313,13 +313,13 @@ extern "C" {
 
 #ifndef FOC_HALL_EDGE_SYNC_FACTOR
 
-#define FOC_HALL_EDGE_SYNC_FACTOR       0.04f
+#define FOC_HALL_EDGE_SYNC_FACTOR       0.12f
 
 #endif
 
 #ifndef FOC_HALL_EDGE_SYNC_STEP_MAX_RAD
 
-#define FOC_HALL_EDGE_SYNC_STEP_MAX_RAD (FOC_PI / 60.0f)
+#define FOC_HALL_EDGE_SYNC_STEP_MAX_RAD (FOC_PI / 30.0f)
 
 #endif
 
