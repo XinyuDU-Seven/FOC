@@ -113,23 +113,31 @@ static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
     return 0.0f;
 }
 
-static float FOC_Observer_GetHallEntryAngle(uint8_t sector)
+static float FOC_Observer_GetHallEntryAngle(uint8_t sector, FOC_Dir_e direction)
 {
     if (sector >= 1U && sector <= 6U) {
+        float edge_offset = (direction == FOC_DIR_CCW)
+                          ? (FOC_PI / 6.0f)
+                          : -(FOC_PI / 6.0f);
+
         return FOC_NormalizeAngle(s_hall_sector_angle_lut[sector]
-                                - (FOC_PI / 6.0f)
+                                + edge_offset
                                 + FOC_HALL_ANGLE_OFFSET_RAD);
     }
 
     return 0.0f;
 }
 
-static float FOC_Observer_GetHallEdgeSyncAngle(uint8_t sector,
-                                                float omega_e,
-                                                float dt)
+static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
+                                                uint8_t sector,
+                                                float omega_e)
 {
-    float target = FOC_Observer_GetHallEntryAngle(sector);
-    float advance = omega_e * dt * FOC_HALL_EDGE_SYNC_DT_FRACTION;
+    uint32_t now_us = FOC_HAL_GetTimestampUs();
+    uint32_t age_us = (ctx->hall_sector_timestamp_us != 0U)
+                    ? (now_us - ctx->hall_sector_timestamp_us)
+                    : 0U;
+    float target = FOC_Observer_GetHallEntryAngle(sector, ctx->direction);
+    float advance = omega_e * ((float)age_us * 1.0e-6f);
 
     if (advance < 0.0f) {
         advance = 0.0f;
@@ -489,7 +497,7 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
          float sync_step;
 
 #if FOC_HALL_EDGE_SYNC_ENABLE
-         target = FOC_Observer_GetHallEdgeSyncAngle(cur_sector, omega_e, dt);
+         target = FOC_Observer_GetHallEdgeSyncAngle(ctx, cur_sector, omega_e);
          sync_factor = FOC_HALL_EDGE_SYNC_FACTOR;
          sync_step_max = FOC_HALL_EDGE_SYNC_STEP_MAX_RAD;
 #endif

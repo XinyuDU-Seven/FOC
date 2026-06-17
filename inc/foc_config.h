@@ -307,19 +307,19 @@ extern "C" {
 
 #ifndef FOC_HALL_EDGE_SYNC_ENABLE
 
-#define FOC_HALL_EDGE_SYNC_ENABLE       0
+#define FOC_HALL_EDGE_SYNC_ENABLE       1
 
 #endif
 
 #ifndef FOC_HALL_EDGE_SYNC_FACTOR
 
-#define FOC_HALL_EDGE_SYNC_FACTOR       1.0f
+#define FOC_HALL_EDGE_SYNC_FACTOR       0.2f
 
 #endif
 
 #ifndef FOC_HALL_EDGE_SYNC_STEP_MAX_RAD
 
-#define FOC_HALL_EDGE_SYNC_STEP_MAX_RAD (FOC_PI / 12.0f)
+#define FOC_HALL_EDGE_SYNC_STEP_MAX_RAD (FOC_PI / 18.0f)
 
 #endif
 
@@ -331,7 +331,7 @@ extern "C" {
 
 #ifndef FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD
 
-#define FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD  (FOC_PI / 12.0f)
+#define FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD  (FOC_PI / 6.0f)
 
 #endif
 
