@@ -295,13 +295,13 @@ extern "C" {
 
 #ifndef FOC_ANGLE_SYNC_FACTOR
 
-#define FOC_ANGLE_SYNC_FACTOR           0.03f
+#define FOC_ANGLE_SYNC_FACTOR           0.1f
 
 #endif
 
 #ifndef FOC_ANGLE_SYNC_STEP_MAX_RAD
 
-#define FOC_ANGLE_SYNC_STEP_MAX_RAD     (FOC_PI / 90.0f)
+#define FOC_ANGLE_SYNC_STEP_MAX_RAD     (FOC_PI / 36.0f)
 
 #endif
 
@@ -337,7 +337,7 @@ extern "C" {
 
 #ifndef FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM
 
-#define FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM  100.0f
+#define FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM  200.0f
 
 #endif
 
@@ -379,7 +379,7 @@ extern "C" {
 
 #ifndef FOC_CURRENT_ANGLE_TRIM_ENABLE
 
-#define FOC_CURRENT_ANGLE_TRIM_ENABLE   0
+#define FOC_CURRENT_ANGLE_TRIM_ENABLE   1
 
 #endif
 
