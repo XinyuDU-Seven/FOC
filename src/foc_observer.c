@@ -189,6 +189,7 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
      ctx->speed_filtered           = 0.0f;
 
      ctx->timestamp_prev           = FOC_HAL_GetTimestampUs();
+     ctx->hall_sector_timestamp_us = ctx->timestamp_prev;
 
      ctx->sector_no_change_count   = 0U;
 
@@ -305,7 +306,9 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
          /* 扇区跳变：使用实际时间戳计算真实时间间隔 */
 
-         uint32_t ts_now  = FOC_HAL_GetTimestampUs();
+         uint32_t ts_now  = (ctx->hall_sector_timestamp_us != 0U)
+                          ? ctx->hall_sector_timestamp_us
+                          : FOC_HAL_GetTimestampUs();
 
  
 

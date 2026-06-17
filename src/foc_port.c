@@ -41,6 +41,7 @@
 
 #include "ProjectCfg.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
  
@@ -75,6 +76,13 @@ HallState_t gstHallState[2] = {0};
 
 static uint16_t s_foc_adc_raw[4] = {0};
 static uint8_t s_foc_adc_cache_valid = 0U;
+static volatile uint8_t s_hall_event_h1[2] = {0U, 0U};
+static volatile uint8_t s_hall_event_h2[2] = {0U, 0U};
+static volatile uint8_t s_hall_event_h3[2] = {0U, 0U};
+static volatile uint8_t s_hall_event_valid[2] = {0U, 0U};
+static volatile uint32_t s_hall_event_timestamp_us[2] = {0U, 0U};
+static volatile uint32_t s_hall_event_seq[2] = {0U, 0U};
+static volatile uint32_t s_hall_event_version[2] = {0U, 0U};
 
 static void FOC_HAL_UpdateAdcCache(void)
 {
@@ -82,6 +90,25 @@ static void FOC_HAL_UpdateAdcCache(void)
 
     Adc_GetBldcFocCurrentVoltage(unId, s_foc_adc_raw);
     s_foc_adc_cache_valid = 1U;
+}
+
+static void FOC_HAL_RecordHallEvent(uint8_t motor,
+                                    uint8_t h1,
+                                    uint8_t h2,
+                                    uint8_t h3)
+{
+    if (motor >= 2U) {
+        return;
+    }
+
+    s_hall_event_version[motor]++;
+    s_hall_event_h1[motor] = h1;
+    s_hall_event_h2[motor] = h2;
+    s_hall_event_h3[motor] = h3;
+    s_hall_event_timestamp_us[motor] = FOC_HAL_GetTimestampUs();
+    s_hall_event_seq[motor]++;
+    s_hall_event_valid[motor] = 1U;
+    s_hall_event_version[motor]++;
 }
 
  
@@ -100,6 +127,11 @@ void FOC_Motor1_HallCallback(void){
 
     gstHallState[0].unHC = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_W_0);
 
+    FOC_HAL_RecordHallEvent(0U,
+                            gstHallState[0].unHA,
+                            gstHallState[0].unHB,
+                            gstHallState[0].unHC);
+
 }
 
  
@@ -117,6 +149,11 @@ void FOC_Motor2_HallCallback(void){
     gstHallState[1].unHB = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_V_1);
 
     gstHallState[1].unHC = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_W_1);
+
+    FOC_HAL_RecordHallEvent(1U,
+                            gstHallState[1].unHA,
+                            gstHallState[1].unHB,
+                            gstHallState[1].unHC);
 
 }
 
@@ -204,6 +241,47 @@ void FOC_HAL_GetHallRaw(FOC_HallRaw_t *hall)
 
     gstHallState[0].unHC = hall->h3;
 
+}
+
+uint8_t FOC_HAL_GetHallEvent(FOC_HallRaw_t *hall,
+                             uint32_t *timestamp_us,
+                             uint32_t *seq)
+{
+    uint32_t version_before;
+    uint32_t version_after;
+    uint8_t h1;
+    uint8_t h2;
+    uint8_t h3;
+    uint32_t timestamp;
+    uint32_t event_seq;
+    uint8_t valid;
+
+    if ((hall == NULL) || (timestamp_us == NULL) || (seq == NULL)) {
+        return 0U;
+    }
+
+    do {
+        version_before = s_hall_event_version[0];
+        h1 = s_hall_event_h1[0];
+        h2 = s_hall_event_h2[0];
+        h3 = s_hall_event_h3[0];
+        timestamp = s_hall_event_timestamp_us[0];
+        event_seq = s_hall_event_seq[0];
+        valid = s_hall_event_valid[0];
+        version_after = s_hall_event_version[0];
+    } while ((version_before != version_after) || ((version_after & 1U) != 0U));
+
+    if (valid == 0U) {
+        return 0U;
+    }
+
+    hall->h1 = h1;
+    hall->h2 = h2;
+    hall->h3 = h3;
+    *timestamp_us = timestamp;
+    *seq = event_seq;
+
+    return 1U;
 }
 
  

@@ -109,6 +109,10 @@ int  FOC_HAL_Init(void);
 
 void FOC_HAL_GetHallRaw(FOC_HallRaw_t *hall);
 
+uint8_t FOC_HAL_GetHallEvent(FOC_HallRaw_t *hall,
+                             uint32_t *timestamp_us,
+                             uint32_t *seq);
+
  
 
 /* ===================================================================

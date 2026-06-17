@@ -196,6 +196,10 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_min_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_current_angle_trim_mrad = 0;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_used_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -207,6 +211,7 @@ static uint16_t s_recovery_zero_vector_cycles = 0U;
 static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 static uint32_t s_speed_loop_accum_us = 0U;
 static float s_current_angle_trim_rad = 0.0f;
+static uint32_t s_hall_event_seq_seen = 0U;
 
  
 
@@ -247,6 +252,8 @@ static float s_current_angle_trim_rad = 0.0f;
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
  static uint32_t FOC_HallMinSectorTimeUs(void);
  static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
+                                    uint32_t timestamp_us,
+                                    uint8_t timestamp_valid,
                                     uint8_t allow_missed_transition);
 
  static int16_t FOC_Log_ToI16(float v, float scale)
@@ -385,6 +392,10 @@ static float s_current_angle_trim_rad = 0.0f;
      g_foc_hall_min_time_last_min_us = 0U;
      g_foc_hall_min_time_prev_sector = 0U;
      g_foc_hall_min_time_cur_sector = 0U;
+     g_foc_hall_event_used_count = 0U;
+     g_foc_hall_event_seq = 0U;
+     g_foc_hall_event_age_us = 0U;
+     g_foc_hall_poll_count = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -392,6 +403,7 @@ static float s_current_angle_trim_rad = 0.0f;
      s_recovery_zero_vector_cycles = 0U;
      s_recovery_zero_vector_min_cycles = 0U;
      s_speed_loop_accum_us = 0U;
+     s_hall_event_seq_seen = 0U;
  }
 
  static void FOC_LastFault_Reset(void)
@@ -845,11 +857,16 @@ static float s_current_angle_trim_rad = 0.0f;
  }
 
  static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
+                                    uint32_t timestamp_us,
+                                    uint8_t timestamp_valid,
                                     uint8_t allow_missed_transition)
- {
+{
      uint8_t cur_sector = candidate->sector;
      uint8_t prev_sector = s_ctx.hall_sector_prev;
      uint8_t recovery_accept = (s_hall_recovery_accept_cycles > 0U) ? 1U : 0U;
+     uint32_t sector_timestamp_us = (timestamp_valid != 0U)
+                                  ? timestamp_us
+                                  : FOC_HAL_GetTimestampUs();
 
      if (cur_sector == 0U) {
          return 0U;
@@ -861,12 +878,16 @@ static float s_current_angle_trim_rad = 0.0f;
 
      if ((prev_sector == 0U) || (cur_sector == prev_sector)) {
          s_ctx.hall_sector = *candidate;
+         if (prev_sector == 0U) {
+             s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
+         }
          s_hall_illegal_transition_count = 0U;
          return 1U;
      }
 
      if (allow_missed_transition != 0U) {
          s_ctx.hall_sector = *candidate;
+         s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
          s_hall_illegal_transition_count = 0U;
          g_foc_hall_resync_count++;
          g_foc_hall_resync_period_us = (s_foc_control_period_us > 65535U)
@@ -889,6 +910,7 @@ static float s_current_angle_trim_rad = 0.0f;
 
      if (recovery_accept != 0U) {
          s_ctx.hall_sector = *candidate;
+         s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
          s_ctx.theta_e_predicted = candidate->theta_e;
          s_hall_illegal_transition_count = 0U;
          g_foc_hall_recovery_accept_count++;
@@ -898,8 +920,7 @@ static float s_current_angle_trim_rad = 0.0f;
      }
 
      {
-         uint32_t now_us = FOC_HAL_GetTimestampUs();
-         uint32_t elapsed_us = now_us - s_ctx.timestamp_prev;
+         uint32_t elapsed_us = sector_timestamp_us - s_ctx.timestamp_prev;
          uint32_t min_us = FOC_HallMinSectorTimeUs();
 
          if (elapsed_us < min_us) {
@@ -913,6 +934,7 @@ static float s_current_angle_trim_rad = 0.0f;
      }
 
      s_ctx.hall_sector = *candidate;
+     s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
      s_hall_illegal_transition_count = 0U;
      return 1U;
  }
@@ -1204,6 +1226,11 @@ static float s_current_angle_trim_rad = 0.0f;
      uint32_t control_period_us;
      uint8_t control_period_late;
      uint8_t control_period_recovery;
+     FOC_HallRaw_t hall_event_raw;
+     uint32_t hall_event_timestamp_us = 0U;
+     uint32_t hall_event_seq = 0U;
+     uint32_t hall_sample_timestamp_us = 0U;
+     uint8_t hall_timestamp_valid = 0U;
 
      prof_enter_us = FOC_Prof_Enter();
      control_period_us = FOC_ControlPeriodUs();
@@ -1240,8 +1267,25 @@ static float s_current_angle_trim_rad = 0.0f;
 
      /* ---- 1. 读取驱动层原始传感器数据 ---- */
 
-     FOC_HAL_GetHallRaw(&s_ctx.hall_raw);
-     prof_next_us = FOC_HAL_GetTimestampUs();
+     if ((FOC_HAL_GetHallEvent(&hall_event_raw,
+                               &hall_event_timestamp_us,
+                               &hall_event_seq) != 0U) &&
+         (hall_event_seq != s_hall_event_seq_seen)) {
+         s_ctx.hall_raw = hall_event_raw;
+         s_hall_event_seq_seen = hall_event_seq;
+         hall_sample_timestamp_us = hall_event_timestamp_us;
+         hall_timestamp_valid = 1U;
+         prof_next_us = FOC_HAL_GetTimestampUs();
+         g_foc_hall_event_used_count++;
+         g_foc_hall_event_seq = hall_event_seq;
+         g_foc_hall_event_age_us = prof_next_us - hall_event_timestamp_us;
+     } else {
+         FOC_HAL_GetHallRaw(&s_ctx.hall_raw);
+         prof_next_us = FOC_HAL_GetTimestampUs();
+         hall_sample_timestamp_us = prof_next_us;
+         hall_timestamp_valid = 0U;
+         g_foc_hall_poll_count++;
+     }
      g_foc_prof_after_hall_us = prof_next_us;
      FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 2U);
      prof_mark_us = prof_next_us;
@@ -1261,7 +1305,10 @@ static float s_current_angle_trim_rad = 0.0f;
      FOC_HallSector_t hall_candidate;
 
      FOC_Observer_HallRawToSector(&s_ctx.hall_raw, &hall_candidate);
-     FOC_ApplyHallSector(&hall_candidate, control_period_recovery);
+     FOC_ApplyHallSector(&hall_candidate,
+                         hall_sample_timestamp_us,
+                         hall_timestamp_valid,
+                         control_period_recovery);
 
      if (s_ctx.fault != FOC_FAULT_NONE) {
          FOC_EnterFaultState();

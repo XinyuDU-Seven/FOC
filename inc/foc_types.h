@@ -431,6 +431,8 @@
 
      uint16_t               speed_loop_counter; /**< 速度环降采样计数器 */
 
+     uint32_t               hall_sector_timestamp_us; /**< Hall edge timestamp for current sector (us) */
+
  } FOC_Context_t;
 
  
