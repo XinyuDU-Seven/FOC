@@ -379,7 +379,7 @@ extern "C" {
 
 #ifndef FOC_CURRENT_ANGLE_TRIM_ENABLE
 
-#define FOC_CURRENT_ANGLE_TRIM_ENABLE   1
+#define FOC_CURRENT_ANGLE_TRIM_ENABLE   0
 
 #endif
 
