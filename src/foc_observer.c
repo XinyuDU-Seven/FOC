@@ -594,12 +594,6 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
              }
          }
 
-         /* A full-sector error means the extrapolator is no longer usable. */
-         if (diff_abs > FOC_ANGLE_SYNC_RESYNC_DIFF_RAD) {
-             sync_factor = 1.0f;
-             sync_step_max = 0.0f;
-         }
-
          if (sync_factor > 1.0f) {
              sync_factor = 1.0f;
          } else if (sync_factor < 0.0f) {

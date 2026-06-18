@@ -855,6 +855,8 @@ static void FOC_UpdateSpeedControlFeedback(void)
     } else if ((FOC_FABS(s_ctx.speed_ctrl_fdb) < 1.0f) &&
                (FOC_FABS(s_ctx.speed_fdb) >= 1.0f)) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+    } else if (s_ctx.speed_fdb > s_ctx.speed_ref) {
+        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (alpha >= 1.0f) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (alpha > 0.0f) {
@@ -2097,6 +2099,8 @@ static void FOC_Prof_Reset(void)
 #if FOC_SPEED_ERROR_BOOST_ENABLE
              if ((s_ctx.speed_ref >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
                  (speed_error > FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
+                 ((s_ctx.speed_ref - s_ctx.speed_fdb) >
+                  FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
                  (s_ctx.speed_ref >
                   (s_speed_error_boost_prev_ref +
                    FOC_SPEED_ERROR_BOOST_REF_RISE_MIN_RPM))) {
