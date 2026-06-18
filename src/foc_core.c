@@ -201,6 +201,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
+FOC_DEBUG_ROOT volatile float    speed_ref = -1.0f;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_fdb = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_start_fdb_margin_rpm = 50U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_dyn_core_loop_count = 0U;
@@ -508,7 +509,8 @@ static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
 static void FOC_DynSpeed_ServiceRef(void)
 {
     uint32_t now_us = FOC_HAL_GetTimestampUs();
-    float current_ref = s_ctx.speed_ref;
+    uint8_t livewatch_ref_valid = (speed_ref >= -0.5f) ? 1U : 0U;
+    float current_ref = (livewatch_ref_valid != 0U) ? speed_ref : s_ctx.speed_ref;
     float current_fdb = s_ctx.speed_fdb;
     float start_fdb = (float)g_foc_dyn_speed_max_rpm -
                       (float)g_foc_dyn_speed_start_fdb_margin_rpm;
@@ -528,7 +530,8 @@ static void FOC_DynSpeed_ServiceRef(void)
         if (FOC_DynSpeed_IsStartCommand(current_ref) != 0U) {
             g_foc_dyn_speed_enable = 1U;
             g_foc_dyn_core_trigger_count++;
-            g_foc_dyn_core_trigger_source = 2U;
+            g_foc_dyn_core_trigger_source =
+                (livewatch_ref_valid != 0U) ? 4U : 2U;
             s_dyn_speed_prev_enable = 1U;
             FOC_DynSpeed_ResetStats(now_us);
         } else if ((g_foc_dyn_speed_start_on_max_fdb != 0U) &&
@@ -549,6 +552,9 @@ static void FOC_DynSpeed_ServiceRef(void)
         g_foc_dyn_core_disable_count++;
         s_dyn_speed_prev_enable = 0U;
         g_foc_dyn_speed_reset_stats = 0U;
+        if (livewatch_ref_valid != 0U) {
+            FOC_DynSpeed_WriteCoreRef(current_ref);
+        }
         return;
     }
 
