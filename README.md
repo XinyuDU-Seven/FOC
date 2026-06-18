@@ -117,20 +117,32 @@ g_foc_log_stop
 g_log_idx
 g_log_fault_idx
 g_log_seq
+g_log_t_us
 g_log_fault
+g_log_state
+g_log_direction
 g_log_hall_raw
 g_log_hall_sector
 g_log_theta_hall
 g_log_theta_pred
 g_log_theta_ctrl
+g_log_speed_ref_rpm
+g_log_speed_fdb_rpm
+g_log_speed_ctrl_fdb_rpm
+g_log_sector_no_change_count
+g_log_stall_counter
 g_log_ia_mA
 g_log_ib_mA
 g_log_ic_mA
 g_log_id_mA
 g_log_iq_mA
+g_log_id_ref_mA
+g_log_iq_ref_mA
+g_log_speed_error_boost_mA
 g_log_current_peak_mA
 g_log_vd_mV
 g_log_vq_mV
+g_log_vbus_mV
 g_log_duty_a
 g_log_duty_b
 g_log_duty_c
@@ -145,7 +157,7 @@ fault_idx - 24  ...  fault_idx + 3
 Recommended compact row format:
 
 ```text
-idx,seq,fault,hall_raw,hall_sector,theta_hall,theta_ctrl,theta_pred,ia,ib,ic,id,iq,ipeak,vd,vq,da,db,dc
+idx,seq,t_us,fault,state,direction,hall_raw,hall_sector,theta_hall,theta_ctrl,theta_pred,speed_ref,speed_fdb,speed_ctrl_fdb,sector_no_change,stall_counter,ia,ib,ic,id,iq,id_ref,iq_ref,speed_boost,ipeak,vd,vq,vbus,da,db,dc
 ```
 
 Also include:
