@@ -1919,9 +1919,9 @@ static void FOC_Prof_Reset(void)
 #if FOC_SPEED_ERROR_BOOST_ENABLE
              if ((s_ctx.speed_ref >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
                  (speed_error > FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
-                 (s_ctx.speed_ref >=
-                  (s_speed_error_boost_prev_ref -
-                   FOC_SPEED_ERROR_BOOST_REF_FALL_TOL_RPM))) {
+                 (s_ctx.speed_ref >
+                  (s_speed_error_boost_prev_ref +
+                   FOC_SPEED_ERROR_BOOST_REF_RISE_MIN_RPM))) {
                  float boost =
                      FOC_SPEED_ERROR_BOOST_KP *
                      (speed_error - FOC_SPEED_ERROR_BOOST_DEADBAND_RPM);
