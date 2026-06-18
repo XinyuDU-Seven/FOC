@@ -23,7 +23,7 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
 
 #define FOC_FORWARD_STABLE_MAX_SPEED_RPM       2500U
 #define FOC_FORWARD_STABLE_DYN_MIN_RPM         300U
-#define FOC_FORWARD_STABLE_FIXED_SPEED_RPM     1200.0f
+#define FOC_FORWARD_STABLE_FIXED_SPEED_RPM     500.0f
 #define FOC_FORWARD_STABLE_MAX_CURRENT_A       3.5f
 #define FOC_FORWARD_STABLE_DYN_TRIGGER_RPM     32000
 
@@ -455,7 +455,7 @@ void Foc_Init_AI(void){
 
   config.speed_pid.kp = 0.0065f;
 
-  config.speed_pid.ki = 0.0010f;
+  config.speed_pid.ki = 0.0006f;
 
   config.speed_pid.kd = 0.0f;
 
