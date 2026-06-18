@@ -230,6 +230,33 @@ static uint8_t FOC_AI_HandleDynamicSpeedExternalRef(float speed_ref)
   return 0U;
 }
 
+static void FOC_AI_PollDynamicSpeedCoreRef(void)
+{
+  const FOC_Context_t *ctx = FOC_Core_GetContext();
+  float speed_ref = ctx->speed_ref;
+  uint32_t now_us;
+
+  g_foc_dyn_speed_last_ext_ref_rpm = FOC_AI_ToI16(speed_ref, 1.0f);
+
+  if (FOC_AI_IsDynamicSpeedStartCommand(speed_ref) != 0U) {
+    if (g_foc_dyn_speed_enable == 0U) {
+      now_us = FOC_HAL_GetTimestampUs();
+      g_foc_dyn_speed_enable = 1U;
+      s_foc_dyn_speed_prev_enable = 1U;
+      FOC_AI_ResetDynamicSpeedStats(now_us);
+    }
+    return;
+  }
+
+  if ((g_foc_dyn_speed_enable != 0U) &&
+      (FOC_AI_SpeedNear(speed_ref,
+                        (float)g_foc_dyn_speed_ref_rpm) == 0U)) {
+    g_foc_dyn_speed_enable = 0U;
+    s_foc_dyn_speed_prev_enable = 0U;
+    g_foc_dyn_speed_reset_stats = 0U;
+  }
+}
+
 static void FOC_AI_RecordDynamicSpeedLog(const FOC_Context_t *ctx,
                                          uint32_t now_us,
                                          int16_t err_rpm)
@@ -327,6 +354,8 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 void Foc_AlgorithmControlCallback_AI(void){
 
   g_foc_ai_callback_count++;
+
+  FOC_AI_PollDynamicSpeedCoreRef();
 
   FOC_AI_UpdateDynamicSpeedReference();
 
