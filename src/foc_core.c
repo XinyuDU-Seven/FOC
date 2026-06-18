@@ -260,6 +260,7 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 static uint16_t s_recovery_zero_vector_cycles = 0U;
 static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 static uint32_t s_speed_loop_accum_us = 0U;
+static float s_speed_error_boost_prev_ref = 0.0f;
 static float s_current_angle_trim_rad = 0.0f;
 static uint32_t s_hall_event_seq_seen = 0U;
 static uint8_t s_dyn_speed_prev_enable = 0U;
@@ -784,6 +785,7 @@ static void FOC_Prof_Reset(void)
      s_recovery_zero_vector_cycles = 0U;
      s_recovery_zero_vector_min_cycles = 0U;
      s_speed_loop_accum_us = 0U;
+     s_speed_error_boost_prev_ref = 0.0f;
      s_hall_event_seq_seen = 0U;
  }
 
@@ -919,6 +921,7 @@ static void FOC_Prof_Reset(void)
      g_foc_speed_ctrl_fdb_rpm = 0;
      s_ctx.speed_loop_counter = 0U;
      s_speed_loop_accum_us = 0U;
+     s_speed_error_boost_prev_ref = 0.0f;
 
      s_ctx.v_dq.d = 0.0f;
      s_ctx.v_dq.q = 0.0f;
@@ -997,6 +1000,7 @@ static void FOC_Prof_Reset(void)
      s_ctx.iq_ref = 0.0f;
      s_ctx.speed_loop_counter = 0U;
      s_speed_loop_accum_us = 0U;
+     s_speed_error_boost_prev_ref = 0.0f;
 
      s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
                                    s_ctx.id_ref - s_ctx.i_dq.d,
@@ -1502,6 +1506,7 @@ static void FOC_Prof_Reset(void)
      FOC_PID_Reset(&s_ctx.pid_iq);
      FOC_ResetCurrentAngleTrim();
      s_speed_loop_accum_us = 0U;
+     s_speed_error_boost_prev_ref = s_ctx.speed_ref;
 
 
 
@@ -1562,6 +1567,7 @@ static void FOC_Prof_Reset(void)
      FOC_PID_Reset(&s_ctx.pid_iq);
      FOC_ResetCurrentAngleTrim();
      s_speed_loop_accum_us = 0U;
+     s_speed_error_boost_prev_ref = 0.0f;
 
  
 
@@ -1582,6 +1588,7 @@ static void FOC_Prof_Reset(void)
      g_foc_speed_ctrl_fdb_rpm = 0;
      s_ctx.speed_loop_counter = 0U;
      s_speed_loop_accum_us = 0U;
+     s_speed_error_boost_prev_ref = 0.0f;
 
 
 
@@ -1910,8 +1917,17 @@ static void FOC_Prof_Reset(void)
                                             speed_dt, speed_inv_dt);
 
 #if FOC_SPEED_ERROR_BOOST_ENABLE
-             if (s_ctx.speed_ref >= FOC_SPEED_ERROR_BOOST_MIN_RPM) {
-                 float boost = FOC_SPEED_ERROR_BOOST_KP * speed_error;
+             if ((s_ctx.speed_ref >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
+                 (speed_error > FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
+                 (s_ctx.speed_ref >=
+                  (s_speed_error_boost_prev_ref -
+                   FOC_SPEED_ERROR_BOOST_REF_FALL_TOL_RPM))) {
+                 float boost =
+                     FOC_SPEED_ERROR_BOOST_KP *
+                     (speed_error - FOC_SPEED_ERROR_BOOST_DEADBAND_RPM);
+
+                 boost = FOC_CLAMP(boost, 0.0f,
+                                   FOC_SPEED_ERROR_BOOST_MAX_A);
 
                  speed_iq_ref += boost;
                  g_foc_speed_error_boost_mA =
@@ -1922,6 +1938,7 @@ static void FOC_Prof_Reset(void)
 #else
              g_foc_speed_error_boost_mA = 0;
 #endif
+             s_speed_error_boost_prev_ref = s_ctx.speed_ref;
 
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
                                       s_ctx.pid_speed.out_min,
