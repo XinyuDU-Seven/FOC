@@ -53,6 +53,14 @@ FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_log_iq_mA[FOC_DYN_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_current_peak_mA[FOC_DYN_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
 
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_enable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_reset_stats = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_period_ms = 8000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_max_rpm = 2000U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_elapsed_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_phase_u16 = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_ref_rpm = 0;
+
 #if 0
 static uint8_t s_foc_dyn_speed_prev_enable = 0U;
 static uint32_t s_foc_dyn_speed_start_us = 0U;
@@ -573,6 +581,8 @@ FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed){
 
     (void)unId;
 
+    g_foc_bidir_speed_enable = 0U;
+
     FOC_SetSpeedRef(fSpeed);
 
     return 0;
@@ -652,6 +662,7 @@ void Foc_TestCase(void){
   if(gunCtrl == 1){
 
     g_foc_dyn_speed_enable = 0U;
+    g_foc_bidir_speed_enable = 0U;
 
     Foc_EnableFocControl(unId);
 
@@ -661,13 +672,26 @@ void Foc_TestCase(void){
 
     Foc_EnableFocControl(unId);
 
+    g_foc_bidir_speed_enable = 0U;
+
     g_foc_dyn_speed_enable = 1U;
 
     g_foc_dyn_speed_reset_stats = 1U;
 
+  }else if(gunCtrl == 3){
+
+    Foc_EnableFocControl(unId);
+
+    g_foc_dyn_speed_enable = 0U;
+
+    g_foc_bidir_speed_enable = 1U;
+
+    g_foc_bidir_speed_reset_stats = 1U;
+
   }else{
 
     g_foc_dyn_speed_enable = 0U;
+    g_foc_bidir_speed_enable = 0U;
 
     Foc_DisableFocControl(unId);
 
