@@ -201,6 +201,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile float    speed_ref = -1.0f;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_fdb = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_start_fdb_margin_rpm = 50U;
@@ -775,6 +776,7 @@ static void FOC_Prof_Reset(void)
      g_foc_hall_event_age_us = 0U;
      g_foc_hall_poll_count = 0U;
      g_foc_speed_ctrl_fdb_rpm = 0;
+     g_foc_speed_error_boost_mA = 0;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -1897,15 +1899,33 @@ static void FOC_Prof_Reset(void)
          if (s_speed_loop_accum_us >= speed_loop_period_us) {
              float speed_dt = (float)s_speed_loop_accum_us * 1.0e-6f;
              float speed_inv_dt = 1000000.0f / (float)s_speed_loop_accum_us;
+             float speed_error = s_ctx.speed_ref - s_ctx.speed_ctrl_fdb;
+             float speed_iq_ref;
 
              s_speed_loop_accum_us = 0U;
              s_ctx.speed_loop_counter = 0U;
 
-             s_ctx.iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
-
-                                            s_ctx.speed_ref - s_ctx.speed_ctrl_fdb,
-
+             speed_iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
+                                            speed_error,
                                             speed_dt, speed_inv_dt);
+
+#if FOC_SPEED_ERROR_BOOST_ENABLE
+             if (s_ctx.speed_ref >= FOC_SPEED_ERROR_BOOST_MIN_RPM) {
+                 float boost = FOC_SPEED_ERROR_BOOST_KP * speed_error;
+
+                 speed_iq_ref += boost;
+                 g_foc_speed_error_boost_mA =
+                     FOC_Log_ToI16(boost, 1000.0f);
+             } else {
+                 g_foc_speed_error_boost_mA = 0;
+             }
+#else
+             g_foc_speed_error_boost_mA = 0;
+#endif
+
+             s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
+                                      s_ctx.pid_speed.out_min,
+                                      s_ctx.pid_speed.out_max);
 
          }
      }

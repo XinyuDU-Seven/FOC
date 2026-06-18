@@ -287,6 +287,18 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_SPEED_ERROR_BOOST_ENABLE
+#define FOC_SPEED_ERROR_BOOST_ENABLE    1
+#endif
+
+#ifndef FOC_SPEED_ERROR_BOOST_MIN_RPM
+#define FOC_SPEED_ERROR_BOOST_MIN_RPM   1000.0f
+#endif
+
+#ifndef FOC_SPEED_ERROR_BOOST_KP
+#define FOC_SPEED_ERROR_BOOST_KP        0.0020f
+#endif
+
  
 
 /** 角度预测软同步系数 (0~1)：扇区跳变时预测角度向扇区中心角度靠拢的比例，
