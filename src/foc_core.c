@@ -227,6 +227,7 @@ extern volatile uint32_t g_foc_dyn_speed_elapsed_ms;
 extern volatile uint16_t g_foc_dyn_speed_phase_u16;
 extern volatile int16_t  g_foc_dyn_speed_ref_rpm;
 extern volatile int16_t  g_foc_dyn_speed_fdb_rpm;
+extern volatile int16_t  g_foc_dyn_speed_ctrl_fdb_rpm;
 extern volatile int16_t  g_foc_dyn_speed_err_rpm;
 extern volatile uint16_t g_foc_dyn_speed_abs_err_rpm;
 extern volatile uint16_t g_foc_dyn_speed_abs_err_avg_rpm;
@@ -242,6 +243,7 @@ extern volatile uint16_t g_foc_dyn_log_decim_ms;
 extern volatile uint32_t g_foc_dyn_log_t_ms[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile int16_t  g_foc_dyn_log_ref_rpm[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile int16_t  g_foc_dyn_log_fdb_rpm[FOC_DYN_SPEED_LOG_SIZE];
+extern volatile int16_t  g_foc_dyn_log_ctrl_fdb_rpm[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile int16_t  g_foc_dyn_log_err_rpm[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile int16_t  g_foc_dyn_log_iq_ref_mA[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile int16_t  g_foc_dyn_log_iq_mA[FOC_DYN_SPEED_LOG_SIZE];
@@ -379,6 +381,7 @@ static void FOC_DynSpeed_ResetLog(void)
         g_foc_dyn_log_t_ms[i] = 0U;
         g_foc_dyn_log_ref_rpm[i] = 0;
         g_foc_dyn_log_fdb_rpm[i] = 0;
+        g_foc_dyn_log_ctrl_fdb_rpm[i] = 0;
         g_foc_dyn_log_err_rpm[i] = 0;
         g_foc_dyn_log_iq_ref_mA[i] = 0;
         g_foc_dyn_log_iq_mA[i] = 0;
@@ -393,6 +396,7 @@ static void FOC_DynSpeed_ResetStats(uint32_t now_us)
     g_foc_dyn_speed_phase_u16 = 0U;
     g_foc_dyn_speed_ref_rpm = 0;
     g_foc_dyn_speed_fdb_rpm = 0;
+    g_foc_dyn_speed_ctrl_fdb_rpm = 0;
     g_foc_dyn_speed_err_rpm = 0;
     g_foc_dyn_speed_abs_err_rpm = 0U;
     g_foc_dyn_speed_abs_err_avg_rpm = 0U;
@@ -592,6 +596,8 @@ static void FOC_DynSpeed_RecordLog(uint32_t now_us, int16_t err_rpm)
     g_foc_dyn_log_t_ms[idx] = g_foc_dyn_speed_elapsed_ms;
     g_foc_dyn_log_ref_rpm[idx] = g_foc_dyn_speed_ref_rpm;
     g_foc_dyn_log_fdb_rpm[idx] = FOC_Log_ToI16(s_ctx.speed_fdb, 1.0f);
+    g_foc_dyn_log_ctrl_fdb_rpm[idx] =
+        FOC_Log_ToI16(s_ctx.speed_ctrl_fdb, 1.0f);
     g_foc_dyn_log_err_rpm[idx] = err_rpm;
     g_foc_dyn_log_iq_ref_mA[idx] = FOC_Log_ToI16(s_ctx.iq_ref, 1000.0f);
     g_foc_dyn_log_iq_mA[idx] = FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
@@ -622,6 +628,8 @@ static void FOC_DynSpeed_ServiceMetrics(void)
     err_rpm = FOC_Log_ToI16(err, 1.0f);
 
     g_foc_dyn_speed_fdb_rpm = FOC_Log_ToI16(s_ctx.speed_fdb, 1.0f);
+    g_foc_dyn_speed_ctrl_fdb_rpm =
+        FOC_Log_ToI16(s_ctx.speed_ctrl_fdb, 1.0f);
     g_foc_dyn_speed_err_rpm = err_rpm;
     g_foc_dyn_speed_abs_err_rpm = FOC_Log_ToU16(abs_err, 1.0f);
     if (g_foc_dyn_speed_abs_err_rpm > g_foc_dyn_speed_max_abs_err_rpm) {
