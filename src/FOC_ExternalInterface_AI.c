@@ -17,10 +17,13 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_ref = 1U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_speed_start_cmd_rpm = 4500;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_dyn_speed_period_ms = 4000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_min_rpm = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_max_rpm = 4000U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reset_stats = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_speed_last_ext_ref_rpm = 0;
 
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_dyn_speed_elapsed_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_phase_u16 = 0U;
@@ -52,6 +55,11 @@ static uint8_t s_foc_dyn_speed_prev_enable = 0U;
 static uint32_t s_foc_dyn_speed_start_us = 0U;
 static uint32_t s_foc_dyn_log_last_us = 0U;
 static float s_foc_dyn_abs_err_avg_rpm = 0.0f;
+
+static uint8_t FOC_AI_SpeedNear(float a, float b)
+{
+  return (FOC_FABS(a - b) < 0.5f) ? 1U : 0U;
+}
 
 static int16_t FOC_AI_ToI16(float value, float scale)
 {
@@ -180,6 +188,46 @@ static void FOC_AI_UpdateDynamicSpeedReference(void)
   }
 
   FOC_SetSpeedRef(FOC_AI_CalcDynamicSpeedRef(now_us));
+}
+
+static uint8_t FOC_AI_IsDynamicSpeedStartCommand(float speed_ref)
+{
+  if (FOC_AI_SpeedNear(speed_ref, (float)g_foc_dyn_speed_start_cmd_rpm) != 0U) {
+    return 1U;
+  }
+
+  if ((g_foc_dyn_speed_start_on_max_ref != 0U) &&
+      FOC_AI_SpeedNear(speed_ref, (float)g_foc_dyn_speed_max_rpm) != 0U) {
+    return 1U;
+  }
+
+  return 0U;
+}
+
+static uint8_t FOC_AI_HandleDynamicSpeedExternalRef(float speed_ref)
+{
+  uint32_t now_us;
+
+  g_foc_dyn_speed_last_ext_ref_rpm = FOC_AI_ToI16(speed_ref, 1.0f);
+
+  if (FOC_AI_IsDynamicSpeedStartCommand(speed_ref) != 0U) {
+    if (g_foc_dyn_speed_enable == 0U) {
+      now_us = FOC_HAL_GetTimestampUs();
+      g_foc_dyn_speed_enable = 1U;
+      s_foc_dyn_speed_prev_enable = 1U;
+      FOC_AI_ResetDynamicSpeedStats(now_us);
+      FOC_SetSpeedRef(FOC_AI_CalcDynamicSpeedRef(now_us));
+    }
+    return 1U;
+  }
+
+  if (g_foc_dyn_speed_enable != 0U) {
+    g_foc_dyn_speed_enable = 0U;
+    s_foc_dyn_speed_prev_enable = 0U;
+    g_foc_dyn_speed_reset_stats = 0U;
+  }
+
+  return 0U;
 }
 
 static void FOC_AI_RecordDynamicSpeedLog(const FOC_Context_t *ctx,
@@ -497,6 +545,10 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
 FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed){
 
     (void)unId;
+
+    if (FOC_AI_HandleDynamicSpeedExternalRef(fSpeed) != 0U) {
+      return 0;
+    }
 
     FOC_SetSpeedRef(fSpeed);
 
