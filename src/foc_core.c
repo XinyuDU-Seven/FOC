@@ -201,6 +201,16 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_fdb = 1U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_start_fdb_margin_rpm = 50U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_dyn_core_loop_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_dyn_core_set_ref_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_dyn_core_trigger_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_dyn_core_disable_count = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_dyn_core_seen_ref_rpm = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_dyn_core_seen_fdb_rpm = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_core_state = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_core_trigger_source = 0U;
 
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 
@@ -396,6 +406,17 @@ static void FOC_DynSpeed_ResetStats(uint32_t now_us)
     FOC_DynSpeed_ResetLog();
 }
 
+static void FOC_DynSpeed_ResetStatsAtMax(uint32_t now_us)
+{
+    uint32_t period_ms = g_foc_dyn_speed_period_ms;
+
+    FOC_DynSpeed_ResetStats(now_us);
+    if (period_ms < 100U) {
+        period_ms = 100U;
+    }
+    s_dyn_speed_start_us = now_us - ((period_ms * 1000U) / 2U);
+}
+
 static float FOC_DynSpeed_CalcRef(uint32_t now_us)
 {
     uint32_t period_ms = g_foc_dyn_speed_period_ms;
@@ -458,12 +479,15 @@ static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
 {
     uint32_t now_us;
 
+    g_foc_dyn_core_set_ref_count++;
     g_foc_dyn_speed_last_ext_ref_rpm = FOC_Log_ToI16(rpm, 1.0f);
 
     if (FOC_DynSpeed_IsStartCommand(rpm) != 0U) {
         if (g_foc_dyn_speed_enable == 0U) {
             now_us = FOC_HAL_GetTimestampUs();
             g_foc_dyn_speed_enable = 1U;
+            g_foc_dyn_core_trigger_count++;
+            g_foc_dyn_core_trigger_source = 1U;
             s_dyn_speed_prev_enable = 1U;
             FOC_DynSpeed_ResetStats(now_us);
             FOC_DynSpeed_WriteCoreRef(FOC_DynSpeed_CalcRef(now_us));
@@ -473,6 +497,7 @@ static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
 
     if (g_foc_dyn_speed_enable != 0U) {
         g_foc_dyn_speed_enable = 0U;
+        g_foc_dyn_core_disable_count++;
         s_dyn_speed_prev_enable = 0U;
         g_foc_dyn_speed_reset_stats = 0U;
     }
@@ -484,7 +509,14 @@ static void FOC_DynSpeed_ServiceRef(void)
 {
     uint32_t now_us = FOC_HAL_GetTimestampUs();
     float current_ref = s_ctx.speed_ref;
+    float current_fdb = s_ctx.speed_fdb;
+    float start_fdb = (float)g_foc_dyn_speed_max_rpm -
+                      (float)g_foc_dyn_speed_start_fdb_margin_rpm;
 
+    g_foc_dyn_core_loop_count++;
+    g_foc_dyn_core_state = (uint8_t)s_ctx.state;
+    g_foc_dyn_core_seen_ref_rpm = FOC_Log_ToI16(current_ref, 1.0f);
+    g_foc_dyn_core_seen_fdb_rpm = FOC_Log_ToI16(current_fdb, 1.0f);
     g_foc_dyn_speed_last_ext_ref_rpm = FOC_Log_ToI16(current_ref, 1.0f);
 
     if (g_foc_dyn_speed_reset_stats != 0U) {
@@ -495,8 +527,17 @@ static void FOC_DynSpeed_ServiceRef(void)
     if (g_foc_dyn_speed_enable == 0U) {
         if (FOC_DynSpeed_IsStartCommand(current_ref) != 0U) {
             g_foc_dyn_speed_enable = 1U;
+            g_foc_dyn_core_trigger_count++;
+            g_foc_dyn_core_trigger_source = 2U;
             s_dyn_speed_prev_enable = 1U;
             FOC_DynSpeed_ResetStats(now_us);
+        } else if ((g_foc_dyn_speed_start_on_max_fdb != 0U) &&
+                   (current_fdb >= start_fdb)) {
+            g_foc_dyn_speed_enable = 1U;
+            g_foc_dyn_core_trigger_count++;
+            g_foc_dyn_core_trigger_source = 3U;
+            s_dyn_speed_prev_enable = 1U;
+            FOC_DynSpeed_ResetStatsAtMax(now_us);
         } else {
             s_dyn_speed_prev_enable = 0U;
             return;
@@ -505,6 +546,7 @@ static void FOC_DynSpeed_ServiceRef(void)
                (FOC_DynSpeed_Near(current_ref,
                                   (float)g_foc_dyn_speed_ref_rpm) == 0U)) {
         g_foc_dyn_speed_enable = 0U;
+        g_foc_dyn_core_disable_count++;
         s_dyn_speed_prev_enable = 0U;
         g_foc_dyn_speed_reset_stats = 0U;
         return;
