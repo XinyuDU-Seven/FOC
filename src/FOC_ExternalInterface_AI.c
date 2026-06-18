@@ -51,6 +51,7 @@ FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_log_iq_mA[FOC_DYN_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_current_peak_mA[FOC_DYN_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
 
+#if 0
 static uint8_t s_foc_dyn_speed_prev_enable = 0U;
 static uint32_t s_foc_dyn_speed_start_us = 0U;
 static uint32_t s_foc_dyn_log_last_us = 0U;
@@ -336,6 +337,7 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 
   FOC_AI_RecordDynamicSpeedLog(ctx, now_us, err_rpm);
 }
+#endif
 
 /*******************************************************************************************
 
@@ -355,13 +357,7 @@ void Foc_AlgorithmControlCallback_AI(void){
 
   g_foc_ai_callback_count++;
 
-  FOC_AI_PollDynamicSpeedCoreRef();
-
-  FOC_AI_UpdateDynamicSpeedReference();
-
   FOC_MainLoop();
-
-  FOC_AI_UpdateDynamicSpeedMetrics();
 
 }
 
@@ -574,10 +570,6 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
 FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed){
 
     (void)unId;
-
-    if (FOC_AI_HandleDynamicSpeedExternalRef(fSpeed) != 0U) {
-      return 0;
-    }
 
     FOC_SetSpeedRef(fSpeed);
 

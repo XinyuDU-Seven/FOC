@@ -202,6 +202,41 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 
+#define FOC_DYN_SPEED_LOG_SIZE 128U
+
+extern volatile uint8_t  g_foc_dyn_speed_enable;
+extern volatile uint8_t  g_foc_dyn_speed_start_on_max_ref;
+extern volatile int16_t  g_foc_dyn_speed_start_cmd_rpm;
+extern volatile uint32_t g_foc_dyn_speed_period_ms;
+extern volatile uint16_t g_foc_dyn_speed_min_rpm;
+extern volatile uint16_t g_foc_dyn_speed_max_rpm;
+extern volatile uint8_t  g_foc_dyn_speed_reset_stats;
+extern volatile int16_t  g_foc_dyn_speed_last_ext_ref_rpm;
+extern volatile uint32_t g_foc_dyn_speed_elapsed_ms;
+extern volatile uint16_t g_foc_dyn_speed_phase_u16;
+extern volatile int16_t  g_foc_dyn_speed_ref_rpm;
+extern volatile int16_t  g_foc_dyn_speed_fdb_rpm;
+extern volatile int16_t  g_foc_dyn_speed_err_rpm;
+extern volatile uint16_t g_foc_dyn_speed_abs_err_rpm;
+extern volatile uint16_t g_foc_dyn_speed_abs_err_avg_rpm;
+extern volatile uint16_t g_foc_dyn_speed_max_abs_err_rpm;
+extern volatile int16_t  g_foc_dyn_speed_iq_ref_mA;
+extern volatile int16_t  g_foc_dyn_speed_id_mA;
+extern volatile int16_t  g_foc_dyn_speed_iq_mA;
+extern volatile uint16_t g_foc_dyn_speed_current_peak_mA;
+extern volatile uint32_t g_foc_dyn_speed_sample_count;
+extern volatile uint16_t g_foc_dyn_log_idx;
+extern volatile uint8_t  g_foc_dyn_log_stop;
+extern volatile uint16_t g_foc_dyn_log_decim_ms;
+extern volatile uint32_t g_foc_dyn_log_t_ms[FOC_DYN_SPEED_LOG_SIZE];
+extern volatile int16_t  g_foc_dyn_log_ref_rpm[FOC_DYN_SPEED_LOG_SIZE];
+extern volatile int16_t  g_foc_dyn_log_fdb_rpm[FOC_DYN_SPEED_LOG_SIZE];
+extern volatile int16_t  g_foc_dyn_log_err_rpm[FOC_DYN_SPEED_LOG_SIZE];
+extern volatile int16_t  g_foc_dyn_log_iq_ref_mA[FOC_DYN_SPEED_LOG_SIZE];
+extern volatile int16_t  g_foc_dyn_log_iq_mA[FOC_DYN_SPEED_LOG_SIZE];
+extern volatile uint16_t g_foc_dyn_log_current_peak_mA[FOC_DYN_SPEED_LOG_SIZE];
+extern volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
+
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
 static uint32_t s_foc_prof_last_enter_us = 0U;
@@ -213,6 +248,10 @@ static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 static uint32_t s_speed_loop_accum_us = 0U;
 static float s_current_angle_trim_rad = 0.0f;
 static uint32_t s_hall_event_seq_seen = 0U;
+static uint8_t s_dyn_speed_prev_enable = 0U;
+static uint32_t s_dyn_speed_start_us = 0U;
+static uint32_t s_dyn_log_last_us = 0U;
+static float s_dyn_abs_err_avg_rpm = 0.0f;
 
  
 
@@ -240,6 +279,9 @@ static void FOC_ResetCurrentAngleTrim(void);
 static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
 static void FOC_UpdateCurrentAngleTrim(float dt);
 static void FOC_UpdateSpeedControlFeedback(void);
+static uint8_t FOC_DynSpeed_HandleSetRef(float rpm);
+static void FOC_DynSpeed_ServiceRef(void);
+static void FOC_DynSpeed_ServiceMetrics(void);
 static void FOC_BeginRecoveryZeroVectorHold(void);
  static void FOC_ServiceRecoveryZeroVectorHold(void);
  static void FOC_BeginPostRecoveryDutySlew(void);
@@ -294,6 +336,264 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      }
      return (uint16_t)(angle * (65535.0f / FOC_2PI));
  }
+
+static uint8_t FOC_DynSpeed_Near(float a, float b)
+{
+    return (FOC_FABS(a - b) < 0.5f) ? 1U : 0U;
+}
+
+static uint8_t FOC_DynSpeed_IsStartCommand(float rpm)
+{
+    if (FOC_DynSpeed_Near(rpm, (float)g_foc_dyn_speed_start_cmd_rpm) != 0U) {
+        return 1U;
+    }
+
+    if ((g_foc_dyn_speed_start_on_max_ref != 0U) &&
+        (FOC_DynSpeed_Near(rpm, (float)g_foc_dyn_speed_max_rpm) != 0U)) {
+        return 1U;
+    }
+
+    return 0U;
+}
+
+static void FOC_DynSpeed_ResetLog(void)
+{
+    uint16_t i;
+
+    g_foc_dyn_log_idx = 0U;
+    g_foc_dyn_log_stop = 0U;
+    s_dyn_log_last_us = 0U;
+
+    for (i = 0U; i < FOC_DYN_SPEED_LOG_SIZE; i++) {
+        g_foc_dyn_log_t_ms[i] = 0U;
+        g_foc_dyn_log_ref_rpm[i] = 0;
+        g_foc_dyn_log_fdb_rpm[i] = 0;
+        g_foc_dyn_log_err_rpm[i] = 0;
+        g_foc_dyn_log_iq_ref_mA[i] = 0;
+        g_foc_dyn_log_iq_mA[i] = 0;
+        g_foc_dyn_log_current_peak_mA[i] = 0U;
+        g_foc_dyn_log_fault[i] = 0U;
+    }
+}
+
+static void FOC_DynSpeed_ResetStats(uint32_t now_us)
+{
+    g_foc_dyn_speed_elapsed_ms = 0U;
+    g_foc_dyn_speed_phase_u16 = 0U;
+    g_foc_dyn_speed_ref_rpm = 0;
+    g_foc_dyn_speed_fdb_rpm = 0;
+    g_foc_dyn_speed_err_rpm = 0;
+    g_foc_dyn_speed_abs_err_rpm = 0U;
+    g_foc_dyn_speed_abs_err_avg_rpm = 0U;
+    g_foc_dyn_speed_max_abs_err_rpm = 0U;
+    g_foc_dyn_speed_iq_ref_mA = 0;
+    g_foc_dyn_speed_id_mA = 0;
+    g_foc_dyn_speed_iq_mA = 0;
+    g_foc_dyn_speed_current_peak_mA = 0U;
+    g_foc_dyn_speed_sample_count = 0U;
+    s_dyn_abs_err_avg_rpm = 0.0f;
+    s_dyn_speed_start_us = now_us;
+    FOC_DynSpeed_ResetLog();
+}
+
+static float FOC_DynSpeed_CalcRef(uint32_t now_us)
+{
+    uint32_t period_ms = g_foc_dyn_speed_period_ms;
+    uint32_t period_us;
+    uint32_t elapsed_us;
+    uint32_t phase_us;
+    float phase;
+    float speed_min = (float)g_foc_dyn_speed_min_rpm;
+    float speed_max = (float)g_foc_dyn_speed_max_rpm;
+    float speed_mid;
+    float speed_amp;
+    float target;
+    float tmp;
+
+    if (period_ms < 100U) {
+        period_ms = 100U;
+    }
+    if (speed_max < speed_min) {
+        tmp = speed_max;
+        speed_max = speed_min;
+        speed_min = tmp;
+    }
+
+    period_us = period_ms * 1000U;
+    elapsed_us = now_us - s_dyn_speed_start_us;
+    phase_us = (period_us > 0U) ? (elapsed_us % period_us) : 0U;
+    phase = ((float)phase_us / (float)period_us) * FOC_2PI;
+
+    speed_mid = 0.5f * (speed_min + speed_max);
+    speed_amp = 0.5f * (speed_max - speed_min);
+    target = speed_mid - speed_amp * FOC_FastCos(phase);
+
+    g_foc_dyn_speed_elapsed_ms = elapsed_us / 1000U;
+    g_foc_dyn_speed_phase_u16 = FOC_Log_ToU16(phase, 65535.0f / FOC_2PI);
+    g_foc_dyn_speed_ref_rpm = FOC_Log_ToI16(target, 1.0f);
+
+    return target;
+}
+
+static void FOC_DynSpeed_WriteCoreRef(float rpm)
+{
+    if (rpm > s_config.motor.max_speed_rpm) {
+        rpm = s_config.motor.max_speed_rpm;
+    } else if (rpm < -s_config.motor.max_speed_rpm) {
+        rpm = -s_config.motor.max_speed_rpm;
+    }
+
+    FOC_HAL_EnterCritical();
+    s_ctx.speed_ref = rpm;
+    if (rpm >= 0.0f) {
+        s_ctx.direction = FOC_DIR_CW;
+    } else {
+        s_ctx.direction = FOC_DIR_CCW;
+        s_ctx.speed_ref = -rpm;
+    }
+    FOC_HAL_ExitCritical();
+}
+
+static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
+{
+    uint32_t now_us;
+
+    g_foc_dyn_speed_last_ext_ref_rpm = FOC_Log_ToI16(rpm, 1.0f);
+
+    if (FOC_DynSpeed_IsStartCommand(rpm) != 0U) {
+        if (g_foc_dyn_speed_enable == 0U) {
+            now_us = FOC_HAL_GetTimestampUs();
+            g_foc_dyn_speed_enable = 1U;
+            s_dyn_speed_prev_enable = 1U;
+            FOC_DynSpeed_ResetStats(now_us);
+            FOC_DynSpeed_WriteCoreRef(FOC_DynSpeed_CalcRef(now_us));
+        }
+        return 1U;
+    }
+
+    if (g_foc_dyn_speed_enable != 0U) {
+        g_foc_dyn_speed_enable = 0U;
+        s_dyn_speed_prev_enable = 0U;
+        g_foc_dyn_speed_reset_stats = 0U;
+    }
+
+    return 0U;
+}
+
+static void FOC_DynSpeed_ServiceRef(void)
+{
+    uint32_t now_us = FOC_HAL_GetTimestampUs();
+    float current_ref = s_ctx.speed_ref;
+
+    g_foc_dyn_speed_last_ext_ref_rpm = FOC_Log_ToI16(current_ref, 1.0f);
+
+    if (g_foc_dyn_speed_reset_stats != 0U) {
+        g_foc_dyn_speed_reset_stats = 0U;
+        FOC_DynSpeed_ResetStats(now_us);
+    }
+
+    if (g_foc_dyn_speed_enable == 0U) {
+        if (FOC_DynSpeed_IsStartCommand(current_ref) != 0U) {
+            g_foc_dyn_speed_enable = 1U;
+            s_dyn_speed_prev_enable = 1U;
+            FOC_DynSpeed_ResetStats(now_us);
+        } else {
+            s_dyn_speed_prev_enable = 0U;
+            return;
+        }
+    } else if ((FOC_DynSpeed_IsStartCommand(current_ref) == 0U) &&
+               (FOC_DynSpeed_Near(current_ref,
+                                  (float)g_foc_dyn_speed_ref_rpm) == 0U)) {
+        g_foc_dyn_speed_enable = 0U;
+        s_dyn_speed_prev_enable = 0U;
+        g_foc_dyn_speed_reset_stats = 0U;
+        return;
+    }
+
+    if (s_dyn_speed_prev_enable == 0U) {
+        s_dyn_speed_prev_enable = 1U;
+        FOC_DynSpeed_ResetStats(now_us);
+    }
+
+    FOC_DynSpeed_WriteCoreRef(FOC_DynSpeed_CalcRef(now_us));
+}
+
+static void FOC_DynSpeed_RecordLog(uint32_t now_us, int16_t err_rpm)
+{
+    uint16_t idx;
+    uint32_t decim_us = (uint32_t)g_foc_dyn_log_decim_ms * 1000U;
+
+    if (g_foc_dyn_log_stop != 0U) {
+        return;
+    }
+    if (decim_us < 1000U) {
+        decim_us = 1000U;
+    }
+    if ((s_dyn_log_last_us != 0U) &&
+        ((now_us - s_dyn_log_last_us) < decim_us)) {
+        return;
+    }
+
+    idx = g_foc_dyn_log_idx;
+    if (idx >= FOC_DYN_SPEED_LOG_SIZE) {
+        g_foc_dyn_log_stop = 1U;
+        return;
+    }
+
+    s_dyn_log_last_us = now_us;
+    g_foc_dyn_log_t_ms[idx] = g_foc_dyn_speed_elapsed_ms;
+    g_foc_dyn_log_ref_rpm[idx] = g_foc_dyn_speed_ref_rpm;
+    g_foc_dyn_log_fdb_rpm[idx] = FOC_Log_ToI16(s_ctx.speed_fdb, 1.0f);
+    g_foc_dyn_log_err_rpm[idx] = err_rpm;
+    g_foc_dyn_log_iq_ref_mA[idx] = FOC_Log_ToI16(s_ctx.iq_ref, 1000.0f);
+    g_foc_dyn_log_iq_mA[idx] = FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
+    g_foc_dyn_log_current_peak_mA[idx] = FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
+    g_foc_dyn_log_fault[idx] = (uint16_t)s_ctx.fault;
+
+    idx++;
+    g_foc_dyn_log_idx = idx;
+    if (idx >= FOC_DYN_SPEED_LOG_SIZE) {
+        g_foc_dyn_log_stop = 1U;
+    }
+}
+
+static void FOC_DynSpeed_ServiceMetrics(void)
+{
+    uint32_t now_us;
+    float err;
+    float abs_err;
+    int16_t err_rpm;
+
+    if (g_foc_dyn_speed_enable == 0U) {
+        return;
+    }
+
+    now_us = FOC_HAL_GetTimestampUs();
+    err = (float)g_foc_dyn_speed_ref_rpm - s_ctx.speed_fdb;
+    abs_err = FOC_FABS(err);
+    err_rpm = FOC_Log_ToI16(err, 1.0f);
+
+    g_foc_dyn_speed_fdb_rpm = FOC_Log_ToI16(s_ctx.speed_fdb, 1.0f);
+    g_foc_dyn_speed_err_rpm = err_rpm;
+    g_foc_dyn_speed_abs_err_rpm = FOC_Log_ToU16(abs_err, 1.0f);
+    if (g_foc_dyn_speed_abs_err_rpm > g_foc_dyn_speed_max_abs_err_rpm) {
+        g_foc_dyn_speed_max_abs_err_rpm = g_foc_dyn_speed_abs_err_rpm;
+    }
+
+    s_dyn_abs_err_avg_rpm =
+        0.001f * abs_err + 0.999f * s_dyn_abs_err_avg_rpm;
+    g_foc_dyn_speed_abs_err_avg_rpm =
+        FOC_Log_ToU16(s_dyn_abs_err_avg_rpm, 1.0f);
+
+    g_foc_dyn_speed_iq_ref_mA = FOC_Log_ToI16(s_ctx.iq_ref, 1000.0f);
+    g_foc_dyn_speed_id_mA = FOC_Log_ToI16(s_ctx.i_dq.d, 1000.0f);
+    g_foc_dyn_speed_iq_mA = FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
+    g_foc_dyn_speed_current_peak_mA =
+        FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
+    g_foc_dyn_speed_sample_count++;
+
+    FOC_DynSpeed_RecordLog(now_us, err_rpm);
+}
 
  static void FOC_ResetCurrentAngleTrim(void)
  {
@@ -1215,6 +1515,9 @@ static void FOC_Prof_Reset(void)
      g_foc_recovery_current_wait_active = 0U;
 
      s_ctx.speed_ref = 0.0f;
+     g_foc_dyn_speed_enable = 0U;
+     s_dyn_speed_prev_enable = 0U;
+     g_foc_dyn_speed_reset_stats = 0U;
 
      s_ctx.iq_ref    = 0.0f;
      s_ctx.speed_ctrl_fdb = 0.0f;
@@ -1280,6 +1583,8 @@ static void FOC_Prof_Reset(void)
  
 
      /* 预计算时间常量，避免热路径中的除法 */
+
+     FOC_DynSpeed_ServiceRef();
 
      float observer_dt = FOC_ControlDtFromUs(control_period_us,
                                              FOC_CONTROL_OBSERVER_DT_MAX_US);
@@ -1601,6 +1906,7 @@ static void FOC_Prof_Reset(void)
  
 
      FOC_Log_Record(theta_e_ctrl);
+     FOC_DynSpeed_ServiceMetrics();
      prof_next_us = FOC_HAL_GetTimestampUs();
      FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 6U);
      FOC_Prof_Exit(prof_enter_us, prof_next_us);
@@ -1696,6 +2002,10 @@ static void FOC_Prof_Reset(void)
  {
 
      /* 限幅到电机最大转速 */
+
+     if (FOC_DynSpeed_HandleSetRef(rpm) != 0U) {
+         return FOC_OK;
+     }
 
      if (rpm > s_config.motor.max_speed_rpm) {
 
