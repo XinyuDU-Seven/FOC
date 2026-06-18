@@ -221,7 +221,7 @@ extern "C" {
 
 #ifndef FOC_STALL_COUNT_THRESHOLD
 
-#define FOC_STALL_COUNT_THRESHOLD       2000U
+#define FOC_STALL_COUNT_THRESHOLD       15000U
 
 #endif
 

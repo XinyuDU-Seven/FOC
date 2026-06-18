@@ -424,7 +424,7 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
             speed_rpm = 0.0f;
             ctx->speed_raw = 0.0f;
             ctx->speed_filtered = 0.0f;
-            if (ctx->hall_sector.sector != 0U) {
+            if ((ctx->speed_ref <= 0.0f) && (ctx->hall_sector.sector != 0U)) {
                 ctx->theta_e_predicted = ctx->hall_sector.theta_e;
             }
             ctx->hall_sector_prev = cur_sector;
