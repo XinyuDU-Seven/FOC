@@ -288,7 +288,7 @@ extern "C" {
 #endif
 
 #ifndef FOC_SPEED_ERROR_BOOST_ENABLE
-#define FOC_SPEED_ERROR_BOOST_ENABLE    1
+#define FOC_SPEED_ERROR_BOOST_ENABLE    0
 #endif
 
 #ifndef FOC_SPEED_ERROR_BOOST_MIN_RPM

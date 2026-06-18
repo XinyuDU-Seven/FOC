@@ -482,18 +482,13 @@ static void FOC_DynSpeed_WriteCoreRef(float rpm)
 {
     if (rpm > s_config.motor.max_speed_rpm) {
         rpm = s_config.motor.max_speed_rpm;
-    } else if (rpm < -s_config.motor.max_speed_rpm) {
-        rpm = -s_config.motor.max_speed_rpm;
+    } else if (rpm < 0.0f) {
+        rpm = 0.0f;
     }
 
     FOC_HAL_EnterCritical();
     s_ctx.speed_ref = rpm;
-    if (rpm >= 0.0f) {
-        s_ctx.direction = FOC_DIR_CW;
-    } else {
-        s_ctx.direction = FOC_DIR_CCW;
-        s_ctx.speed_ref = -rpm;
-    }
+    s_ctx.direction = FOC_DIR_CW;
     FOC_HAL_ExitCritical();
 }
 
@@ -648,8 +643,8 @@ static void FOC_BidirSpeed_ServiceRef(void)
 
     if (target > s_config.motor.max_speed_rpm) {
         target = s_config.motor.max_speed_rpm;
-    } else if (target < -s_config.motor.max_speed_rpm) {
-        target = -s_config.motor.max_speed_rpm;
+    } else if (target < 0.0f) {
+        target = 0.0f;
     }
 
     g_foc_bidir_speed_elapsed_ms = elapsed_us / 1000U;
@@ -2220,9 +2215,9 @@ static void FOC_Prof_Reset(void)
 
          rpm = s_config.motor.max_speed_rpm;
 
-     } else if (rpm < -s_config.motor.max_speed_rpm) {
+     } else if (rpm < 0.0f) {
 
-         rpm = -s_config.motor.max_speed_rpm;
+         rpm = 0.0f;
 
      }
 
@@ -2236,19 +2231,7 @@ static void FOC_Prof_Reset(void)
 
  
 
-     /* 根据转速正负自动判断方向 */
-
-     if (rpm >= 0.0f) {
-
-         s_ctx.direction = FOC_DIR_CW;
-
-     } else {
-
-         s_ctx.direction = FOC_DIR_CCW;
-
-         s_ctx.speed_ref = -rpm; /* 速度绝对值用于PID，方向由电角度处理 */
-
-     }
+     s_ctx.direction = FOC_DIR_CW;
 
      FOC_HAL_ExitCritical();
 
@@ -2263,6 +2246,9 @@ static void FOC_Prof_Reset(void)
  int FOC_Core_SetDirection(FOC_Dir_e dir)
 
  {
+     if (dir != FOC_DIR_CW) {
+         return FOC_ERR;
+     }
 
      FOC_HAL_EnterCritical();
 

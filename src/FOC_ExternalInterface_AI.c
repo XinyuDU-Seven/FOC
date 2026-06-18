@@ -21,12 +21,21 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
 #define FOC_TEST_CASE_DYN_SPEED   2U
 #define FOC_TEST_CASE_BIDIR_SPEED 3U
 
+#define FOC_FORWARD_STABLE_MAX_SPEED_RPM       2500U
+#define FOC_FORWARD_STABLE_DYN_MIN_RPM         300U
+#define FOC_FORWARD_STABLE_FIXED_SPEED_RPM     1200.0f
+#define FOC_FORWARD_STABLE_MAX_CURRENT_A       3.5f
+#define FOC_FORWARD_STABLE_DYN_TRIGGER_RPM     32000
+
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
-FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_ref = 1U;
-FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_speed_start_cmd_rpm = 4500;
-FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_dyn_speed_period_ms = 4000U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_min_rpm = 0U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_max_rpm = 4000U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_ref = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_speed_start_cmd_rpm =
+    FOC_FORWARD_STABLE_DYN_TRIGGER_RPM;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_dyn_speed_period_ms = 6000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_min_rpm =
+    FOC_FORWARD_STABLE_DYN_MIN_RPM;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_max_rpm =
+    FOC_FORWARD_STABLE_MAX_SPEED_RPM;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reset_stats = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_speed_last_ext_ref_rpm = 0;
 
@@ -61,7 +70,7 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_reset_stats = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_period_ms = 8000U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_max_rpm = 2000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_max_rpm = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_elapsed_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_phase_u16 = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_ref_rpm = 0;
@@ -420,9 +429,9 @@ void Foc_Init_AI(void){
 
   config.motor.v_bus = 12;
 
-  config.motor.max_speed_rpm = 4000;
+  config.motor.max_speed_rpm = FOC_FORWARD_STABLE_MAX_SPEED_RPM;
 
-  config.motor.max_current_a = 5;
+  config.motor.max_current_a = FOC_FORWARD_STABLE_MAX_CURRENT_A;
 
   config.current_d_pid.kp = 0.25f;
 
@@ -444,9 +453,9 @@ void Foc_Init_AI(void){
 
   config.current_q_pid.out_min = -10;
 
-  config.speed_pid.kp = 0.0065f;
+  config.speed_pid.kp = 0.0045f;
 
-  config.speed_pid.ki = 0.0008f;
+  config.speed_pid.ki = 0.00035f;
 
   config.speed_pid.kd = 0.0f;
 
@@ -600,6 +609,10 @@ FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed){
 
     g_foc_bidir_speed_enable = 0U;
 
+    if (fSpeed < 0.0f) {
+      fSpeed = 0.0f;
+    }
+
     FOC_SetSpeedRef(fSpeed);
 
     return 0;
@@ -668,7 +681,7 @@ FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unM
 
  
 
-float gfSpeedTarget = 0;
+float gfSpeedTarget = FOC_FORWARD_STABLE_FIXED_SPEED_RPM;
 
 uint8_t gunCtrl = 0;
 
@@ -713,14 +726,13 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
   }else if(test_case == FOC_TEST_CASE_BIDIR_SPEED){
 
+    FOC_TestCase_ClearAutoModes();
+
     Foc_EnableFocControl(unId);
 
-    g_foc_dyn_speed_enable = 0U;
-    g_foc_dyn_speed_reset_stats = 0U;
+    Foc_SetSpeedReference(unId, gfSpeedTarget);
 
-    g_foc_bidir_speed_enable = 1U;
-
-    g_foc_bidir_speed_reset_stats = 1U;
+    g_foc_test_case_last_error = FOC_TEST_CASE_BIDIR_SPEED;
 
   }else{
 
