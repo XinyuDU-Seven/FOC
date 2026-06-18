@@ -465,6 +465,11 @@ static float FOC_DynSpeed_CalcRef(uint32_t now_us)
     speed_mid = 0.5f * (speed_min + speed_max);
     speed_amp = 0.5f * (speed_max - speed_min);
     target = speed_mid - speed_amp * FOC_FastCos(phase);
+    if (target < speed_min) {
+        target = speed_min;
+    } else if (target > speed_max) {
+        target = speed_max;
+    }
 
     g_foc_dyn_speed_elapsed_ms = elapsed_us / 1000U;
     g_foc_dyn_speed_phase_u16 = FOC_Log_ToU16(phase, 65535.0f / FOC_2PI);
@@ -545,6 +550,15 @@ static void FOC_DynSpeed_ServiceRef(void)
     g_foc_dyn_core_seen_fdb_rpm = FOC_Log_ToI16(current_fdb, 1.0f);
     g_foc_dyn_speed_last_ext_ref_rpm = FOC_Log_ToI16(current_ref, 1.0f);
 
+    if ((livewatch_ref_valid != 0U) && (g_foc_bidir_speed_enable != 0U)) {
+        g_foc_bidir_speed_enable = 0U;
+        g_foc_bidir_speed_reset_stats = 0U;
+        s_bidir_speed_prev_enable = 0U;
+        if (FOC_DynSpeed_IsStartCommand(current_ref) == 0U) {
+            FOC_DynSpeed_WriteCoreRef(current_ref);
+        }
+    }
+
     if (g_foc_dyn_speed_reset_stats != 0U) {
         g_foc_dyn_speed_reset_stats = 0U;
         FOC_DynSpeed_ResetStats(now_us);
@@ -560,7 +574,8 @@ static void FOC_DynSpeed_ServiceRef(void)
                 (livewatch_ref_valid != 0U) ? 4U : 2U;
             s_dyn_speed_prev_enable = 1U;
             FOC_DynSpeed_ResetStats(now_us);
-        } else if ((g_foc_dyn_speed_start_on_max_fdb != 0U) &&
+        } else if ((livewatch_ref_valid == 0U) &&
+                   (g_foc_dyn_speed_start_on_max_fdb != 0U) &&
                    (current_fdb >= start_fdb)) {
             g_foc_bidir_speed_enable = 0U;
             s_bidir_speed_prev_enable = 0U;
@@ -1746,7 +1761,7 @@ static void FOC_Prof_Reset(void)
 
      /* 预计算时间常量，避免热路径中的除法 */
 
-     if (g_foc_bidir_speed_enable != 0U) {
+     if ((g_foc_bidir_speed_enable != 0U) && (speed_ref < -0.5f)) {
          FOC_BidirSpeed_ServiceRef();
      } else {
          FOC_DynSpeed_ServiceRef();
