@@ -70,6 +70,8 @@ FOC_Protection_Threshold_t s_prot_threshold;
 #define FOC_LOG_SIZE        512U
 #define FOC_LOG_DECIMATION  1U
 #define FOC_TEXT_LOG_SIZE   128U
+#define FOC_LIVEWATCH_SPEED_REF_INVALID (-32768.0f)
+#define FOC_SPEED_REF_DIRECTION_DEADBAND_RPM 0.5f
 
 typedef struct {
     uint32_t seq;
@@ -202,7 +204,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
-FOC_DEBUG_ROOT volatile float    speed_ref = -1.0f;
+FOC_DEBUG_ROOT volatile float    speed_ref = FOC_LIVEWATCH_SPEED_REF_INVALID;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_fdb = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_start_fdb_margin_rpm = 50U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_dyn_core_loop_count = 0U;
@@ -303,6 +305,10 @@ static void FOC_ResetCurrentAngleTrim(void);
 static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
 static void FOC_UpdateCurrentAngleTrim(float dt);
 static void FOC_UpdateSpeedControlFeedback(void);
+static uint8_t FOC_LivewatchSpeedRefValid(float rpm);
+static float FOC_ClampSpeedRef(float rpm);
+static FOC_Dir_e FOC_SpeedRefToDirection(float rpm);
+static void FOC_WriteSpeedRef(float rpm);
 static uint8_t FOC_DynSpeed_HandleSetRef(float rpm);
 static void FOC_DynSpeed_ServiceRef(void);
 static void FOC_BidirSpeed_ServiceRef(void);
@@ -361,6 +367,61 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      }
      return (uint16_t)(angle * (65535.0f / FOC_2PI));
  }
+
+static uint8_t FOC_LivewatchSpeedRefValid(float rpm)
+{
+    return (rpm > (FOC_LIVEWATCH_SPEED_REF_INVALID + 1.0f)) ? 1U : 0U;
+}
+
+static float FOC_ClampSpeedRef(float rpm)
+{
+    float max_rpm = s_config.motor.max_speed_rpm;
+
+    if (rpm > max_rpm) {
+        return max_rpm;
+    }
+    if (rpm < -max_rpm) {
+        return -max_rpm;
+    }
+
+    return rpm;
+}
+
+static FOC_Dir_e FOC_SpeedRefToDirection(float rpm)
+{
+    return (rpm < -FOC_SPEED_REF_DIRECTION_DEADBAND_RPM)
+         ? FOC_DIR_CCW
+         : FOC_DIR_CW;
+}
+
+static void FOC_WriteSpeedRef(float rpm)
+{
+    float prev_ref;
+    uint8_t sign_changed;
+
+    rpm = FOC_ClampSpeedRef(rpm);
+    prev_ref = s_ctx.speed_ref;
+    sign_changed =
+        (((prev_ref > FOC_SPEED_REF_DIRECTION_DEADBAND_RPM) &&
+          (rpm < -FOC_SPEED_REF_DIRECTION_DEADBAND_RPM)) ||
+         ((prev_ref < -FOC_SPEED_REF_DIRECTION_DEADBAND_RPM) &&
+          (rpm > FOC_SPEED_REF_DIRECTION_DEADBAND_RPM))) ? 1U : 0U;
+
+    FOC_HAL_EnterCritical();
+
+    if (sign_changed != 0U) {
+        FOC_PID_Reset(&s_ctx.pid_speed);
+        FOC_ResetCurrentAngleTrim();
+        s_ctx.iq_ref = 0.0f;
+        s_speed_loop_accum_us = 0U;
+    }
+
+    s_ctx.speed_ref = rpm;
+    s_ctx.direction = FOC_SpeedRefToDirection(rpm);
+    s_speed_error_boost_prev_ref = rpm;
+
+    FOC_HAL_ExitCritical();
+}
 
 static uint8_t FOC_DynSpeed_Near(float a, float b)
 {
@@ -480,16 +541,7 @@ static float FOC_DynSpeed_CalcRef(uint32_t now_us)
 
 static void FOC_DynSpeed_WriteCoreRef(float rpm)
 {
-    if (rpm > s_config.motor.max_speed_rpm) {
-        rpm = s_config.motor.max_speed_rpm;
-    } else if (rpm < 0.0f) {
-        rpm = 0.0f;
-    }
-
-    FOC_HAL_EnterCritical();
-    s_ctx.speed_ref = rpm;
-    s_ctx.direction = FOC_DIR_CW;
-    FOC_HAL_ExitCritical();
+    FOC_WriteSpeedRef(rpm);
 }
 
 static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
@@ -533,7 +585,7 @@ static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
 static void FOC_DynSpeed_ServiceRef(void)
 {
     uint32_t now_us = FOC_HAL_GetTimestampUs();
-    uint8_t livewatch_ref_valid = (speed_ref >= -0.5f) ? 1U : 0U;
+    uint8_t livewatch_ref_valid = FOC_LivewatchSpeedRefValid(speed_ref);
     float current_ref = (livewatch_ref_valid != 0U) ? speed_ref : s_ctx.speed_ref;
     float current_fdb = s_ctx.speed_fdb;
     float start_fdb = (float)g_foc_dyn_speed_max_rpm -
@@ -579,6 +631,12 @@ static void FOC_DynSpeed_ServiceRef(void)
             g_foc_dyn_core_trigger_source = 3U;
             s_dyn_speed_prev_enable = 1U;
             FOC_DynSpeed_ResetStatsAtMax(now_us);
+        } else if (livewatch_ref_valid != 0U) {
+            if (FOC_DynSpeed_Near(current_ref, s_ctx.speed_ref) == 0U) {
+                FOC_DynSpeed_WriteCoreRef(current_ref);
+            }
+            s_dyn_speed_prev_enable = 0U;
+            return;
         } else {
             s_dyn_speed_prev_enable = 0U;
             return;
@@ -643,8 +701,8 @@ static void FOC_BidirSpeed_ServiceRef(void)
 
     if (target > s_config.motor.max_speed_rpm) {
         target = s_config.motor.max_speed_rpm;
-    } else if (target < 0.0f) {
-        target = 0.0f;
+    } else if (target < -s_config.motor.max_speed_rpm) {
+        target = -s_config.motor.max_speed_rpm;
     }
 
     g_foc_bidir_speed_elapsed_ms = elapsed_us / 1000U;
@@ -665,12 +723,6 @@ static void FOC_DynSpeed_RecordLog(uint32_t now_us, int16_t err_rpm)
     uint32_t decim_us = (uint32_t)g_foc_dyn_log_decim_ms * 1000U;
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
-
-    if ((g_foc_bidir_speed_enable != 0U) &&
-        (s_ctx.direction == FOC_DIR_CCW)) {
-        signed_speed_fdb = -signed_speed_fdb;
-        signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
-    }
 
     if (g_foc_dyn_log_stop != 0U) {
         return;
@@ -723,12 +775,6 @@ static void FOC_DynSpeed_ServiceMetrics(void)
     }
 
     now_us = FOC_HAL_GetTimestampUs();
-    if ((g_foc_bidir_speed_enable != 0U) &&
-        (s_ctx.direction == FOC_DIR_CCW)) {
-        signed_speed_fdb = -signed_speed_fdb;
-        signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
-    }
-
     err = (float)g_foc_dyn_speed_ref_rpm - signed_speed_fdb;
     abs_err = FOC_FABS(err);
     err_rpm = FOC_Log_ToI16(err, 1.0f);
@@ -817,6 +863,11 @@ static void FOC_UpdateSpeedControlFeedback(void)
         s_ctx.speed_ctrl_fdb = 0.0f;
     } else if ((FOC_FABS(s_ctx.speed_ctrl_fdb) < 1.0f) &&
                (FOC_FABS(s_ctx.speed_fdb) >= 1.0f)) {
+        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+    } else if (((s_ctx.speed_ctrl_fdb > 1.0f) &&
+                (s_ctx.speed_fdb < -1.0f)) ||
+               ((s_ctx.speed_ctrl_fdb < -1.0f) &&
+                (s_ctx.speed_fdb > 1.0f))) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (alpha >= 1.0f) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
@@ -1756,7 +1807,7 @@ static void FOC_Prof_Reset(void)
 
      /* 预计算时间常量，避免热路径中的除法 */
 
-     if ((g_foc_bidir_speed_enable != 0U) && (speed_ref < -0.5f)) {
+     if (g_foc_bidir_speed_enable != 0U) {
          FOC_BidirSpeed_ServiceRef();
      } else {
          FOC_DynSpeed_ServiceRef();
@@ -1865,9 +1916,6 @@ static void FOC_Prof_Reset(void)
          }
 
          theta_recovery = s_ctx.theta_e_predicted;
-         if (s_ctx.direction == FOC_DIR_CCW) {
-             theta_recovery = FOC_2PI - theta_recovery;
-         }
          FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
          FOC_Park(&s_ctx.i_ab, theta_recovery, &s_ctx.i_dq);
          if (s_ctx.fault == FOC_FAULT_NONE) {
@@ -1914,9 +1962,6 @@ static void FOC_Prof_Reset(void)
              FOC_ServiceRecoveryZeroVectorHold();
          }
 
-         if (s_ctx.direction == FOC_DIR_CCW) {
-             theta_recovery = FOC_2PI - theta_recovery;
-         }
          FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
          FOC_Park(&s_ctx.i_ab, theta_recovery, &s_ctx.i_dq);
          if (s_ctx.fault == FOC_FAULT_NONE) {
@@ -1949,14 +1994,6 @@ static void FOC_Prof_Reset(void)
 
 
  
-
-     /* 方向处理：反转时取反角度 */
-
-     if (s_ctx.direction == FOC_DIR_CCW) {
-
-         theta_e_ctrl = FOC_2PI - theta_e_ctrl;
-
-     }
 
      theta_e_ctrl = FOC_ApplyCurrentAngleTrim(theta_e_ctrl);
 
@@ -2215,9 +2252,9 @@ static void FOC_Prof_Reset(void)
 
          rpm = s_config.motor.max_speed_rpm;
 
-     } else if (rpm < 0.0f) {
+     } else if (rpm < -s_config.motor.max_speed_rpm) {
 
-         rpm = 0.0f;
+         rpm = -s_config.motor.max_speed_rpm;
 
      }
 
@@ -2225,15 +2262,7 @@ static void FOC_Prof_Reset(void)
 
      /* 临界区保护：speed_ref 被 ISR 中的主循环读取 */
 
-     FOC_HAL_EnterCritical();
-
-     s_ctx.speed_ref = rpm;
-
- 
-
-     s_ctx.direction = FOC_DIR_CW;
-
-     FOC_HAL_ExitCritical();
+     FOC_WriteSpeedRef(rpm);
 
  
 
@@ -2246,15 +2275,19 @@ static void FOC_Prof_Reset(void)
  int FOC_Core_SetDirection(FOC_Dir_e dir)
 
  {
-     if (dir != FOC_DIR_CW) {
+     if ((dir != FOC_DIR_CW) && (dir != FOC_DIR_CCW)) {
          return FOC_ERR;
      }
 
-     FOC_HAL_EnterCritical();
+     if (FOC_FABS(s_ctx.speed_ref) > FOC_SPEED_REF_DIRECTION_DEADBAND_RPM) {
+         float rpm = FOC_FABS(s_ctx.speed_ref);
 
-     s_ctx.direction = dir;
-
-     FOC_HAL_ExitCritical();
+         FOC_WriteSpeedRef((dir == FOC_DIR_CCW) ? -rpm : rpm);
+     } else {
+         FOC_HAL_EnterCritical();
+         s_ctx.direction = dir;
+         FOC_HAL_ExitCritical();
+     }
 
      return FOC_OK;
 

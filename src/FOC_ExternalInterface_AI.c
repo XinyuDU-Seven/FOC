@@ -24,6 +24,7 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
 #define FOC_FORWARD_STABLE_MAX_SPEED_RPM       2500U
 #define FOC_FORWARD_STABLE_DYN_MIN_RPM         300U
 #define FOC_FORWARD_STABLE_FIXED_SPEED_RPM     500.0f
+#define FOC_FORWARD_STABLE_BIDIR_MAX_RPM       500U
 #define FOC_FORWARD_STABLE_MAX_CURRENT_A       3.5f
 #define FOC_FORWARD_STABLE_DYN_TRIGGER_RPM     32000
 
@@ -70,7 +71,8 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_reset_stats = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_period_ms = 8000U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_max_rpm = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_max_rpm =
+    FOC_FORWARD_STABLE_BIDIR_MAX_RPM;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_elapsed_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_phase_u16 = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_ref_rpm = 0;
@@ -609,10 +611,6 @@ FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed){
 
     g_foc_bidir_speed_enable = 0U;
 
-    if (fSpeed < 0.0f) {
-      fSpeed = 0.0f;
-    }
-
     FOC_SetSpeedRef(fSpeed);
 
     return 0;
@@ -730,9 +728,9 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
     Foc_EnableFocControl(unId);
 
-    Foc_SetSpeedReference(unId, gfSpeedTarget);
+    g_foc_bidir_speed_enable = 1U;
 
-    g_foc_test_case_last_error = FOC_TEST_CASE_BIDIR_SPEED;
+    g_foc_bidir_speed_reset_stats = 1U;
 
   }else{
 

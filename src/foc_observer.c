@@ -149,6 +149,11 @@ static float FOC_Observer_GetHallEntryAngle(uint8_t sector, FOC_Dir_e direction)
     return 0.0f;
 }
 
+static FOC_Dir_e FOC_Observer_GetOppositeDir(FOC_Dir_e direction)
+{
+    return (direction == FOC_DIR_CCW) ? FOC_DIR_CW : FOC_DIR_CCW;
+}
+
 static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
                                                 uint8_t sector,
                                                 float omega_e)
@@ -157,44 +162,50 @@ static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
     uint32_t age_us = (ctx->hall_sector_timestamp_us != 0U)
                     ? (now_us - ctx->hall_sector_timestamp_us)
                     : 0U;
-    float target = FOC_Observer_GetHallEntryAngle(sector,
-                                                  FOC_FORWARD_HALL_DIR);
-    float advance = omega_e * ((float)age_us * 1.0e-6f);
+    FOC_Dir_e motion_dir = (omega_e < 0.0f)
+                         ? FOC_Observer_GetOppositeDir(FOC_FORWARD_HALL_DIR)
+                         : FOC_FORWARD_HALL_DIR;
+    float target = FOC_Observer_GetHallEntryAngle(sector, motion_dir);
+    float advance = FOC_FABS(omega_e) * ((float)age_us * 1.0e-6f);
 
-    if (advance < 0.0f) {
-        advance = 0.0f;
-    }
     if (advance > FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD) {
         advance = FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD;
     }
 
-    if (FOC_FORWARD_HALL_DIR == FOC_DIR_CCW) {
+    if (motion_dir == FOC_DIR_CCW) {
         return FOC_NormalizeAngle(target - advance);
     }
 
     return FOC_NormalizeAngle(target + advance);
 }
 
-static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
-                                                uint8_t prev_sector,
-                                                uint8_t cur_sector)
+static int8_t FOC_Observer_GetSectorSignedStepCount(const FOC_Context_t *ctx,
+                                                     uint8_t prev_sector,
+                                                     uint8_t cur_sector)
 {
-    uint8_t steps;
+    uint8_t forward_steps;
 
     if ((prev_sector < 1U) || (prev_sector > 6U) ||
         (cur_sector < 1U) || (cur_sector > 6U) ||
         (prev_sector == cur_sector)) {
-        return 1U;
+        return 0;
     }
     (void)ctx;
 
     if (FOC_FORWARD_HALL_DIR == FOC_DIR_CCW) {
-        steps = (uint8_t)((prev_sector + 6U - cur_sector) % 6U);
+        forward_steps = (uint8_t)((prev_sector + 6U - cur_sector) % 6U);
     } else {
-        steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
+        forward_steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
     }
 
-    return (steps == 0U) ? 1U : steps;
+    if (forward_steps == 0U) {
+        return 0;
+    }
+    if (forward_steps <= 3U) {
+        return (int8_t)forward_steps;
+    }
+
+    return -(int8_t)(6U - forward_steps);
 }
 
 
@@ -361,9 +372,10 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
             if (pole_pairs > 0U && dt_sec > 1e-6f) {
 
-                uint8_t sector_steps = FOC_Observer_GetSectorStepCount(ctx,
-                                                                        prev_sector,
-                                                                        cur_sector);
+                int8_t sector_steps =
+                    FOC_Observer_GetSectorSignedStepCount(ctx,
+                                                          prev_sector,
+                                                          cur_sector);
                 float delta_theta_e = (FOC_PI / 3.0f) * (float)sector_steps;
 
                 speed_rpm = (delta_theta_e / (float)pole_pairs) / dt_sec
@@ -430,7 +442,8 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
             speed_rpm = 0.0f;
             ctx->speed_raw = 0.0f;
             ctx->speed_filtered = 0.0f;
-            if ((ctx->speed_ref <= 0.0f) && (ctx->hall_sector.sector != 0U)) {
+            if ((FOC_FABS(ctx->speed_ref) < 1.0f) &&
+                (ctx->hall_sector.sector != 0U)) {
                 ctx->theta_e_predicted = ctx->hall_sector.theta_e;
             }
             ctx->hall_sector_prev = cur_sector;
@@ -481,16 +494,21 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
      float omega_e = 0.0f;
 
      /* Always extrapolate by the real control interval first. */
-     if ((ctx->speed_ref > 0.0f) &&
-         (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
-         float startup_target = ctx->speed_ref;
+     if ((FOC_FABS(ctx->speed_ref) > 1.0f) &&
+         (FOC_FABS(speed_for_predict) < FOC_STARTUP_PREDICT_MAX_RPM)) {
+         float ref_sign = (ctx->speed_ref < 0.0f) ? -1.0f : 1.0f;
+         float startup_target = FOC_FABS(ctx->speed_ref);
          float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
 
          if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {
              startup_target = FOC_STARTUP_PREDICT_MAX_RPM;
          }
-         if (s_startup_predict_speed_rpm < FOC_STARTUP_PREDICT_START_RPM) {
-             s_startup_predict_speed_rpm = FOC_STARTUP_PREDICT_START_RPM;
+         startup_target *= ref_sign;
+
+         if ((s_startup_predict_speed_rpm * ref_sign) <
+             FOC_STARTUP_PREDICT_START_RPM) {
+             s_startup_predict_speed_rpm =
+                 ref_sign * FOC_STARTUP_PREDICT_START_RPM;
          }
          if (s_startup_predict_speed_rpm < startup_target) {
              s_startup_predict_speed_rpm += ramp_step;
@@ -498,14 +516,17 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
                  s_startup_predict_speed_rpm = startup_target;
              }
          } else if (s_startup_predict_speed_rpm > startup_target) {
-             s_startup_predict_speed_rpm = startup_target;
+             s_startup_predict_speed_rpm -= ramp_step;
+             if (s_startup_predict_speed_rpm < startup_target) {
+                 s_startup_predict_speed_rpm = startup_target;
+             }
          }
          speed_for_predict = s_startup_predict_speed_rpm;
      } else {
          s_startup_predict_speed_rpm = speed_for_predict;
      }
 
-     if (speed_for_predict > 0.0f) {
+     if (FOC_FABS(speed_for_predict) > 0.0f) {
          omega_e = speed_for_predict * (FOC_2PI / 60.0f) * (float)pole_pairs;
          if (FOC_FORWARD_HALL_DIR == FOC_DIR_CCW) {
              ctx->theta_e_predicted -= omega_e * dt;
