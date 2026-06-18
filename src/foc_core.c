@@ -389,6 +389,11 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      return (uint16_t)(angle * (65535.0f / FOC_2PI));
  }
 
+ static float FOC_ControlIqRef(void)
+ {
+     return (s_ctx.direction == FOC_DIR_CCW) ? -s_ctx.iq_ref : s_ctx.iq_ref;
+ }
+
 static uint8_t FOC_DynSpeed_Near(float a, float b)
 {
     return (FOC_FABS(a - b) < 0.5f) ? 1U : 0U;
@@ -728,7 +733,7 @@ static void FOC_DynSpeed_RecordLog(uint32_t now_us, int16_t err_rpm)
     g_foc_dyn_log_ctrl_fdb_rpm[idx] =
         FOC_Log_ToI16(signed_speed_ctrl_fdb, 1.0f);
     g_foc_dyn_log_err_rpm[idx] = err_rpm;
-    g_foc_dyn_log_iq_ref_mA[idx] = FOC_Log_ToI16(s_ctx.iq_ref, 1000.0f);
+    g_foc_dyn_log_iq_ref_mA[idx] = FOC_Log_ToI16(FOC_ControlIqRef(), 1000.0f);
     g_foc_dyn_log_iq_mA[idx] = FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
     g_foc_dyn_log_current_peak_mA[idx] = FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
     g_foc_dyn_log_fault[idx] = (uint16_t)s_ctx.fault;
@@ -779,7 +784,7 @@ static void FOC_DynSpeed_ServiceMetrics(void)
     g_foc_dyn_speed_abs_err_avg_rpm =
         FOC_Log_ToU16(s_dyn_abs_err_avg_rpm, 1.0f);
 
-    g_foc_dyn_speed_iq_ref_mA = FOC_Log_ToI16(s_ctx.iq_ref, 1000.0f);
+    g_foc_dyn_speed_iq_ref_mA = FOC_Log_ToI16(FOC_ControlIqRef(), 1000.0f);
     g_foc_dyn_speed_id_mA = FOC_Log_ToI16(s_ctx.i_dq.d, 1000.0f);
     g_foc_dyn_speed_iq_mA = FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
     g_foc_dyn_speed_current_peak_mA =
@@ -1251,7 +1256,7 @@ static void FOC_Prof_Reset(void)
      p->id_mA = FOC_Log_ToI16(s_ctx.i_dq.d, 1000.0f);
      p->iq_mA = FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
      p->id_ref_mA = FOC_Log_ToI16(s_ctx.id_ref, 1000.0f);
-     p->iq_ref_mA = FOC_Log_ToI16(s_ctx.iq_ref, 1000.0f);
+     p->iq_ref_mA = FOC_Log_ToI16(FOC_ControlIqRef(), 1000.0f);
      p->speed_error_boost_mA = g_foc_speed_error_boost_mA;
 
      p->vd_mV = FOC_Log_ToI16(s_ctx.v_dq.d, 1000.0f);
@@ -1351,7 +1356,7 @@ static void FOC_Prof_Reset(void)
          g_foc_last_fault_speed_ctrl_fdb_rpm =
              FOC_Log_ToI16(s_ctx.speed_ctrl_fdb, 1.0f);
          g_foc_last_fault_iq_ref_mA =
-             FOC_Log_ToI16(s_ctx.iq_ref, 1000.0f);
+             FOC_Log_ToI16(FOC_ControlIqRef(), 1000.0f);
          g_foc_last_fault_iq_mA =
              FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
          g_foc_last_fault_sector_no_change_count =
@@ -1941,9 +1946,6 @@ static void FOC_Prof_Reset(void)
          }
 
          theta_recovery = s_ctx.theta_e_predicted;
-         if (s_ctx.direction == FOC_DIR_CCW) {
-             theta_recovery = FOC_2PI - theta_recovery;
-         }
          FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
          FOC_Park(&s_ctx.i_ab, theta_recovery, &s_ctx.i_dq);
          if (s_ctx.fault == FOC_FAULT_NONE) {
@@ -1990,9 +1992,6 @@ static void FOC_Prof_Reset(void)
              FOC_ServiceRecoveryZeroVectorHold();
          }
 
-         if (s_ctx.direction == FOC_DIR_CCW) {
-             theta_recovery = FOC_2PI - theta_recovery;
-         }
          FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
          FOC_Park(&s_ctx.i_ab, theta_recovery, &s_ctx.i_dq);
          if (s_ctx.fault == FOC_FAULT_NONE) {
@@ -2025,14 +2024,6 @@ static void FOC_Prof_Reset(void)
 
 
  
-
-     /* 方向处理：反转时取反角度 */
-
-     if (s_ctx.direction == FOC_DIR_CCW) {
-
-         theta_e_ctrl = FOC_2PI - theta_e_ctrl;
-
-     }
 
      theta_e_ctrl = FOC_ApplyCurrentAngleTrim(theta_e_ctrl);
 
@@ -2146,7 +2137,7 @@ static void FOC_Prof_Reset(void)
 
      s_ctx.v_dq.q = FOC_PID_Update(&s_ctx.pid_iq,
 
-                                     s_ctx.iq_ref - s_ctx.i_dq.q,
+                                     FOC_ControlIqRef() - s_ctx.i_dq.q,
 
                                      pid_dt, pid_inv_dt);
 
