@@ -419,9 +419,9 @@ void Foc_Init_AI(void){
 
   config.current_q_pid.out_min = -10;
 
-  config.speed_pid.kp = 0.005f;
+  config.speed_pid.kp = 0.0065f;
 
-  config.speed_pid.ki = 0.0005f;
+  config.speed_pid.ki = 0.0008f;
 
   config.speed_pid.kd = 0.0f;
 
