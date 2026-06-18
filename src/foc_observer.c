@@ -501,7 +501,11 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
      if (speed_for_predict > 0.0f) {
          omega_e = speed_for_predict * (FOC_2PI / 60.0f) * (float)pole_pairs;
-         ctx->theta_e_predicted += omega_e * dt;
+         if (ctx->direction == FOC_DIR_CCW) {
+             ctx->theta_e_predicted -= omega_e * dt;
+         } else {
+             ctx->theta_e_predicted += omega_e * dt;
+         }
      }
 
  
