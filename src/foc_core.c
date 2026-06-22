@@ -218,6 +218,9 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_min_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_current_angle_trim_mrad = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_angle_offset_mrad =
+    FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_control_angle_offset_mrad = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_used_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
@@ -956,13 +959,19 @@ static void FOC_DynSpeed_ServiceMetrics(void)
 
  static float FOC_ApplyCurrentAngleTrim(float theta_ctrl)
  {
+     float offset_rad = 0.0f;
+
+     if (s_ctx.direction == FOC_DIR_CCW) {
+         offset_rad += (float)g_foc_ccw_angle_offset_mrad * 0.001f;
+     }
+
 #if FOC_CURRENT_ANGLE_TRIM_ENABLE
-     theta_ctrl += s_current_angle_trim_rad;
-     return FOC_NormalizeAngle(theta_ctrl);
-#else
-     (void)theta_ctrl;
-     return theta_ctrl;
+     offset_rad += s_current_angle_trim_rad;
 #endif
+
+     g_foc_control_angle_offset_mrad = FOC_Log_ToI16(offset_rad, 1000.0f);
+     theta_ctrl += offset_rad;
+     return FOC_NormalizeAngle(theta_ctrl);
  }
 
 static void FOC_UpdateCurrentAngleTrim(float dt)

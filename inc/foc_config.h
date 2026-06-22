@@ -427,6 +427,12 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD
+
+#define FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD  (-1571)
+
+#endif
+
 #ifndef FOC_CURRENT_ANGLE_TRIM_GAIN
 
 #define FOC_CURRENT_ANGLE_TRIM_GAIN     1.0f
