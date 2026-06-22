@@ -23,6 +23,11 @@
 
  #include "foc_hal_if.h"
 
+#ifdef __ICCARM__
+#define FOC_OBSERVER_DEBUG_ROOT __root
+#else
+#define FOC_OBSERVER_DEBUG_ROOT
+#endif
  
 
  /* ===================================================================
@@ -102,6 +107,8 @@
  };
 
 static float s_startup_predict_speed_rpm = 0.0f;
+static FOC_Dir_e s_predict_direction = FOC_DIR_CW;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_direction_reset_count = 0U;
 
 static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
 {
@@ -259,6 +266,8 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
 
      ctx->theta_e_predicted        = 0.0f;
      s_startup_predict_speed_rpm   = 0.0f;
+     s_predict_direction           = ctx->direction;
+     g_foc_observer_direction_reset_count = 0U;
 
  
 
@@ -507,6 +516,15 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
      float speed_for_predict = ctx->speed_filtered;
      float omega_e = 0.0f;
 
+     if (s_predict_direction != ctx->direction) {
+         s_predict_direction = ctx->direction;
+         s_startup_predict_speed_rpm = 0.0f;
+         if (cur_sector != 0U) {
+             ctx->theta_e_predicted = ctx->hall_sector.theta_e;
+             ctx->theta_e_prev = ctx->theta_e_predicted;
+         }
+         g_foc_observer_direction_reset_count++;
+     }
      /* Always extrapolate by the real control interval first. */
      if ((ctx->speed_ref > 0.0f) &&
          (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
