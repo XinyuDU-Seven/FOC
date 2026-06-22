@@ -562,6 +562,12 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_SPEED_CTRL_FDB_FALL_RPM_PER_S
+
+#define FOC_SPEED_CTRL_FDB_FALL_RPM_PER_S  4000.0f
+
+#endif
+
  
 
 /** Speed estimate clamp (rpm), above motor max to avoid clipping sector-width ripple. */

@@ -329,7 +329,7 @@ static uint32_t s_bidir_speed_start_us = 0U;
 static void FOC_ResetCurrentAngleTrim(void);
 static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
 static void FOC_UpdateCurrentAngleTrim(float dt);
-static void FOC_UpdateSpeedControlFeedback(void);
+static void FOC_UpdateSpeedControlFeedback(uint32_t dt_us);
 static void FOC_DynSpeed_ServiceRef(void);
 static void FOC_BidirSpeed_ServiceRef(void);
 static void FOC_DynSpeed_ServiceMetrics(void);
@@ -886,25 +886,45 @@ static void FOC_UpdateCurrentAngleTrim(float dt)
 #endif
 }
 
-static void FOC_UpdateSpeedControlFeedback(void)
+static void FOC_UpdateSpeedControlFeedback(uint32_t dt_us)
 {
     float alpha = FOC_SPEED_CTRL_FILTER_ALPHA;
+    float prev_fdb = s_ctx.speed_ctrl_fdb;
+    float next_fdb = prev_fdb;
 
     if ((FOC_FABS(s_speed_ref_ctrl) < 1.0f) &&
         (FOC_FABS(s_ctx.speed_fdb) < 1.0f)) {
-        s_ctx.speed_ctrl_fdb = 0.0f;
-    } else if ((FOC_FABS(s_ctx.speed_ctrl_fdb) < 1.0f) &&
+        next_fdb = 0.0f;
+    } else if ((FOC_FABS(prev_fdb) < 1.0f) &&
                (FOC_FABS(s_ctx.speed_fdb) >= 1.0f)) {
-        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+        next_fdb = s_ctx.speed_fdb;
     } else if (s_ctx.speed_fdb > s_speed_ref_ctrl) {
-        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+        next_fdb = s_ctx.speed_fdb;
     } else if (alpha >= 1.0f) {
-        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+        next_fdb = s_ctx.speed_fdb;
     } else if (alpha > 0.0f) {
-        s_ctx.speed_ctrl_fdb =
-            alpha * s_ctx.speed_fdb + (1.0f - alpha) * s_ctx.speed_ctrl_fdb;
+        next_fdb = alpha * s_ctx.speed_fdb + (1.0f - alpha) * prev_fdb;
     }
 
+    if ((next_fdb < prev_fdb) &&
+        !((FOC_FABS(s_speed_ref_ctrl) < 1.0f) &&
+          (FOC_FABS(s_ctx.speed_fdb) < 1.0f))) {
+        float max_fall;
+
+        if (dt_us == 0U) {
+            dt_us = FOC_CONTROL_PERIOD_US;
+        } else if (dt_us > FOC_CONTROL_PID_DT_MAX_US) {
+            dt_us = FOC_CONTROL_PID_DT_MAX_US;
+        }
+
+        max_fall = FOC_SPEED_CTRL_FDB_FALL_RPM_PER_S *
+                   ((float)dt_us * 1.0e-6f);
+        if ((prev_fdb - next_fdb) > max_fall) {
+            next_fdb = prev_fdb - max_fall;
+        }
+    }
+
+    s_ctx.speed_ctrl_fdb = next_fdb;
     g_foc_speed_ctrl_fdb_rpm = FOC_Log_ToI16(s_ctx.speed_ctrl_fdb, 1.0f);
 }
 
@@ -2070,7 +2090,7 @@ static void FOC_Prof_Reset(void)
 
                                                observer_dt, s_config.motor.pole_pairs);
      FOC_UpdateSpeedRefRamp(control_period_us);
-     FOC_UpdateSpeedControlFeedback();
+     FOC_UpdateSpeedControlFeedback(control_period_us);
 
      if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
          theta_e_ctrl = s_ctx.theta_e_predicted;
