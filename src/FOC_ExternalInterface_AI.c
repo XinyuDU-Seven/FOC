@@ -20,7 +20,6 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_max_period_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_late_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_late_period_us = 0U;
 static uint32_t s_foc_ai_callback_last_us = 0U;
-extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 
@@ -722,8 +721,6 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     float fixed_ref = ctx->speed_ref;
 
     FOC_TestCase_ClearAutoModes();
-    g_foc_dyn_speed_start_on_max_ref = 0U;
-    g_foc_dyn_speed_start_on_max_fdb = 0U;
 
     Foc_EnableFocControl(unId);
 
@@ -733,8 +730,6 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
     Foc_EnableFocControl(unId);
 
-    g_foc_dyn_speed_start_on_max_ref = 1U;
-    g_foc_dyn_speed_start_on_max_fdb = 1U;
     g_foc_bidir_speed_enable = 0U;
     g_foc_bidir_speed_reset_stats = 0U;
 
