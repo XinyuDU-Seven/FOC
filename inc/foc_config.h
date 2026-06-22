@@ -538,6 +538,10 @@ extern "C" {
 #define FOC_HALL_ILLEGAL_TRANSITION_FAULT_COUNT  5U
 #endif
 
+#ifndef FOC_HALL_DIR_CHECK_MIN_REF_RPM
+#define FOC_HALL_DIR_CHECK_MIN_REF_RPM  300.0f
+#endif
+
  
 
 /* ===================================================================

@@ -217,6 +217,10 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_elapsed_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_min_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_cur_sector = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_dir_reject_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_dir_reject_prev_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_dir_reject_cur_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_dir_reject_direction = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_current_angle_trim_mrad = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_angle_offset_mrad =
     FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD;
@@ -346,6 +350,7 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
                                            float prev_c);
  static void FOC_EnterFaultState(void);
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
+ static uint8_t FOC_HallStepMatchesControlDirection(uint8_t from, uint8_t to);
  static uint32_t FOC_HallMinSectorTimeUs(void);
  static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
                                     uint32_t timestamp_us,
@@ -986,6 +991,10 @@ static void FOC_Prof_Reset(void)
      g_foc_hall_min_time_last_min_us = 0U;
      g_foc_hall_min_time_prev_sector = 0U;
      g_foc_hall_min_time_cur_sector = 0U;
+     g_foc_hall_dir_reject_count = 0U;
+     g_foc_hall_dir_reject_prev_sector = 0U;
+     g_foc_hall_dir_reject_cur_sector = 0U;
+     g_foc_hall_dir_reject_direction = 0U;
      g_foc_hall_event_used_count = 0U;
      g_foc_hall_event_seq = 0U;
      g_foc_hall_event_age_us = 0U;
@@ -1483,6 +1492,28 @@ static void FOC_Prof_Reset(void)
      return (uint8_t)((to == next) || (to == prev));
  }
 
+ static uint8_t FOC_HallStepMatchesControlDirection(uint8_t from, uint8_t to)
+ {
+     uint8_t next;
+     uint8_t prev;
+
+     if ((s_speed_ref_ctrl_direction != s_ctx.direction) ||
+         (s_speed_ref_ctrl < FOC_HALL_DIR_CHECK_MIN_REF_RPM) ||
+         (from < 1U) || (from > 6U) || (to < 1U) || (to > 6U) ||
+         (from == to)) {
+         return 1U;
+     }
+
+     next = (from == 6U) ? 1U : (uint8_t)(from + 1U);
+     prev = (from == 1U) ? 6U : (uint8_t)(from - 1U);
+
+     if (s_ctx.direction == FOC_DIR_CCW) {
+         return (to == prev) ? 1U : 0U;
+     }
+
+     return (to == next) ? 1U : 0U;
+ }
+
  static uint32_t FOC_HallMinSectorTimeUs(void)
  {
      float max_rpm = FOC_HALL_MIN_SECTOR_TIME_MAX_RPM;
@@ -1569,6 +1600,14 @@ static void FOC_Prof_Reset(void)
          g_foc_hall_recovery_accept_prev_sector = prev_sector;
          g_foc_hall_recovery_accept_cur_sector = cur_sector;
          return 1U;
+     }
+
+     if (FOC_HallStepMatchesControlDirection(prev_sector, cur_sector) == 0U) {
+         g_foc_hall_dir_reject_count++;
+         g_foc_hall_dir_reject_prev_sector = prev_sector;
+         g_foc_hall_dir_reject_cur_sector = cur_sector;
+         g_foc_hall_dir_reject_direction = (uint8_t)s_ctx.direction;
+         return 0U;
      }
 
      {
