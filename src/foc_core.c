@@ -244,6 +244,7 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_core_state = 0U;
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 
 extern volatile uint8_t  g_foc_dyn_speed_enable;
+extern volatile uint8_t  g_foc_dyn_speed_reverse;
 extern volatile uint32_t g_foc_dyn_speed_period_ms;
 extern volatile uint16_t g_foc_dyn_speed_min_rpm;
 extern volatile uint16_t g_foc_dyn_speed_max_rpm;
@@ -673,7 +674,16 @@ static void FOC_DynSpeed_ServiceRef(void)
         FOC_DynSpeed_ResetStats(now_us);
     }
 
-    FOC_DynSpeed_WriteCoreRef(FOC_DynSpeed_CalcRef(now_us));
+    {
+        float target = FOC_DynSpeed_CalcRef(now_us);
+
+        if (g_foc_dyn_speed_reverse != 0U) {
+            target = -target;
+            g_foc_dyn_speed_ref_rpm = FOC_Log_ToI16(target, 1.0f);
+        }
+
+        FOC_DynSpeed_WriteCoreRef(target);
+    }
 }
 
 static void FOC_BidirSpeed_ServiceRef(void)
@@ -738,8 +748,7 @@ static void FOC_DynSpeed_RecordLog(uint32_t now_us, int16_t err_rpm)
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
 
-    if ((g_foc_bidir_speed_enable != 0U) &&
-        (s_ctx.direction == FOC_DIR_CCW)) {
+    if (s_ctx.direction == FOC_DIR_CCW) {
         signed_speed_fdb = -signed_speed_fdb;
         signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
     }
@@ -795,8 +804,7 @@ static void FOC_DynSpeed_ServiceMetrics(void)
     }
 
     now_us = FOC_HAL_GetTimestampUs();
-    if ((g_foc_bidir_speed_enable != 0U) &&
-        (s_ctx.direction == FOC_DIR_CCW)) {
+    if (s_ctx.direction == FOC_DIR_CCW) {
         signed_speed_fdb = -signed_speed_fdb;
         signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
     }

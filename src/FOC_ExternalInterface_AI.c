@@ -23,16 +23,22 @@ static uint32_t s_foc_ai_callback_last_us = 0U;
 
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 
-#define FOC_TEST_CASE_STOP        0U
-#define FOC_TEST_CASE_FIXED_SPEED 1U
-#define FOC_TEST_CASE_DYN_SPEED   2U
-#define FOC_TEST_CASE_BIDIR_SPEED 3U
+#define FOC_TEST_CASE_STOP             0U
+#define FOC_TEST_CASE_FIXED_SPEED      1U
+#define FOC_TEST_CASE_DYN_SPEED        2U
+#define FOC_TEST_CASE_BIDIR_SPEED      3U
+#define FOC_TEST_CASE_NEG_DYN_SPEED    4U
 
 #define FOC_TEST_CASE_DYN_MIN_RPM       1000U
 #define FOC_TEST_CASE_DYN_MAX_RPM       4000U
 #define FOC_TEST_CASE_DYN_PERIOD_MS     4000U
 
+#define FOC_TEST_CASE_NEG_DYN_MIN_RPM   1000U
+#define FOC_TEST_CASE_NEG_DYN_MAX_RPM   4000U
+#define FOC_TEST_CASE_NEG_DYN_PERIOD_MS 4000U
+
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reverse = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_ref = 1U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_speed_start_cmd_rpm = 4500;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_dyn_speed_period_ms = 4000U;
@@ -702,6 +708,7 @@ uint8_t gunCtrl = 0;
 static void FOC_TestCase_ClearAutoModes(void)
 {
   g_foc_dyn_speed_enable = 0U;
+  g_foc_dyn_speed_reverse = 0U;
   g_foc_dyn_speed_reset_stats = 0U;
   g_foc_bidir_speed_enable = 0U;
   g_foc_bidir_speed_reset_stats = 0U;
@@ -740,6 +747,22 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_dyn_speed_period_ms = FOC_TEST_CASE_DYN_PERIOD_MS;
     g_foc_dyn_speed_min_rpm = FOC_TEST_CASE_DYN_MIN_RPM;
     g_foc_dyn_speed_max_rpm = FOC_TEST_CASE_DYN_MAX_RPM;
+    g_foc_dyn_speed_reverse = 0U;
+    g_foc_dyn_speed_enable = 1U;
+
+    g_foc_dyn_speed_reset_stats = 1U;
+
+  }else if(test_case == FOC_TEST_CASE_NEG_DYN_SPEED){
+
+    Foc_EnableFocControl(unId);
+
+    g_foc_bidir_speed_enable = 0U;
+    g_foc_bidir_speed_reset_stats = 0U;
+
+    g_foc_dyn_speed_period_ms = FOC_TEST_CASE_NEG_DYN_PERIOD_MS;
+    g_foc_dyn_speed_min_rpm = FOC_TEST_CASE_NEG_DYN_MIN_RPM;
+    g_foc_dyn_speed_max_rpm = FOC_TEST_CASE_NEG_DYN_MAX_RPM;
+    g_foc_dyn_speed_reverse = 1U;
     g_foc_dyn_speed_enable = 1U;
 
     g_foc_dyn_speed_reset_stats = 1U;
@@ -749,6 +772,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     Foc_EnableFocControl(unId);
 
     g_foc_dyn_speed_enable = 0U;
+    g_foc_dyn_speed_reverse = 0U;
     g_foc_dyn_speed_reset_stats = 0U;
 
     g_foc_bidir_speed_enable = 1U;
