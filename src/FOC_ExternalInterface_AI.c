@@ -13,6 +13,7 @@
 #endif
 
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
+extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 
@@ -694,16 +695,23 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
   }else if(test_case == FOC_TEST_CASE_FIXED_SPEED){
 
+    const FOC_Context_t *ctx = FOC_Core_GetContext();
+    float fixed_ref = ctx->speed_ref;
+
     FOC_TestCase_ClearAutoModes();
+    g_foc_dyn_speed_start_on_max_ref = 0U;
+    g_foc_dyn_speed_start_on_max_fdb = 0U;
 
     Foc_EnableFocControl(unId);
 
-    Foc_SetSpeedReference(unId, gfSpeedTarget);
+    Foc_SetSpeedReference(unId, fixed_ref);
 
   }else if(test_case == FOC_TEST_CASE_DYN_SPEED){
 
     Foc_EnableFocControl(unId);
 
+    g_foc_dyn_speed_start_on_max_ref = 1U;
+    g_foc_dyn_speed_start_on_max_fdb = 1U;
     g_foc_bidir_speed_enable = 0U;
     g_foc_bidir_speed_reset_stats = 0U;
 
@@ -733,7 +741,6 @@ static void FOC_TestCase_Apply(uint8_t test_case)
   g_foc_test_case_applied = test_case;
   g_foc_test_case_exec_count++;
 }
-
 static void FOC_TestCase_Service(void)
 {
   uint8_t test_case = g_foc_test_case_select;
