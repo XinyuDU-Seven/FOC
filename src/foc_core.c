@@ -220,9 +220,6 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_current_angle_trim_mrad = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_angle_offset_mrad =
     FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD;
-FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_angle_offset_high_speed_mrad =
-    FOC_CCW_CONTROL_ANGLE_OFFSET_HIGH_SPEED_MRAD;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_ccw_angle_offset_blend_rpm = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_control_angle_offset_mrad = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_used_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
@@ -965,25 +962,7 @@ static void FOC_DynSpeed_ServiceMetrics(void)
      float offset_rad = 0.0f;
 
      if (s_ctx.direction == FOC_DIR_CCW) {
-         float speed_rpm = FOC_FABS(s_speed_ref_ctrl);
-         float offset_mrad = (float)g_foc_ccw_angle_offset_mrad;
-         float blend_start = FOC_CCW_CONTROL_ANGLE_OFFSET_BLEND_START_RPM;
-         float blend_end = FOC_CCW_CONTROL_ANGLE_OFFSET_BLEND_END_RPM;
-
-         if ((blend_end > blend_start) && (speed_rpm > blend_start)) {
-             float blend = (speed_rpm - blend_start) /
-                           (blend_end - blend_start);
-
-             blend = FOC_CLAMP(blend, 0.0f, 1.0f);
-             offset_mrad +=
-                 ((float)g_foc_ccw_angle_offset_high_speed_mrad - offset_mrad) *
-                 blend;
-         }
-
-         g_foc_ccw_angle_offset_blend_rpm = FOC_Log_ToU16(speed_rpm, 1.0f);
-         offset_rad += offset_mrad * 0.001f;
-     } else {
-         g_foc_ccw_angle_offset_blend_rpm = 0U;
+         offset_rad += (float)g_foc_ccw_angle_offset_mrad * 0.001f;
      }
 
 #if FOC_CURRENT_ANGLE_TRIM_ENABLE
