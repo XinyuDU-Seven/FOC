@@ -112,8 +112,6 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_direction_reset_count =
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_decay_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_elapsed_us = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_speed_limit_rpm = 0U;
-FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_resync_count = 0U;
-FOC_OBSERVER_DEBUG_ROOT volatile int16_t g_foc_observer_resync_diff_mrad = 0;
 
 static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
 {
@@ -319,8 +317,6 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_no_edge_decay_count = 0U;
      g_foc_observer_no_edge_elapsed_us = 0U;
      g_foc_observer_no_edge_speed_limit_rpm = 0U;
-     g_foc_observer_resync_count = 0U;
-     g_foc_observer_resync_diff_mrad = 0;
 
  
 
@@ -700,14 +696,6 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                   (sync_step_max < FOC_ANGLE_SYNC_RECOVERY_STEP_MAX_RAD))) {
                  sync_step_max = FOC_ANGLE_SYNC_RECOVERY_STEP_MAX_RAD;
              }
-         }
-
-         if (diff_abs > FOC_ANGLE_SYNC_RESYNC_DIFF_RAD) {
-             sync_factor = 1.0f;
-             sync_step_max = 0.0f;
-             s_startup_predict_speed_rpm = speed_for_predict;
-             g_foc_observer_resync_count++;
-             g_foc_observer_resync_diff_mrad = (int16_t)(diff * 1000.0f);
          }
 
          if (sync_factor > 1.0f) {
