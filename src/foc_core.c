@@ -221,6 +221,11 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_dir_reject_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_dir_reject_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_dir_reject_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_dir_reject_direction = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_missed_edge_accept_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_missed_edge_prev_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_missed_edge_cur_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_missed_edge_step_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_missed_edge_direction = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_current_angle_trim_mrad = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_angle_offset_mrad =
     FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD;
@@ -350,7 +355,13 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
                                            float prev_c);
  static void FOC_EnterFaultState(void);
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
+ static uint8_t FOC_HallStepCountInDirection(uint8_t from,
+                                                   uint8_t to,
+                                                   FOC_Dir_e direction);
  static uint8_t FOC_HallStepMatchesControlDirection(uint8_t from, uint8_t to);
+ static uint8_t FOC_HallMissedStepAcceptable(uint8_t from,
+                                             uint8_t to,
+                                             uint8_t *step_count);
  static uint32_t FOC_HallMinSectorTimeUs(void);
  static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
                                     uint32_t timestamp_us,
@@ -995,6 +1006,11 @@ static void FOC_Prof_Reset(void)
      g_foc_hall_dir_reject_prev_sector = 0U;
      g_foc_hall_dir_reject_cur_sector = 0U;
      g_foc_hall_dir_reject_direction = 0U;
+     g_foc_hall_missed_edge_accept_count = 0U;
+     g_foc_hall_missed_edge_prev_sector = 0U;
+     g_foc_hall_missed_edge_cur_sector = 0U;
+     g_foc_hall_missed_edge_step_count = 0U;
+     g_foc_hall_missed_edge_direction = 0U;
      g_foc_hall_event_used_count = 0U;
      g_foc_hall_event_seq = 0U;
      g_foc_hall_event_age_us = 0U;
@@ -1492,10 +1508,25 @@ static void FOC_Prof_Reset(void)
      return (uint8_t)((to == next) || (to == prev));
  }
 
+ static uint8_t FOC_HallStepCountInDirection(uint8_t from,
+                                                   uint8_t to,
+                                                   FOC_Dir_e direction)
+ {
+     if ((from < 1U) || (from > 6U) || (to < 1U) || (to > 6U) ||
+         (from == to)) {
+         return 0U;
+     }
+
+     if (direction == FOC_DIR_CCW) {
+         return (uint8_t)((from + 6U - to) % 6U);
+     }
+
+     return (uint8_t)((to + 6U - from) % 6U);
+ }
+
  static uint8_t FOC_HallStepMatchesControlDirection(uint8_t from, uint8_t to)
  {
-     uint8_t next;
-     uint8_t prev;
+     uint8_t step_count;
 
      if ((s_speed_ref_ctrl_direction != s_ctx.direction) ||
          (s_speed_ref_ctrl < FOC_HALL_DIR_CHECK_MIN_REF_RPM) ||
@@ -1504,14 +1535,31 @@ static void FOC_Prof_Reset(void)
          return 1U;
      }
 
-     next = (from == 6U) ? 1U : (uint8_t)(from + 1U);
-     prev = (from == 1U) ? 6U : (uint8_t)(from - 1U);
+     step_count = FOC_HallStepCountInDirection(from, to, s_ctx.direction);
+     return ((step_count > 0U) && (step_count < 3U)) ? 1U : 0U;
+ }
 
-     if (s_ctx.direction == FOC_DIR_CCW) {
-         return (to == prev) ? 1U : 0U;
+ static uint8_t FOC_HallMissedStepAcceptable(uint8_t from,
+                                             uint8_t to,
+                                             uint8_t *step_count)
+ {
+     uint8_t steps;
+
+     if ((s_speed_ref_ctrl_direction != s_ctx.direction) ||
+         (s_speed_ref_ctrl < FOC_HALL_DIR_CHECK_MIN_REF_RPM)) {
+         return 0U;
      }
 
-     return (to == next) ? 1U : 0U;
+     steps = FOC_HallStepCountInDirection(from, to, s_ctx.direction);
+     if ((steps >= 2U) && (steps < 3U) &&
+         (steps <= FOC_HALL_MISSED_EDGE_MAX_STEPS)) {
+         if (step_count != 0) {
+             *step_count = steps;
+         }
+         return 1U;
+     }
+
+     return 0U;
  }
 
  static uint32_t FOC_HallMinSectorTimeUs(void)
@@ -1582,6 +1630,22 @@ static void FOC_Prof_Reset(void)
      }
 
      if (FOC_HallSectorsAreAdjacent(prev_sector, cur_sector) == 0U) {
+         uint8_t missed_step_count = 0U;
+
+         if (FOC_HallMissedStepAcceptable(prev_sector,
+                                          cur_sector,
+                                          &missed_step_count) != 0U) {
+             s_ctx.hall_sector = *candidate;
+             s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
+             s_hall_illegal_transition_count = 0U;
+             g_foc_hall_missed_edge_accept_count++;
+             g_foc_hall_missed_edge_prev_sector = prev_sector;
+             g_foc_hall_missed_edge_cur_sector = cur_sector;
+             g_foc_hall_missed_edge_step_count = missed_step_count;
+             g_foc_hall_missed_edge_direction = (uint8_t)s_ctx.direction;
+             return 1U;
+         }
+
          if (s_hall_illegal_transition_count < 65535U) {
              s_hall_illegal_transition_count++;
          }

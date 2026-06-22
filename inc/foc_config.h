@@ -542,6 +542,10 @@ extern "C" {
 #define FOC_HALL_DIR_CHECK_MIN_REF_RPM  300.0f
 #endif
 
+#ifndef FOC_HALL_MISSED_EDGE_MAX_STEPS
+#define FOC_HALL_MISSED_EDGE_MAX_STEPS  2U
+#endif
+
  
 
 /* ===================================================================
