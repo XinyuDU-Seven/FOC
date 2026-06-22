@@ -5,6 +5,7 @@
 #include "foc_core.h"
 #include "foc_hal_if.h"
 #include "foc_math.h"
+#include "foc_config.h"
 
 #ifdef __ICCARM__
 #define FOC_AI_DEBUG_ROOT __root
@@ -13,6 +14,12 @@
 #endif
 
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_period_us = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_max_period_us = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_max_period_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_late_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_late_period_us = 0U;
+static uint32_t s_foc_ai_callback_last_us = 0U;
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 
 #define FOC_DYN_SPEED_LOG_SIZE 128U
@@ -380,6 +387,22 @@ static void FOC_TestCase_Service(void);
  *******************************************************************************************/
 
 void Foc_AlgorithmControlCallback_AI(void){
+  uint32_t now_us = FOC_HAL_GetTimestampUs();
+  uint32_t period_us;
+
+  if (s_foc_ai_callback_last_us != 0U) {
+    period_us = now_us - s_foc_ai_callback_last_us;
+    g_foc_ai_callback_period_us = period_us;
+    if (period_us > g_foc_ai_callback_max_period_us) {
+      g_foc_ai_callback_max_period_us = period_us;
+      g_foc_ai_callback_max_period_count = g_foc_ai_callback_count;
+    }
+    if (period_us > FOC_CONTROL_LATE_PERIOD_US) {
+      g_foc_ai_callback_late_count++;
+      g_foc_ai_callback_late_period_us = period_us;
+    }
+  }
+  s_foc_ai_callback_last_us = now_us;
 
   g_foc_ai_callback_count++;
 
