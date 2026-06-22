@@ -102,40 +102,6 @@
  };
 
 static float s_startup_predict_speed_rpm = 0.0f;
-static FOC_Dir_e s_hall_motion_direction = FOC_DIR_CW;
-static uint8_t s_hall_motion_valid = 0U;
-
-static float FOC_Observer_AngleDiff(float target, float current)
-{
-    float diff = target - current;
-
-    if (diff > FOC_PI) {
-        diff -= FOC_2PI;
-    }
-    if (diff < -FOC_PI) {
-        diff += FOC_2PI;
-    }
-
-    return diff;
-}
-
-static FOC_Dir_e FOC_Observer_GetHallStepDirection(uint8_t prev_sector,
-                                                    uint8_t cur_sector)
-{
-    uint8_t cw_steps;
-    uint8_t ccw_steps;
-
-    if ((prev_sector < 1U) || (prev_sector > 6U) ||
-        (cur_sector < 1U) || (cur_sector > 6U) ||
-        (prev_sector == cur_sector)) {
-        return s_hall_motion_direction;
-    }
-
-    cw_steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
-    ccw_steps = (uint8_t)((prev_sector + 6U - cur_sector) % 6U);
-
-    return (cw_steps <= ccw_steps) ? FOC_DIR_CW : FOC_DIR_CCW;
-}
 
 static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
 {
@@ -185,14 +151,13 @@ static float FOC_Observer_GetHallEntryAngle(uint8_t sector, FOC_Dir_e direction)
 
 static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
                                                 uint8_t sector,
-                                                float omega_e,
-                                                FOC_Dir_e direction)
+                                                float omega_e)
 {
     uint32_t now_us = FOC_HAL_GetTimestampUs();
     uint32_t age_us = (ctx->hall_sector_timestamp_us != 0U)
                     ? (now_us - ctx->hall_sector_timestamp_us)
                     : 0U;
-    float target = FOC_Observer_GetHallEntryAngle(sector, direction);
+    float target = FOC_Observer_GetHallEntryAngle(sector, ctx->direction);
     float advance = omega_e * ((float)age_us * 1.0e-6f);
 
     if (advance < 0.0f) {
@@ -202,7 +167,7 @@ static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
         advance = FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD;
     }
 
-    if (direction == FOC_DIR_CCW) {
+    if (ctx->direction == FOC_DIR_CCW) {
         return FOC_NormalizeAngle(target - advance);
     }
 
@@ -235,6 +200,31 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
     return (cw_steps < ccw_steps) ? cw_steps : ccw_steps;
 }
+
+static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
+                                                      uint8_t prev_sector,
+                                                      uint8_t cur_sector)
+{
+    uint8_t cw_steps;
+    uint8_t ccw_steps;
+
+    if ((prev_sector < 1U) || (prev_sector > 6U) ||
+        (cur_sector < 1U) || (cur_sector > 6U) ||
+        (prev_sector == cur_sector)) {
+        return 1U;
+    }
+
+    cw_steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
+    ccw_steps = (uint8_t)((prev_sector + 6U - cur_sector) % 6U);
+
+    if (ctx->direction == FOC_DIR_CCW) {
+        return (ccw_steps <= cw_steps) ? 1U : 0U;
+    }
+
+    return (cw_steps <= ccw_steps) ? 1U : 0U;
+}
+
+
 
  /* ===================================================================
 
@@ -269,8 +259,6 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
      ctx->theta_e_predicted        = 0.0f;
      s_startup_predict_speed_rpm   = 0.0f;
-     s_hall_motion_direction       = ctx->direction;
-     s_hall_motion_valid           = 0U;
 
  
 
@@ -516,22 +504,10 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
  {
 
      uint8_t cur_sector = ctx->hall_sector.sector;
-     uint8_t prev_sector = ctx->hall_sector_prev;
-     FOC_Dir_e predict_direction;
      float speed_for_predict = ctx->speed_filtered;
      float omega_e = 0.0f;
 
-     if ((cur_sector != prev_sector) && (cur_sector != 0U) &&
-         (prev_sector >= 1U) && (prev_sector <= 6U)) {
-         s_hall_motion_direction =
-             FOC_Observer_GetHallStepDirection(prev_sector, cur_sector);
-         s_hall_motion_valid = 1U;
-     }
-
-     predict_direction = (s_hall_motion_valid != 0U)
-                       ? s_hall_motion_direction
-                       : ctx->direction;
-
+     /* Always extrapolate by the real control interval first. */
      if ((ctx->speed_ref > 0.0f) &&
          (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
          float startup_target = ctx->speed_ref;
@@ -558,30 +534,47 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
 
      if (speed_for_predict > 0.0f) {
          omega_e = speed_for_predict * (FOC_2PI / 60.0f) * (float)pole_pairs;
-         if (predict_direction == FOC_DIR_CCW) {
+         if (ctx->direction == FOC_DIR_CCW) {
              ctx->theta_e_predicted -= omega_e * dt;
          } else {
              ctx->theta_e_predicted += omega_e * dt;
          }
      }
 
-     if (cur_sector != prev_sector && cur_sector != 0U) {
+ 
+
+     /* 扇区跳变时：软同步到跳变后的扇区中心角度，
+
+      * 避免硬同步导致角度突变引发电流尖峰 */
+
+     if (cur_sector != ctx->hall_sector_prev && cur_sector != 0U) {
+
+         if (FOC_Observer_HallStepMatchesDirection(ctx,
+                                                   ctx->hall_sector_prev,
+                                                   cur_sector) != 0U) {
+
+         /* Skip sync while inertia carries the rotor opposite to the command. */
          float target = ctx->hall_sector.theta_e;
          float sync_factor = FOC_ANGLE_SYNC_FACTOR;
          float sync_step_max = FOC_ANGLE_SYNC_STEP_MAX_RAD;
          float speed_err = FOC_FABS(ctx->speed_ref - ctx->speed_filtered);
          float diff_abs;
          float sync_step;
-         float diff;
 
 #if FOC_HALL_EDGE_SYNC_ENABLE
-         target = FOC_Observer_GetHallEdgeSyncAngle(ctx, cur_sector, omega_e,
-                                                    predict_direction);
+         target = FOC_Observer_GetHallEdgeSyncAngle(ctx, cur_sector, omega_e);
          sync_factor = FOC_HALL_EDGE_SYNC_FACTOR;
          sync_step_max = FOC_HALL_EDGE_SYNC_STEP_MAX_RAD;
 #endif
 
-         diff = FOC_Observer_AngleDiff(target, ctx->theta_e_predicted);
+         float diff = target - ctx->theta_e_predicted;
+
+         /* 处理角度环绕 */
+
+         if (diff > FOC_PI)  diff -= FOC_2PI;
+
+         if (diff < -FOC_PI) diff += FOC_2PI;
+
          diff_abs = FOC_FABS(diff);
 
          if (dt > ((float)FOC_CONTROL_LATE_PERIOD_US * 1.0e-6f)) {
@@ -618,29 +611,41 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
          }
 
          ctx->theta_e_predicted += sync_step;
-     }
 
-     if (cur_sector != 0U) {
-         float diff = FOC_Observer_AngleDiff(ctx->hall_sector.theta_e,
-                                             ctx->theta_e_predicted);
-
-         if (FOC_FABS(diff) > FOC_ANGLE_SYNC_RESYNC_DIFF_RAD) {
-             ctx->theta_e_predicted = ctx->hall_sector.theta_e;
-             s_startup_predict_speed_rpm = ctx->speed_filtered;
          }
-     }
+
+     } else {
+
+        /* 角度外推：启动阶段 speed_filtered 尚未收敛，使用 speed_ref 驱动角度推进；
+
+         * 速度收敛后自然切换到 speed_filtered，避免稳态角度超前 */
+
+    }
+
+ 
+
+     /* 归一化到 [0, 2π) */
 
      while (ctx->theta_e_predicted >= FOC_2PI) {
+
          ctx->theta_e_predicted -= FOC_2PI;
+
      }
 
      while (ctx->theta_e_predicted < 0.0f) {
+
          ctx->theta_e_predicted += FOC_2PI;
+
      }
+
+ 
 
      return ctx->theta_e_predicted;
 
  }
+
+ 
+
  /* ===================================================================
 
   *  电流/电压解析
