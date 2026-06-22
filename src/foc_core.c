@@ -891,6 +891,7 @@ static void FOC_UpdateSpeedControlFeedback(uint32_t dt_us)
     float alpha = FOC_SPEED_CTRL_FILTER_ALPHA;
     float prev_fdb = s_ctx.speed_ctrl_fdb;
     float next_fdb = prev_fdb;
+    uint8_t hold_to_ref = 0U;
 
     if ((FOC_FABS(s_speed_ref_ctrl) < 1.0f) &&
         (FOC_FABS(s_ctx.speed_fdb) < 1.0f)) {
@@ -904,6 +905,13 @@ static void FOC_UpdateSpeedControlFeedback(uint32_t dt_us)
         next_fdb = s_ctx.speed_fdb;
     } else if (alpha > 0.0f) {
         next_fdb = alpha * s_ctx.speed_fdb + (1.0f - alpha) * prev_fdb;
+    }
+
+    if ((s_speed_ref_ctrl >= FOC_SPEED_CTRL_FDB_HOLD_MIN_REF_RPM) &&
+        (s_speed_ref_ctrl <= (prev_fdb + 1.0f)) &&
+        ((s_ctx.speed_fdb + FOC_SPEED_CTRL_FDB_DROP_HOLD_BAND_RPM) <
+         s_speed_ref_ctrl)) {
+        hold_to_ref = 1U;
     }
 
     if ((next_fdb < prev_fdb) &&
@@ -922,6 +930,10 @@ static void FOC_UpdateSpeedControlFeedback(uint32_t dt_us)
         if ((prev_fdb - next_fdb) > max_fall) {
             next_fdb = prev_fdb - max_fall;
         }
+    }
+
+    if ((hold_to_ref != 0U) && (next_fdb < s_speed_ref_ctrl)) {
+        next_fdb = s_speed_ref_ctrl;
     }
 
     s_ctx.speed_ctrl_fdb = next_fdb;
