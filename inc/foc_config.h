@@ -568,17 +568,6 @@ extern "C" {
 
 #endif
 
-#ifndef FOC_SPEED_CTRL_FDB_HOLD_MIN_REF_RPM
-
-#define FOC_SPEED_CTRL_FDB_HOLD_MIN_REF_RPM  100.0f
-
-#endif
-
-#ifndef FOC_SPEED_CTRL_FDB_DROP_HOLD_BAND_RPM
-
-#define FOC_SPEED_CTRL_FDB_DROP_HOLD_BAND_RPM  100.0f
-
-#endif
 
  
 
