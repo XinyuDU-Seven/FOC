@@ -109,6 +109,9 @@
 static float s_startup_predict_speed_rpm = 0.0f;
 static FOC_Dir_e s_predict_direction = FOC_DIR_CW;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_direction_reset_count = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_decay_count = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_elapsed_us = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_speed_limit_rpm = 0U;
 
 static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
 {
@@ -230,6 +233,49 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
 
     return (cw_steps <= ccw_steps) ? 1U : 0U;
 }
+static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
+                                          uint8_t pole_pairs,
+                                          uint32_t *elapsed_us,
+                                          float *speed_limit_rpm)
+{
+    uint32_t now_us;
+    uint32_t elapsed;
+    float start_us;
+    float limit_rpm;
+
+    if ((ctx->hall_sector_dt_us == 0U) ||
+        (ctx->hall_sector.sector == 0U) ||
+        (pole_pairs == 0U)) {
+        return 0U;
+    }
+
+    now_us = FOC_HAL_GetTimestampUs();
+    elapsed = now_us - ctx->timestamp_prev;
+    start_us = (float)ctx->hall_sector_dt_us *
+               FOC_HALL_NO_EDGE_DECAY_START_RATIO;
+
+    if ((float)elapsed <= start_us) {
+        return 0U;
+    }
+
+    limit_rpm = 10000000.0f /
+                ((float)pole_pairs * (float)elapsed);
+
+    if (limit_rpm < 0.0f) {
+        limit_rpm = 0.0f;
+    } else if (limit_rpm > FOC_SPEED_ESTIMATE_MAX_RPM) {
+        limit_rpm = FOC_SPEED_ESTIMATE_MAX_RPM;
+    }
+
+    if (elapsed_us != 0) {
+        *elapsed_us = elapsed;
+    }
+    if (speed_limit_rpm != 0) {
+        *speed_limit_rpm = limit_rpm;
+    }
+
+    return 1U;
+}
 
 
 
@@ -268,6 +314,9 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
      s_startup_predict_speed_rpm   = 0.0f;
      s_predict_direction           = ctx->direction;
      g_foc_observer_direction_reset_count = 0U;
+     g_foc_observer_no_edge_decay_count = 0U;
+     g_foc_observer_no_edge_elapsed_us = 0U;
+     g_foc_observer_no_edge_speed_limit_rpm = 0U;
 
  
 
@@ -448,7 +497,25 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
             uint32_t ts_now = FOC_HAL_GetTimestampUs();
             uint32_t stop_timeout_us = ctx->hall_sector_dt_us *
                                        FOC_HALL_STOP_TIMEOUT_RATIO;
+            uint32_t no_edge_elapsed_us = 0U;
+            float no_edge_limit_rpm = 0.0f;
 
+            if (FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
+                                           &no_edge_elapsed_us,
+                                           &no_edge_limit_rpm) != 0U) {
+                if (speed_rpm > no_edge_limit_rpm) {
+                    speed_rpm = no_edge_limit_rpm;
+                }
+                if (ctx->speed_filtered > no_edge_limit_rpm) {
+                    ctx->speed_filtered = no_edge_limit_rpm;
+                }
+                g_foc_observer_no_edge_decay_count++;
+                g_foc_observer_no_edge_elapsed_us = no_edge_elapsed_us;
+                g_foc_observer_no_edge_speed_limit_rpm =
+                    (uint16_t)((no_edge_limit_rpm > 65535.0f)
+                             ? 65535U
+                             : no_edge_limit_rpm);
+            }
             if (stop_timeout_us < FOC_HALL_STOP_TIMEOUT_MIN_US) {
                 stop_timeout_us = FOC_HALL_STOP_TIMEOUT_MIN_US;
             }
@@ -515,6 +582,11 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
      uint8_t cur_sector = ctx->hall_sector.sector;
      float speed_for_predict = ctx->speed_filtered;
      float omega_e = 0.0f;
+     uint32_t no_edge_elapsed_us = 0U;
+     float no_edge_limit_rpm = 0.0f;
+     uint8_t no_edge_overdue = FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
+                                                               &no_edge_elapsed_us,
+                                                               &no_edge_limit_rpm);
 
      if (s_predict_direction != ctx->direction) {
          s_predict_direction = ctx->direction;
@@ -525,8 +597,22 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
          }
          g_foc_observer_direction_reset_count++;
      }
+     if (no_edge_overdue != 0U) {
+         if (speed_for_predict > no_edge_limit_rpm) {
+             speed_for_predict = no_edge_limit_rpm;
+         }
+         if (s_startup_predict_speed_rpm > no_edge_limit_rpm) {
+             s_startup_predict_speed_rpm = no_edge_limit_rpm;
+         }
+         g_foc_observer_no_edge_elapsed_us = no_edge_elapsed_us;
+         g_foc_observer_no_edge_speed_limit_rpm =
+             (uint16_t)((no_edge_limit_rpm > 65535.0f)
+                      ? 65535U
+                      : no_edge_limit_rpm);
+     }
      /* Always extrapolate by the real control interval first. */
-     if ((ctx->speed_ref > 0.0f) &&
+     if ((no_edge_overdue == 0U) &&
+         (ctx->speed_ref > 0.0f) &&
          (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
          float startup_target = ctx->speed_ref;
          float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
