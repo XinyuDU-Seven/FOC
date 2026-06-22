@@ -224,6 +224,14 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_ctrl_rpm = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_ref_ramp_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_vbus_mV = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_last_fault_vbus_mV = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_vbus_brake_limit_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_vbus_brake_active = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_vbus_brake_limited_count = 0U;
 FOC_DEBUG_ROOT volatile float    speed_ref = -1.0f;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_fdb = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_start_fdb_margin_rpm = 50U;
@@ -289,6 +297,8 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 static uint16_t s_recovery_zero_vector_cycles = 0U;
 static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 static uint32_t s_speed_loop_accum_us = 0U;
+static float s_speed_ref_ctrl = 0.0f;
+static FOC_Dir_e s_speed_ref_ctrl_direction = FOC_DIR_CW;
 static float s_speed_error_boost_prev_ref = 0.0f;
 static float s_current_angle_trim_rad = 0.0f;
 static uint32_t s_hall_event_seq_seen = 0U;
@@ -392,6 +402,113 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
  static float FOC_ControlIqRef(void)
  {
      return (s_ctx.direction == FOC_DIR_CCW) ? -s_ctx.iq_ref : s_ctx.iq_ref;
+ }
+ static void FOC_ResetSpeedRefRamp(void)
+ {
+     s_speed_ref_ctrl = 0.0f;
+     s_speed_ref_ctrl_direction = s_ctx.direction;
+     g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(FOC_FABS(s_ctx.speed_ref), 1.0f);
+     g_foc_speed_ref_ctrl_rpm = 0;
+     g_foc_speed_ref_ramp_active = 0U;
+ }
+
+ static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
+ {
+     float target = FOC_FABS(s_ctx.speed_ref);
+     float rate;
+     float step;
+     float delta;
+
+     if (target > s_config.motor.max_speed_rpm) {
+         target = s_config.motor.max_speed_rpm;
+     }
+
+     if (s_speed_ref_ctrl_direction != s_ctx.direction) {
+         s_speed_ref_ctrl = 0.0f;
+         s_speed_ref_ctrl_direction = s_ctx.direction;
+         FOC_PID_Reset(&s_ctx.pid_speed);
+         FOC_PID_Reset(&s_ctx.pid_iq);
+         s_ctx.iq_ref = 0.0f;
+         s_speed_loop_accum_us = 0U;
+         s_speed_error_boost_prev_ref = 0.0f;
+     }
+
+     if (dt_us == 0U) {
+         dt_us = FOC_CONTROL_PERIOD_US;
+     } else if (dt_us > FOC_CONTROL_PID_DT_MAX_US) {
+         dt_us = FOC_CONTROL_PID_DT_MAX_US;
+     }
+
+     if (target > s_speed_ref_ctrl) {
+         rate = FOC_SPEED_REF_RAMP_UP_RPM_PER_S;
+         delta = target - s_speed_ref_ctrl;
+     } else {
+         rate = FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S;
+         delta = s_speed_ref_ctrl - target;
+     }
+
+     if (rate <= 0.0f) {
+         s_speed_ref_ctrl = target;
+     } else if (delta > 0.0f) {
+         step = rate * ((float)dt_us * 1.0e-6f);
+         if (step >= delta) {
+             s_speed_ref_ctrl = target;
+         } else if (target > s_speed_ref_ctrl) {
+             s_speed_ref_ctrl += step;
+         } else {
+             s_speed_ref_ctrl -= step;
+         }
+     }
+
+     g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(target, 1.0f);
+     g_foc_speed_ref_ctrl_rpm = FOC_Log_ToI16(s_speed_ref_ctrl, 1.0f);
+     g_foc_speed_ref_ramp_active =
+         (FOC_FABS(target - s_speed_ref_ctrl) > 0.5f) ? 1U : 0U;
+
+     return s_speed_ref_ctrl;
+ }
+
+ static float FOC_LimitRegenBrakingIq(float iq_ref)
+ {
+     float start_v = FOC_REGEN_BRAKE_LIMIT_START_V;
+     float disable_v = FOC_REGEN_BRAKE_DISABLE_V;
+     float full_brake_min = s_ctx.pid_speed.out_min;
+     float min_allowed = full_brake_min;
+
+     if (full_brake_min > 0.0f) {
+         full_brake_min = 0.0f;
+     }
+
+     if (disable_v <= start_v) {
+         disable_v = start_v + 0.1f;
+     }
+
+     if ((iq_ref >= 0.0f) || (s_ctx.v_bus < start_v)) {
+         g_foc_vbus_brake_limit_mA = FOC_Log_ToI16(full_brake_min, 1000.0f);
+         g_foc_vbus_brake_active = 0U;
+         return iq_ref;
+     }
+
+     if (s_ctx.v_bus >= disable_v) {
+         min_allowed = 0.0f;
+     } else {
+         float ratio = (disable_v - s_ctx.v_bus) / (disable_v - start_v);
+         ratio = FOC_CLAMP(ratio, 0.0f, 1.0f);
+         min_allowed = full_brake_min * ratio;
+     }
+
+     g_foc_vbus_brake_limit_mA = FOC_Log_ToI16(min_allowed, 1000.0f);
+
+     if (iq_ref < min_allowed) {
+         g_foc_vbus_brake_active = 1U;
+         g_foc_vbus_brake_limited_count++;
+         FOC_PID_Reset(&s_ctx.pid_speed);
+         FOC_PID_Reset(&s_ctx.pid_iq);
+         return min_allowed;
+     }
+
+     g_foc_vbus_brake_active = 0U;
+     return iq_ref;
  }
 
 static uint8_t FOC_DynSpeed_Near(float a, float b)
@@ -849,13 +966,13 @@ static void FOC_UpdateSpeedControlFeedback(void)
 {
     float alpha = FOC_SPEED_CTRL_FILTER_ALPHA;
 
-    if ((FOC_FABS(s_ctx.speed_ref) < 1.0f) &&
+    if ((FOC_FABS(s_speed_ref_ctrl) < 1.0f) &&
         (FOC_FABS(s_ctx.speed_fdb) < 1.0f)) {
         s_ctx.speed_ctrl_fdb = 0.0f;
     } else if ((FOC_FABS(s_ctx.speed_ctrl_fdb) < 1.0f) &&
                (FOC_FABS(s_ctx.speed_fdb) >= 1.0f)) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
-    } else if (s_ctx.speed_fdb > s_ctx.speed_ref) {
+    } else if (s_ctx.speed_fdb > s_speed_ref_ctrl) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (alpha >= 1.0f) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
@@ -921,6 +1038,9 @@ static void FOC_Prof_Reset(void)
      g_foc_hall_poll_count = 0U;
      g_foc_speed_ctrl_fdb_rpm = 0;
      g_foc_speed_error_boost_mA = 0;
+     g_foc_vbus_brake_limit_mA = 0;
+     g_foc_vbus_brake_active = 0U;
+     g_foc_vbus_brake_limited_count = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -939,6 +1059,7 @@ static void FOC_Prof_Reset(void)
      g_foc_last_fault_latch_count = 0U;
      g_foc_last_fault_seq = 0U;
      g_foc_last_fault_current_peak_mA = 0U;
+     g_foc_last_fault_vbus_mV = 0U;
      g_foc_last_fault_speed_ref_rpm = 0U;
      g_foc_last_fault_speed_fdb_rpm = 0U;
      g_foc_last_fault_speed_ctrl_fdb_rpm = 0;
@@ -1076,6 +1197,7 @@ static void FOC_Prof_Reset(void)
      s_ctx.speed_loop_counter = 0U;
      s_speed_loop_accum_us = 0U;
      s_speed_error_boost_prev_ref = 0.0f;
+     FOC_ResetSpeedRefRamp();
 
      s_ctx.v_dq.d = 0.0f;
      s_ctx.v_dq.q = 0.0f;
@@ -1351,6 +1473,7 @@ static void FOC_Prof_Reset(void)
          g_foc_last_fault_seq = g_foc_log_seq;
          g_foc_last_fault_current_peak_mA =
              (uint32_t)FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
+         g_foc_last_fault_vbus_mV = g_foc_vbus_mV;
          g_foc_last_fault_speed_ref_rpm =
              FOC_Log_ToU16(s_ctx.speed_ref, 1.0f);
          g_foc_last_fault_speed_fdb_rpm =
@@ -1693,7 +1816,8 @@ static void FOC_Prof_Reset(void)
      FOC_PID_Reset(&s_ctx.pid_iq);
      FOC_ResetCurrentAngleTrim();
      s_speed_loop_accum_us = 0U;
-     s_speed_error_boost_prev_ref = s_ctx.speed_ref;
+     FOC_ResetSpeedRefRamp();
+     s_speed_error_boost_prev_ref = 0.0f;
 
 
 
@@ -1766,6 +1890,7 @@ static void FOC_Prof_Reset(void)
      g_foc_recovery_current_wait_active = 0U;
 
      s_ctx.speed_ref = 0.0f;
+     FOC_ResetSpeedRefRamp();
      g_foc_dyn_speed_enable = 0U;
      g_foc_bidir_speed_enable = 0U;
      s_dyn_speed_prev_enable = 0U;
@@ -1924,6 +2049,7 @@ static void FOC_Prof_Reset(void)
 
      FOC_Observer_ParsePhaseCurrents(&s_ctx.i_abc_raw, &s_config.current_calib, &s_ctx.i_abc);
      s_ctx.v_bus = FOC_Observer_ParseBusVoltage(s_ctx.v_bus_raw, &s_config.current_calib);
+     g_foc_vbus_mV = FOC_Log_ToU16(s_ctx.v_bus, 1000.0f);
 
      if (control_period_recovery != 0U) {
          float theta_recovery;
@@ -2016,6 +2142,7 @@ static void FOC_Prof_Reset(void)
      s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
 
                                                observer_dt, s_config.motor.pole_pairs);
+     FOC_UpdateSpeedRefRamp(control_period_us);
      FOC_UpdateSpeedControlFeedback();
 
      if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
@@ -2086,7 +2213,8 @@ static void FOC_Prof_Reset(void)
          if (s_speed_loop_accum_us >= speed_loop_period_us) {
              float speed_dt = (float)s_speed_loop_accum_us * 1.0e-6f;
              float speed_inv_dt = 1000000.0f / (float)s_speed_loop_accum_us;
-             float speed_error = s_ctx.speed_ref - s_ctx.speed_ctrl_fdb;
+             float speed_ref_ctrl = s_speed_ref_ctrl;
+             float speed_error = speed_ref_ctrl - s_ctx.speed_ctrl_fdb;
              float speed_iq_ref;
 
              s_speed_loop_accum_us = 0U;
@@ -2097,11 +2225,11 @@ static void FOC_Prof_Reset(void)
                                             speed_dt, speed_inv_dt);
 
 #if FOC_SPEED_ERROR_BOOST_ENABLE
-             if ((s_ctx.speed_ref >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
+             if ((speed_ref_ctrl >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
                  (speed_error > FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
-                 ((s_ctx.speed_ref - s_ctx.speed_fdb) >
+                 ((speed_ref_ctrl - s_ctx.speed_fdb) >
                   FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
-                 (s_ctx.speed_ref >
+                 (speed_ref_ctrl >
                   (s_speed_error_boost_prev_ref +
                    FOC_SPEED_ERROR_BOOST_REF_RISE_MIN_RPM))) {
                  float boost =
@@ -2120,8 +2248,9 @@ static void FOC_Prof_Reset(void)
 #else
              g_foc_speed_error_boost_mA = 0;
 #endif
-             s_speed_error_boost_prev_ref = s_ctx.speed_ref;
+             s_speed_error_boost_prev_ref = speed_ref_ctrl;
 
+             speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
                                       s_ctx.pid_speed.out_min,
                                       s_ctx.pid_speed.out_max);
