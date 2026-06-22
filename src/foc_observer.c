@@ -621,11 +621,29 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
      }
 
      if (cur_sector != 0U) {
-         float diff = FOC_Observer_AngleDiff(ctx->hall_sector.theta_e,
-                                             ctx->theta_e_predicted);
+         float target = ctx->hall_sector.theta_e;
+         float diff;
+
+#if FOC_HALL_EDGE_SYNC_ENABLE
+         target = FOC_Observer_GetHallEdgeSyncAngle(ctx, cur_sector, omega_e,
+                                                    predict_direction);
+#endif
+
+         diff = FOC_Observer_AngleDiff(target, ctx->theta_e_predicted);
 
          if (FOC_FABS(diff) > FOC_ANGLE_SYNC_RESYNC_DIFF_RAD) {
-             ctx->theta_e_predicted = ctx->hall_sector.theta_e;
+             float resync_step = diff * FOC_ANGLE_SYNC_RECOVERY_FACTOR;
+             float step_max = FOC_ANGLE_SYNC_RECOVERY_STEP_MAX_RAD;
+
+             if (step_max > 0.0f) {
+                 if (resync_step > step_max) {
+                     resync_step = step_max;
+                 } else if (resync_step < -step_max) {
+                     resync_step = -step_max;
+                 }
+             }
+
+             ctx->theta_e_predicted += resync_step;
              s_startup_predict_speed_rpm = ctx->speed_filtered;
          }
      }
