@@ -14,15 +14,18 @@
 
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
+extern volatile float speed_ref;
 
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 
-#define FOC_TEST_CASE_STOP        0U
-#define FOC_TEST_CASE_FIXED_SPEED 1U
-#define FOC_TEST_CASE_DYN_SPEED   2U
-#define FOC_TEST_CASE_BIDIR_SPEED 3U
+#define FOC_TEST_CASE_STOP              0U
+#define FOC_TEST_CASE_FIXED_SPEED       1U
+#define FOC_TEST_CASE_DYN_SPEED_CW      2U
+#define FOC_TEST_CASE_BIDIR_SWITCH      3U
+#define FOC_TEST_CASE_DYN_SPEED_CCW     4U
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reverse = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_ref = 1U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_speed_start_cmd_rpm = 4500;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_dyn_speed_period_ms = 4000U;
@@ -60,6 +63,7 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_current_peak_mA[FOC_DYN_SPEED_
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_enable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_step_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_reset_stats = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_period_ms = 8000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_max_rpm = 2000U;
@@ -67,7 +71,9 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_elapsed_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_phase_u16 = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_ref_rpm = 0;
 
-/* LiveWatch: change select to 0/1/2/3; applied once on value change. */
+/* LiveWatch: 0 stop, 1 fixed, 2 +1000..+4000 sine,
+ * 3 +1000/-1000 switch, 4 -1000..-4000 sine.
+ */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_select = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_applied = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_last_error = 0U;
@@ -675,9 +681,12 @@ uint8_t gunCtrl = 0;
 
 static void FOC_TestCase_ClearAutoModes(void)
 {
+  speed_ref = -1.0f;
   g_foc_dyn_speed_enable = 0U;
+  g_foc_dyn_speed_reverse = 0U;
   g_foc_dyn_speed_reset_stats = 0U;
   g_foc_bidir_speed_enable = 0U;
+  g_foc_bidir_speed_step_enable = 0U;
   g_foc_bidir_speed_reset_stats = 0U;
 }
 
@@ -686,6 +695,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
   uint8_t unId = 0U;
 
   g_foc_test_case_last_error = 0U;
+  speed_ref = -1.0f;
 
   if(test_case == FOC_TEST_CASE_STOP){
 
@@ -698,6 +708,10 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     const FOC_Context_t *ctx = FOC_Core_GetContext();
     float fixed_ref = ctx->speed_ref;
 
+    if ((fixed_ref > 0.0f) && (ctx->direction == FOC_DIR_CCW)) {
+      fixed_ref = -fixed_ref;
+    }
+
     FOC_TestCase_ClearAutoModes();
     g_foc_dyn_speed_start_on_max_ref = 0U;
     g_foc_dyn_speed_start_on_max_fdb = 0U;
@@ -706,29 +720,53 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
     Foc_SetSpeedReference(unId, fixed_ref);
 
-  }else if(test_case == FOC_TEST_CASE_DYN_SPEED){
+  }else if(test_case == FOC_TEST_CASE_DYN_SPEED_CW){
 
     Foc_EnableFocControl(unId);
 
-    g_foc_dyn_speed_start_on_max_ref = 1U;
-    g_foc_dyn_speed_start_on_max_fdb = 1U;
+    g_foc_dyn_speed_min_rpm = 1000U;
+    g_foc_dyn_speed_max_rpm = 4000U;
+    g_foc_dyn_speed_reverse = 0U;
+    g_foc_dyn_speed_start_on_max_ref = 0U;
+    g_foc_dyn_speed_start_on_max_fdb = 0U;
     g_foc_bidir_speed_enable = 0U;
+    g_foc_bidir_speed_step_enable = 0U;
     g_foc_bidir_speed_reset_stats = 0U;
 
     g_foc_dyn_speed_enable = 1U;
 
     g_foc_dyn_speed_reset_stats = 1U;
 
-  }else if(test_case == FOC_TEST_CASE_BIDIR_SPEED){
+  }else if(test_case == FOC_TEST_CASE_BIDIR_SWITCH){
 
     Foc_EnableFocControl(unId);
 
     g_foc_dyn_speed_enable = 0U;
+    g_foc_dyn_speed_reverse = 0U;
     g_foc_dyn_speed_reset_stats = 0U;
 
+    g_foc_bidir_speed_max_rpm = 1000U;
+    g_foc_bidir_speed_step_enable = 1U;
     g_foc_bidir_speed_enable = 1U;
 
     g_foc_bidir_speed_reset_stats = 1U;
+
+  }else if(test_case == FOC_TEST_CASE_DYN_SPEED_CCW){
+
+    Foc_EnableFocControl(unId);
+
+    g_foc_dyn_speed_min_rpm = 1000U;
+    g_foc_dyn_speed_max_rpm = 4000U;
+    g_foc_dyn_speed_reverse = 1U;
+    g_foc_dyn_speed_start_on_max_ref = 0U;
+    g_foc_dyn_speed_start_on_max_fdb = 0U;
+    g_foc_bidir_speed_enable = 0U;
+    g_foc_bidir_speed_step_enable = 0U;
+    g_foc_bidir_speed_reset_stats = 0U;
+
+    g_foc_dyn_speed_enable = 1U;
+
+    g_foc_dyn_speed_reset_stats = 1U;
 
   }else{
 

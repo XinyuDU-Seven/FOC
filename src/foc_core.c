@@ -251,6 +251,7 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_core_trigger_source = 0U;
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 
 extern volatile uint8_t  g_foc_dyn_speed_enable;
+extern volatile uint8_t  g_foc_dyn_speed_reverse;
 extern volatile uint8_t  g_foc_dyn_speed_start_on_max_ref;
 extern volatile int16_t  g_foc_dyn_speed_start_cmd_rpm;
 extern volatile uint32_t g_foc_dyn_speed_period_ms;
@@ -285,6 +286,7 @@ extern volatile int16_t  g_foc_dyn_log_iq_mA[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile uint16_t g_foc_dyn_log_current_peak_mA[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile uint8_t  g_foc_bidir_speed_enable;
+extern volatile uint8_t  g_foc_bidir_speed_step_enable;
 extern volatile uint8_t  g_foc_bidir_speed_reset_stats;
 extern volatile uint32_t g_foc_bidir_speed_period_ms;
 extern volatile uint16_t g_foc_bidir_speed_max_rpm;
@@ -659,6 +661,9 @@ static float FOC_DynSpeed_CalcRef(uint32_t now_us)
     } else if (target > speed_max) {
         target = speed_max;
     }
+    if (g_foc_dyn_speed_reverse != 0U) {
+        target = -target;
+    }
 
     g_foc_dyn_speed_elapsed_ms = elapsed_us / 1000U;
     g_foc_dyn_speed_phase_u16 = FOC_Log_ToU16(phase, 65535.0f / FOC_2PI);
@@ -710,6 +715,7 @@ static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
 
     if (g_foc_dyn_speed_enable != 0U) {
         g_foc_dyn_speed_enable = 0U;
+        g_foc_dyn_speed_reverse = 0U;
         g_foc_dyn_core_disable_count++;
         s_dyn_speed_prev_enable = 0U;
         g_foc_dyn_speed_reset_stats = 0U;
@@ -717,6 +723,7 @@ static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
 
     if (g_foc_bidir_speed_enable != 0U) {
         g_foc_bidir_speed_enable = 0U;
+        g_foc_bidir_speed_step_enable = 0U;
         s_bidir_speed_prev_enable = 0U;
         g_foc_bidir_speed_reset_stats = 0U;
     }
@@ -733,6 +740,13 @@ static void FOC_DynSpeed_ServiceRef(void)
     float start_fdb = (float)g_foc_dyn_speed_max_rpm -
                       (float)g_foc_dyn_speed_start_fdb_margin_rpm;
 
+    if ((livewatch_ref_valid == 0U) &&
+        (g_foc_dyn_speed_enable != 0U) &&
+        (g_foc_dyn_speed_reverse != 0U) &&
+        (current_ref > 0.0f)) {
+        current_ref = -current_ref;
+    }
+
     g_foc_dyn_core_loop_count++;
     g_foc_dyn_core_state = (uint8_t)s_ctx.state;
     g_foc_dyn_core_seen_ref_rpm = FOC_Log_ToI16(current_ref, 1.0f);
@@ -741,6 +755,7 @@ static void FOC_DynSpeed_ServiceRef(void)
 
     if ((livewatch_ref_valid != 0U) && (g_foc_bidir_speed_enable != 0U)) {
         g_foc_bidir_speed_enable = 0U;
+        g_foc_bidir_speed_step_enable = 0U;
         g_foc_bidir_speed_reset_stats = 0U;
         s_bidir_speed_prev_enable = 0U;
         if (FOC_DynSpeed_IsStartCommand(current_ref) == 0U) {
@@ -781,6 +796,7 @@ static void FOC_DynSpeed_ServiceRef(void)
                (FOC_DynSpeed_Near(current_ref,
                                   (float)g_foc_dyn_speed_ref_rpm) == 0U)) {
         g_foc_dyn_speed_enable = 0U;
+        g_foc_dyn_speed_reverse = 0U;
         g_foc_dyn_core_disable_count++;
         s_dyn_speed_prev_enable = 0U;
         g_foc_dyn_speed_reset_stats = 0U;
@@ -833,7 +849,13 @@ static void FOC_BidirSpeed_ServiceRef(void)
     elapsed_us = now_us - s_bidir_speed_start_us;
     phase_us = (period_us > 0U) ? (elapsed_us % period_us) : 0U;
     phase = ((float)phase_us / (float)period_us) * FOC_2PI;
-    target = (float)g_foc_bidir_speed_max_rpm * FOC_FastSin(phase);
+    if (g_foc_bidir_speed_step_enable != 0U) {
+        target = (phase_us < (period_us / 2U))
+               ? (float)g_foc_bidir_speed_max_rpm
+               : -(float)g_foc_bidir_speed_max_rpm;
+    } else {
+        target = (float)g_foc_bidir_speed_max_rpm * FOC_FastSin(phase);
+    }
 
     if (target > s_config.motor.max_speed_rpm) {
         target = s_config.motor.max_speed_rpm;
@@ -860,7 +882,7 @@ static void FOC_DynSpeed_RecordLog(uint32_t now_us, int16_t err_rpm)
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
 
-    if ((g_foc_bidir_speed_enable != 0U) &&
+    if ((g_foc_dyn_speed_ref_rpm < 0) &&
         (s_ctx.direction == FOC_DIR_CCW)) {
         signed_speed_fdb = -signed_speed_fdb;
         signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
@@ -917,7 +939,7 @@ static void FOC_DynSpeed_ServiceMetrics(void)
     }
 
     now_us = FOC_HAL_GetTimestampUs();
-    if ((g_foc_bidir_speed_enable != 0U) &&
+    if ((g_foc_dyn_speed_ref_rpm < 0) &&
         (s_ctx.direction == FOC_DIR_CCW)) {
         signed_speed_fdb = -signed_speed_fdb;
         signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
