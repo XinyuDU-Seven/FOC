@@ -161,13 +161,14 @@ static float FOC_Observer_GetHallEntryAngle(uint8_t sector, FOC_Dir_e direction)
 
 static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
                                                 uint8_t sector,
+                                                FOC_Dir_e edge_direction,
                                                 float omega_e)
 {
     uint32_t now_us = FOC_HAL_GetTimestampUs();
     uint32_t age_us = (ctx->hall_sector_timestamp_us != 0U)
                     ? (now_us - ctx->hall_sector_timestamp_us)
                     : 0U;
-    float target = FOC_Observer_GetHallEntryAngle(sector, ctx->direction);
+    float target = FOC_Observer_GetHallEntryAngle(sector, edge_direction);
     float advance = omega_e * ((float)age_us * 1.0e-6f);
 
     if (advance < 0.0f) {
@@ -177,7 +178,7 @@ static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
         advance = FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD;
     }
 
-    if (ctx->direction == FOC_DIR_CCW) {
+    if (edge_direction == FOC_DIR_CCW) {
         return FOC_NormalizeAngle(target - advance);
     }
 
@@ -211,9 +212,9 @@ static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,
     return (cw_steps < ccw_steps) ? cw_steps : ccw_steps;
 }
 
-static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
-                                                      uint8_t prev_sector,
-                                                      uint8_t cur_sector)
+static FOC_Dir_e FOC_Observer_GetHallStepDirection(uint8_t prev_sector,
+                                                    uint8_t cur_sector,
+                                                    FOC_Dir_e fallback)
 {
     uint8_t cw_steps;
     uint8_t ccw_steps;
@@ -221,18 +222,25 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
     if ((prev_sector < 1U) || (prev_sector > 6U) ||
         (cur_sector < 1U) || (cur_sector > 6U) ||
         (prev_sector == cur_sector)) {
-        return 1U;
+        return fallback;
     }
 
     cw_steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
     ccw_steps = (uint8_t)((prev_sector + 6U - cur_sector) % 6U);
 
-    if (ctx->direction == FOC_DIR_CCW) {
-        return (ccw_steps <= cw_steps) ? 1U : 0U;
+    if (cw_steps == 0U) {
+        cw_steps = 6U;
+    }
+    if (ccw_steps == 0U) {
+        ccw_steps = 6U;
+    }
+    if (cw_steps == ccw_steps) {
+        return fallback;
     }
 
-    return (cw_steps <= ccw_steps) ? 1U : 0U;
+    return (ccw_steps < cw_steps) ? FOC_DIR_CCW : FOC_DIR_CW;
 }
+
 static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                                           uint8_t pole_pairs,
                                           uint32_t *elapsed_us,
@@ -655,28 +663,29 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
       * 避免硬同步导致角度突变引发电流尖峰 */
 
      if (cur_sector != ctx->hall_sector_prev && cur_sector != 0U) {
-
-         if (FOC_Observer_HallStepMatchesDirection(ctx,
-                                                   ctx->hall_sector_prev,
-                                                   cur_sector) != 0U) {
-
-         /* Skip sync while inertia carries the rotor opposite to the command. */
+         FOC_Dir_e edge_direction =
+             FOC_Observer_GetHallStepDirection(ctx->hall_sector_prev,
+                                                cur_sector,
+                                                ctx->direction);
          float target = ctx->hall_sector.theta_e;
          float sync_factor = FOC_ANGLE_SYNC_FACTOR;
          float sync_step_max = FOC_ANGLE_SYNC_STEP_MAX_RAD;
          float speed_err = FOC_FABS(ctx->speed_ref - ctx->speed_filtered);
          float diff_abs;
          float sync_step;
+         float diff;
 
 #if FOC_HALL_EDGE_SYNC_ENABLE
-         target = FOC_Observer_GetHallEdgeSyncAngle(ctx, cur_sector, omega_e);
+         target = FOC_Observer_GetHallEdgeSyncAngle(ctx, cur_sector,
+                                                    edge_direction,
+                                                    omega_e);
          sync_factor = FOC_HALL_EDGE_SYNC_FACTOR;
          sync_step_max = FOC_HALL_EDGE_SYNC_STEP_MAX_RAD;
 #endif
 
-         float diff = target - ctx->theta_e_predicted;
+         diff = target - ctx->theta_e_predicted;
 
-         /* 处理角度环绕 */
+         /* Handle angle wraparound. */
 
          if (diff > FOC_PI)  diff -= FOC_2PI;
 
@@ -718,8 +727,6 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          }
 
          ctx->theta_e_predicted += sync_step;
-
-         }
 
      } else {
 
