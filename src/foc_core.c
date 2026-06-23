@@ -198,6 +198,11 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_resync_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_resync_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_late_recovery_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_late_recovery_period_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_no_edge_recovery_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_no_edge_recovery_elapsed_us = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_no_edge_recovery_limit_us = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_hall_no_edge_recovery_speed_ref_ctrl_rpm = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_no_edge_recovery_sector = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_recovery_accept_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_recovery_accept_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_recovery_accept_cur_sector = 0U;
@@ -335,6 +340,7 @@ static uint32_t s_bidir_speed_start_us = 0U;
  static float FOC_ControlDtFromUs(uint32_t period_us, uint32_t max_us);
  static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
  static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us);
+ static uint8_t FOC_HallNoEdgeNeedsRecovery(void);
  static void FOC_ResetClosedLoopForRecovery(void);
 static void FOC_ResetCurrentAngleTrim(void);
 static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
@@ -983,6 +989,11 @@ static void FOC_Prof_Reset(void)
      g_foc_hall_resync_cur_sector = 0U;
      g_foc_late_recovery_count = 0U;
      g_foc_late_recovery_period_us = 0U;
+     g_foc_hall_no_edge_recovery_count = 0U;
+     g_foc_hall_no_edge_recovery_elapsed_us = 0U;
+     g_foc_hall_no_edge_recovery_limit_us = 0U;
+     g_foc_hall_no_edge_recovery_speed_ref_ctrl_rpm = 0;
+     g_foc_hall_no_edge_recovery_sector = 0U;
      g_foc_hall_recovery_accept_count = 0U;
      g_foc_hall_recovery_accept_prev_sector = 0U;
      g_foc_hall_recovery_accept_cur_sector = 0U;
@@ -1162,6 +1173,38 @@ static void FOC_Prof_Reset(void)
      }
 
      return 0U;
+ }
+
+ static uint8_t FOC_HallNoEdgeNeedsRecovery(void)
+ {
+     uint32_t now_us;
+     uint32_t elapsed_us;
+     uint32_t limit_us;
+
+     if ((s_ctx.hall_sector.sector == 0U) ||
+         (s_ctx.hall_sector_dt_us == 0U) ||
+         (s_speed_ref_ctrl < FOC_HALL_NO_EDGE_RECOVERY_MIN_REF_RPM)) {
+         return 0U;
+     }
+
+     limit_us = s_ctx.hall_sector_dt_us * FOC_HALL_NO_EDGE_RECOVERY_RATIO;
+     if (limit_us < FOC_HALL_NO_EDGE_RECOVERY_MIN_US) {
+         limit_us = FOC_HALL_NO_EDGE_RECOVERY_MIN_US;
+     }
+
+     now_us = FOC_HAL_GetTimestampUs();
+     elapsed_us = now_us - s_ctx.timestamp_prev;
+     if (elapsed_us < limit_us) {
+         return 0U;
+     }
+
+     g_foc_hall_no_edge_recovery_count++;
+     g_foc_hall_no_edge_recovery_elapsed_us = elapsed_us;
+     g_foc_hall_no_edge_recovery_limit_us = limit_us;
+     g_foc_hall_no_edge_recovery_speed_ref_ctrl_rpm =
+         FOC_Log_ToI16(s_speed_ref_ctrl, 1.0f);
+     g_foc_hall_no_edge_recovery_sector = s_ctx.hall_sector.sector;
+     return 1U;
  }
 
  static void FOC_ResetClosedLoopForRecovery(void)
@@ -2209,6 +2252,35 @@ static void FOC_Prof_Reset(void)
 
                                                observer_dt, s_config.motor.pole_pairs);
      FOC_UpdateSpeedRefRamp(control_period_us);
+
+     if (FOC_HallNoEdgeNeedsRecovery() != 0U) {
+         float theta_recovery = s_ctx.theta_e_predicted;
+
+         FOC_ResetClosedLoopForRecovery();
+         FOC_BeginRecoveryZeroVectorHold();
+         FOC_BeginPostRecoveryDutySlew();
+         s_hall_recovery_accept_cycles = FOC_HALL_RECOVERY_ACCEPT_CYCLES;
+
+         FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
+         if (s_ctx.fault != FOC_FAULT_NONE) {
+             FOC_EnterFaultState();
+         } else {
+             FOC_ServiceRecoveryZeroVectorHold();
+         }
+
+         FOC_Clarke(&s_ctx.i_abc, &s_ctx.i_ab);
+         FOC_Park(&s_ctx.i_ab, theta_recovery, &s_ctx.i_dq);
+         if (s_ctx.fault == FOC_FAULT_NONE) {
+             FOC_RunRecoveryCurrentControl(theta_recovery, pid_dt, pid_inv_dt);
+         }
+         FOC_Log_Record(theta_recovery);
+
+         prof_next_us = FOC_HAL_GetTimestampUs();
+         FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 4U);
+         FOC_Prof_Exit(prof_enter_us, prof_next_us);
+         return;
+     }
+
      FOC_UpdateSpeedControlFeedback(control_period_us);
 
      if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
