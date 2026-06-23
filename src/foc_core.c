@@ -1543,14 +1543,21 @@ static void FOC_Prof_Reset(void)
                                              uint8_t to,
                                              uint8_t *step_count)
  {
+     uint8_t cw_steps;
+     uint8_t ccw_steps;
      uint8_t steps;
 
      if ((s_speed_ref_ctrl_direction != s_ctx.direction) ||
-         (s_speed_ref_ctrl < FOC_HALL_DIR_CHECK_MIN_REF_RPM)) {
+         (s_speed_ref_ctrl < FOC_HALL_DIR_CHECK_MIN_REF_RPM) ||
+         (from < 1U) || (from > 6U) || (to < 1U) || (to > 6U) ||
+         (from == to)) {
          return 0U;
      }
 
-     steps = FOC_HallStepCountInDirection(from, to, s_ctx.direction);
+     cw_steps = (uint8_t)((to + 6U - from) % 6U);
+     ccw_steps = (uint8_t)((from + 6U - to) % 6U);
+     steps = (cw_steps < ccw_steps) ? cw_steps : ccw_steps;
+
      if ((steps >= 2U) && (steps < 3U) &&
          (steps <= FOC_HALL_MISSED_EDGE_MAX_STEPS)) {
          if (step_count != 0) {
@@ -1671,7 +1678,6 @@ static void FOC_Prof_Reset(void)
          g_foc_hall_dir_reject_prev_sector = prev_sector;
          g_foc_hall_dir_reject_cur_sector = cur_sector;
          g_foc_hall_dir_reject_direction = (uint8_t)s_ctx.direction;
-         return 0U;
      }
 
      {
