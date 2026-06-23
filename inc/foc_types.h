@@ -108,6 +108,7 @@
      FOC_FAULT_STALL       = 0x08,  /**< 堵转 */
 
      FOC_FAULT_HALL        = 0x10,  /**< 霍尔传感器异常 */
+     FOC_FAULT_SPEED_DROP  = 0x20,  /**< Speed feedback drop diagnostic */
 
  } FOC_Fault_e;
 
