@@ -1235,6 +1235,7 @@ static void FOC_Prof_Reset(void)
 static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
 {
     float target = FOC_FABS(s_ctx.speed_ref);
+    float fdb = s_ctx.speed_fdb;
 
     FOC_PID_Reset(&s_ctx.pid_speed);
     FOC_PID_Reset(&s_ctx.pid_id);
@@ -1253,7 +1254,12 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
     g_foc_speed_ref_ramp_active = 0U;
 
     s_ctx.iq_ref = 0.0f;
-    s_ctx.speed_ctrl_fdb = s_speed_ref_ctrl;
+    if (fdb < 0.0f) {
+        fdb = 0.0f;
+    } else if (fdb > s_speed_ref_ctrl) {
+        fdb = s_speed_ref_ctrl;
+    }
+    s_ctx.speed_ctrl_fdb = fdb;
     g_foc_speed_ctrl_fdb_rpm = FOC_Log_ToI16(s_ctx.speed_ctrl_fdb, 1.0f);
     s_ctx.speed_loop_counter = 0U;
     s_speed_loop_accum_us = 0U;
