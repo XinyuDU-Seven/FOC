@@ -69,7 +69,8 @@ FOC_Protection_Threshold_t s_prot_threshold;
 
 #define FOC_LOG_SIZE        512U
 #define FOC_LOG_DECIMATION  1U
-#define FOC_TEXT_LOG_SIZE   128U
+#define FOC_TEXT_LOG_SIZE   1024U
+#define FOC_TEXT_LOG_DECIMATION 4U
 
 typedef struct {
     uint32_t seq;
@@ -121,6 +122,10 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_log_seq = 0U;
 
 FOC_DEBUG_ROOT volatile uint16_t g_log_idx = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_log_fault_idx = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_log_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_log_start_idx = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_log_capacity = FOC_TEXT_LOG_SIZE;
+FOC_DEBUG_ROOT volatile uint16_t g_log_decimation = FOC_TEXT_LOG_DECIMATION;
 FOC_DEBUG_ROOT volatile uint32_t g_log_seq[FOC_TEXT_LOG_SIZE];
 FOC_DEBUG_ROOT volatile uint32_t g_log_t_us[FOC_TEXT_LOG_SIZE];
 FOC_DEBUG_ROOT volatile int16_t  g_log_speed_ref_rpm[FOC_TEXT_LOG_SIZE];
@@ -300,6 +305,7 @@ extern volatile uint16_t g_foc_bidir_speed_phase_u16;
 extern volatile int16_t  g_foc_bidir_speed_ref_rpm;
 
 static uint16_t s_foc_log_decim = 0U;
+static uint16_t s_foc_text_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
 static uint32_t s_foc_prof_last_enter_us = 0U;
 static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
@@ -1458,7 +1464,10 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
      g_foc_log_seq = 0U;
      g_log_idx = 0U;
      g_log_fault_idx = 0U;
+     g_log_count = 0U;
+     g_log_start_idx = 0U;
      s_foc_log_decim = 0U;
+     s_foc_text_log_decim = 0U;
      s_hall_illegal_transition_count = 0U;
      FOC_Prof_Reset();
  }
@@ -1467,6 +1476,7 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
  {
      uint16_t idx;
      uint16_t text_idx;
+     uint8_t text_record;
      volatile FOC_LogSample_t *p;
 
      if (g_foc_log_stop != 0U) {
@@ -1527,45 +1537,65 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
 
      g_foc_log_fault_idx = idx;
 
-     text_idx = g_log_idx;
-     g_log_seq[text_idx] = p->seq;
-     g_log_t_us[text_idx] = p->t_us;
-     g_log_speed_ref_rpm[text_idx] = p->speed_ref_rpm;
-     g_log_speed_fdb_rpm[text_idx] = p->speed_fdb_rpm;
-     g_log_speed_ctrl_fdb_rpm[text_idx] = p->speed_ctrl_fdb_rpm;
-     g_log_ia_mA[text_idx] = p->ia_mA;
-     g_log_ib_mA[text_idx] = p->ib_mA;
-     g_log_ic_mA[text_idx] = p->ic_mA;
-     g_log_id_mA[text_idx] = p->id_mA;
-     g_log_iq_mA[text_idx] = p->iq_mA;
-     g_log_id_ref_mA[text_idx] = p->id_ref_mA;
-     g_log_iq_ref_mA[text_idx] = p->iq_ref_mA;
-     g_log_speed_error_boost_mA[text_idx] = p->speed_error_boost_mA;
-     g_log_vd_mV[text_idx] = p->vd_mV;
-     g_log_vq_mV[text_idx] = p->vq_mV;
-     g_log_vbus_mV[text_idx] = p->vbus_mV;
-     g_log_duty_a[text_idx] = p->duty_a;
-     g_log_duty_b[text_idx] = p->duty_b;
-     g_log_duty_c[text_idx] = p->duty_c;
-     g_log_theta_hall[text_idx] = p->theta_hall_u16;
-     g_log_theta_pred[text_idx] = p->theta_pred_u16;
-     g_log_theta_ctrl[text_idx] = p->theta_ctrl_u16;
-     g_log_current_peak_mA[text_idx] = p->current_peak_mA;
-     g_log_sector_no_change_count[text_idx] = p->sector_no_change_count;
-     g_log_stall_counter[text_idx] = p->stall_counter;
-     g_log_hall_raw[text_idx] = p->hall_raw;
-     g_log_hall_sector[text_idx] = p->hall_sector;
-     g_log_direction[text_idx] = p->direction;
-     g_log_state[text_idx] = p->state;
-     g_log_fault[text_idx] = p->fault;
-
-     g_log_fault_idx = text_idx;
-
-     text_idx++;
-     if (text_idx >= FOC_TEXT_LOG_SIZE) {
-         text_idx = 0U;
+     text_record = 0U;
+     if (s_ctx.fault != FOC_FAULT_NONE) {
+         text_record = 1U;
+     } else {
+         s_foc_text_log_decim++;
+         if (s_foc_text_log_decim >= FOC_TEXT_LOG_DECIMATION) {
+             s_foc_text_log_decim = 0U;
+             text_record = 1U;
+         }
      }
-     g_log_idx = text_idx;
+
+     if (text_record != 0U) {
+         text_idx = g_log_idx;
+         g_log_seq[text_idx] = p->seq;
+         g_log_t_us[text_idx] = p->t_us;
+         g_log_speed_ref_rpm[text_idx] = p->speed_ref_rpm;
+         g_log_speed_fdb_rpm[text_idx] = p->speed_fdb_rpm;
+         g_log_speed_ctrl_fdb_rpm[text_idx] = p->speed_ctrl_fdb_rpm;
+         g_log_ia_mA[text_idx] = p->ia_mA;
+         g_log_ib_mA[text_idx] = p->ib_mA;
+         g_log_ic_mA[text_idx] = p->ic_mA;
+         g_log_id_mA[text_idx] = p->id_mA;
+         g_log_iq_mA[text_idx] = p->iq_mA;
+         g_log_id_ref_mA[text_idx] = p->id_ref_mA;
+         g_log_iq_ref_mA[text_idx] = p->iq_ref_mA;
+         g_log_speed_error_boost_mA[text_idx] = p->speed_error_boost_mA;
+         g_log_vd_mV[text_idx] = p->vd_mV;
+         g_log_vq_mV[text_idx] = p->vq_mV;
+         g_log_vbus_mV[text_idx] = p->vbus_mV;
+         g_log_duty_a[text_idx] = p->duty_a;
+         g_log_duty_b[text_idx] = p->duty_b;
+         g_log_duty_c[text_idx] = p->duty_c;
+         g_log_theta_hall[text_idx] = p->theta_hall_u16;
+         g_log_theta_pred[text_idx] = p->theta_pred_u16;
+         g_log_theta_ctrl[text_idx] = p->theta_ctrl_u16;
+         g_log_current_peak_mA[text_idx] = p->current_peak_mA;
+         g_log_sector_no_change_count[text_idx] = p->sector_no_change_count;
+         g_log_stall_counter[text_idx] = p->stall_counter;
+         g_log_hall_raw[text_idx] = p->hall_raw;
+         g_log_hall_sector[text_idx] = p->hall_sector;
+         g_log_direction[text_idx] = p->direction;
+         g_log_state[text_idx] = p->state;
+         g_log_fault[text_idx] = p->fault;
+
+         g_log_fault_idx = text_idx;
+
+         text_idx++;
+         if (text_idx >= FOC_TEXT_LOG_SIZE) {
+             text_idx = 0U;
+         }
+         g_log_idx = text_idx;
+
+         if (g_log_count < FOC_TEXT_LOG_SIZE) {
+             g_log_count++;
+             g_log_start_idx = 0U;
+         } else {
+             g_log_start_idx = text_idx;
+         }
+     }
 
      idx++;
      if (idx >= FOC_LOG_SIZE) {
