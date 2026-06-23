@@ -269,6 +269,10 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_HALL_NO_EDGE_FAULT_COUNT
+#define FOC_HALL_NO_EDGE_FAULT_COUNT  120U
+#endif
+
 #ifndef FOC_HALL_NO_EDGE_DECAY_START_RATIO
 #define FOC_HALL_NO_EDGE_DECAY_START_RATIO  1.5f
 #endif

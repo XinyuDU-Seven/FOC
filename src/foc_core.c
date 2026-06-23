@@ -203,6 +203,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_no_edge_recovery_elapsed_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_no_edge_recovery_limit_us = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_hall_no_edge_recovery_speed_ref_ctrl_rpm = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_no_edge_recovery_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_no_edge_recovery_wait_edge = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_recovery_accept_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_recovery_accept_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_recovery_accept_cur_sector = 0U;
@@ -307,6 +308,7 @@ static uint16_t s_post_recovery_duty_slew_cycles = 0U;
 static uint16_t s_recovery_zero_vector_cycles = 0U;
 static uint16_t s_recovery_zero_vector_min_cycles = 0U;
 static uint8_t s_hall_no_edge_recovery_hold = 0U;
+static uint8_t s_hall_no_edge_recovery_wait_edge = 0U;
 static uint32_t s_speed_loop_accum_us = 0U;
 static float s_speed_ref_ctrl = 0.0f;
 static FOC_Dir_e s_speed_ref_ctrl_direction = FOC_DIR_CW;
@@ -342,6 +344,7 @@ static uint32_t s_bidir_speed_start_us = 0U;
  static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
  static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us);
  static uint8_t FOC_HallNoEdgeNeedsRecovery(void);
+ static uint8_t FOC_HallNoEdgeFaultNeedsLatch(void);
  static void FOC_ResetClosedLoopForRecovery(void);
 static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void);
 static void FOC_ResetCurrentAngleTrim(void);
@@ -996,6 +999,7 @@ static void FOC_Prof_Reset(void)
      g_foc_hall_no_edge_recovery_limit_us = 0U;
      g_foc_hall_no_edge_recovery_speed_ref_ctrl_rpm = 0;
      g_foc_hall_no_edge_recovery_sector = 0U;
+     g_foc_hall_no_edge_recovery_wait_edge = 0U;
      g_foc_hall_recovery_accept_count = 0U;
      g_foc_hall_recovery_accept_prev_sector = 0U;
      g_foc_hall_recovery_accept_cur_sector = 0U;
@@ -1041,6 +1045,7 @@ static void FOC_Prof_Reset(void)
      s_recovery_zero_vector_cycles = 0U;
      s_recovery_zero_vector_min_cycles = 0U;
      s_hall_no_edge_recovery_hold = 0U;
+     s_hall_no_edge_recovery_wait_edge = 0U;
      s_speed_loop_accum_us = 0U;
      s_speed_error_boost_prev_ref = 0.0f;
      s_hall_event_seq_seen = 0U;
@@ -1178,6 +1183,22 @@ static void FOC_Prof_Reset(void)
      return 0U;
  }
 
+
+ static uint8_t FOC_HallNoEdgeFaultNeedsLatch(void)
+ {
+     if ((s_ctx.hall_sector.sector == 0U) ||
+         (s_speed_ref_ctrl < FOC_HALL_NO_EDGE_RECOVERY_MIN_REF_RPM)) {
+         return 0U;
+     }
+
+     if (s_ctx.sector_no_change_count > FOC_HALL_NO_EDGE_FAULT_COUNT) {
+         s_ctx.fault |= FOC_FAULT_HALL;
+         return 1U;
+     }
+
+     return 0U;
+ }
+
  static uint8_t FOC_HallNoEdgeNeedsRecovery(void)
  {
      uint32_t now_us;
@@ -1187,10 +1208,29 @@ static void FOC_Prof_Reset(void)
      if ((s_ctx.hall_sector.sector == 0U) ||
          (s_ctx.hall_sector_dt_us == 0U) ||
          (s_speed_ref_ctrl < FOC_HALL_NO_EDGE_RECOVERY_MIN_REF_RPM)) {
+         s_hall_no_edge_recovery_wait_edge = 0U;
+         g_foc_hall_no_edge_recovery_wait_edge = 0U;
+         return 0U;
+     }
+
+     if (s_hall_no_edge_recovery_wait_edge != 0U) {
+         g_foc_hall_no_edge_recovery_wait_edge = 1U;
          return 0U;
      }
 
      limit_us = s_ctx.hall_sector_dt_us * FOC_HALL_NO_EDGE_RECOVERY_RATIO;
+     if ((s_config.motor.pole_pairs > 0U) &&
+         (s_ctx.speed_ctrl_fdb > (s_speed_ref_ctrl * 0.5f))) {
+         float command_sector_us = 10000000.0f /
+             (s_speed_ref_ctrl * (float)s_config.motor.pole_pairs);
+         float command_limit_us = command_sector_us *
+             (float)FOC_HALL_NO_EDGE_RECOVERY_RATIO;
+
+         if ((command_limit_us >= 1.0f) &&
+             (command_limit_us < (float)limit_us)) {
+             limit_us = (uint32_t)command_limit_us;
+         }
+     }
      if (limit_us < FOC_HALL_NO_EDGE_RECOVERY_MIN_US) {
          limit_us = FOC_HALL_NO_EDGE_RECOVERY_MIN_US;
      }
@@ -1207,6 +1247,8 @@ static void FOC_Prof_Reset(void)
      g_foc_hall_no_edge_recovery_speed_ref_ctrl_rpm =
          FOC_Log_ToI16(s_speed_ref_ctrl, 1.0f);
      g_foc_hall_no_edge_recovery_sector = s_ctx.hall_sector.sector;
+     s_hall_no_edge_recovery_wait_edge = 1U;
+     g_foc_hall_no_edge_recovery_wait_edge = 1U;
      return 1U;
  }
 
@@ -1217,6 +1259,8 @@ static void FOC_Prof_Reset(void)
      FOC_PID_Reset(&s_ctx.pid_iq);
      FOC_ResetCurrentAngleTrim();
      s_hall_no_edge_recovery_hold = 0U;
+     s_hall_no_edge_recovery_wait_edge = 0U;
+     g_foc_hall_no_edge_recovery_wait_edge = 0U;
 
      s_ctx.iq_ref = 0.0f;
      s_ctx.speed_ctrl_fdb = 0.0f;
@@ -1578,6 +1622,8 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
      s_recovery_zero_vector_cycles = 0U;
      s_recovery_zero_vector_min_cycles = 0U;
      s_hall_no_edge_recovery_hold = 0U;
+     s_hall_no_edge_recovery_wait_edge = 0U;
+     g_foc_hall_no_edge_recovery_wait_edge = 0U;
      g_foc_recovery_zero_vector_remaining = 0U;
      g_foc_recovery_current_wait_active = 0U;
      s_ctx.state = FOC_STATE_FAULT;
@@ -1723,6 +1769,8 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
                                      : (uint16_t)s_foc_control_period_us;
          g_foc_hall_resync_prev_sector = prev_sector;
          g_foc_hall_resync_cur_sector = cur_sector;
+         s_hall_no_edge_recovery_wait_edge = 0U;
+         g_foc_hall_no_edge_recovery_wait_edge = 0U;
          return 1U;
      }
 
@@ -1740,6 +1788,8 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
              g_foc_hall_missed_edge_cur_sector = cur_sector;
              g_foc_hall_missed_edge_step_count = missed_step_count;
              g_foc_hall_missed_edge_direction = (uint8_t)s_ctx.direction;
+             s_hall_no_edge_recovery_wait_edge = 0U;
+             g_foc_hall_no_edge_recovery_wait_edge = 0U;
              return 1U;
          }
 
@@ -1760,6 +1810,8 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
          g_foc_hall_recovery_accept_count++;
          g_foc_hall_recovery_accept_prev_sector = prev_sector;
          g_foc_hall_recovery_accept_cur_sector = cur_sector;
+         s_hall_no_edge_recovery_wait_edge = 0U;
+         g_foc_hall_no_edge_recovery_wait_edge = 0U;
          return 1U;
      }
 
@@ -1787,6 +1839,8 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
      s_ctx.hall_sector = *candidate;
      s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
      s_hall_illegal_transition_count = 0U;
+     s_hall_no_edge_recovery_wait_edge = 0U;
+     g_foc_hall_no_edge_recovery_wait_edge = 0U;
      return 1U;
  }
 
@@ -2041,6 +2095,8 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
      s_recovery_zero_vector_cycles = 0U;
      s_recovery_zero_vector_min_cycles = 0U;
      s_hall_no_edge_recovery_hold = 0U;
+     s_hall_no_edge_recovery_wait_edge = 0U;
+     g_foc_hall_no_edge_recovery_wait_edge = 0U;
      g_foc_recovery_zero_vector_remaining = 0U;
      g_foc_recovery_current_wait_active = 0U;
 
@@ -2260,6 +2316,15 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
                                                    observer_dt,
                                                    s_config.motor.pole_pairs);
 
+         if (FOC_HallNoEdgeFaultNeedsLatch() != 0U) {
+             FOC_EnterFaultState();
+             FOC_Log_Record(theta_recovery);
+             prof_next_us = FOC_HAL_GetTimestampUs();
+             FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 4U);
+             FOC_Prof_Exit(prof_enter_us, prof_next_us);
+             return;
+         }
+
          if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
              theta_recovery = s_ctx.theta_e_predicted;
          }
@@ -2305,6 +2370,15 @@ static void FOC_ResetClosedLoopForHallNoEdgeRecovery(void)
 
                                                observer_dt, s_config.motor.pole_pairs);
      FOC_UpdateSpeedRefRamp(control_period_us);
+
+     if (FOC_HallNoEdgeFaultNeedsLatch() != 0U) {
+         FOC_EnterFaultState();
+         FOC_Log_Record(theta_e_ctrl);
+         prof_next_us = FOC_HAL_GetTimestampUs();
+         FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 4U);
+         FOC_Prof_Exit(prof_enter_us, prof_next_us);
+         return;
+     }
 
      if (FOC_HallNoEdgeNeedsRecovery() != 0U) {
          float theta_recovery = s_ctx.theta_e_predicted;
