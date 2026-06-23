@@ -792,7 +792,8 @@ static void FOC_DynSpeed_ServiceRef(void)
             s_dyn_speed_prev_enable = 0U;
             return;
         }
-    } else if ((FOC_DynSpeed_IsStartCommand(current_ref) == 0U) &&
+    } else if ((livewatch_ref_valid != 0U) &&
+               (FOC_DynSpeed_IsStartCommand(current_ref) == 0U) &&
                (FOC_DynSpeed_Near(current_ref,
                                   (float)g_foc_dyn_speed_ref_rpm) == 0U)) {
         g_foc_dyn_speed_enable = 0U;
