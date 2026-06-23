@@ -253,6 +253,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
     elapsed = now_us - ctx->timestamp_prev;
     start_us = (float)ctx->hall_sector_dt_us *
                FOC_HALL_NO_EDGE_DECAY_START_RATIO;
+    if (start_us < (float)FOC_HALL_NO_EDGE_DECAY_MIN_US) {
+        start_us = (float)FOC_HALL_NO_EDGE_DECAY_MIN_US;
+    }
 
     if ((float)elapsed <= start_us) {
         return 0U;
