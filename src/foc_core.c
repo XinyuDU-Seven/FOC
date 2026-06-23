@@ -1187,7 +1187,9 @@ static void FOC_Prof_Reset(void)
  static uint8_t FOC_HallNoEdgeFaultNeedsLatch(void)
  {
      if ((s_ctx.hall_sector.sector == 0U) ||
-         (s_speed_ref_ctrl < FOC_HALL_NO_EDGE_RECOVERY_MIN_REF_RPM)) {
+         (s_ctx.hall_sector_dt_us == 0U) ||
+         (s_speed_ref_ctrl < FOC_HALL_NO_EDGE_RECOVERY_MIN_REF_RPM) ||
+         (s_ctx.speed_ctrl_fdb < FOC_HALL_NO_EDGE_RECOVERY_MIN_REF_RPM)) {
          return 0U;
      }
 
