@@ -292,11 +292,11 @@ extern "C" {
 
 /* Slew-rate limit for the speed reference used by the speed PID. */
 #ifndef FOC_SPEED_REF_RAMP_UP_RPM_PER_S
-#define FOC_SPEED_REF_RAMP_UP_RPM_PER_S     4000.0f
+#define FOC_SPEED_REF_RAMP_UP_RPM_PER_S     6000.0f
 #endif
 
 #ifndef FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S
-#define FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S   1000.0f
+#define FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S   6000.0f
 #endif
 
 /* Regenerative braking guard. Negative speed-loop iq is reduced before OV trips. */
