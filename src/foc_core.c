@@ -306,6 +306,7 @@ extern volatile uint16_t g_foc_bidir_speed_max_rpm;
 extern volatile uint32_t g_foc_bidir_speed_elapsed_ms;
 extern volatile uint16_t g_foc_bidir_speed_phase_u16;
 extern volatile int16_t  g_foc_bidir_speed_ref_rpm;
+extern volatile uint8_t  g_foc_observer_no_edge_active;
 
 static uint16_t s_foc_log_decim = 0U;
 static uint16_t s_hall_illegal_transition_count = 0U;
@@ -1139,6 +1140,9 @@ static void FOC_UpdateSpeedControlFeedback(void)
                (FOC_FABS(s_ctx.speed_fdb) >= 1.0f)) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (s_ctx.speed_fdb > s_speed_ref_ctrl) {
+        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+    } else if ((g_foc_observer_no_edge_active != 0U) &&
+               (s_ctx.speed_fdb < s_ctx.speed_ctrl_fdb)) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (alpha >= 1.0f) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
