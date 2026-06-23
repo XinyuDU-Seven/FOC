@@ -66,7 +66,7 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_step_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_reset_stats = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_period_ms = 8000U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_max_rpm = 2000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_max_rpm = 4000U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_elapsed_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_phase_u16 = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_ref_rpm = 0;
@@ -745,7 +745,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_dyn_speed_reverse = 0U;
     g_foc_dyn_speed_reset_stats = 0U;
 
-    g_foc_bidir_speed_max_rpm = 2000U;
+    g_foc_bidir_speed_max_rpm = 4000U;
     g_foc_bidir_speed_step_enable = 0U;
     g_foc_bidir_speed_enable = 1U;
 
