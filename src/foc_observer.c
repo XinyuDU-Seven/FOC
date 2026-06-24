@@ -265,6 +265,10 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 {
     uint32_t now_us;
     uint32_t elapsed;
+    uint32_t decay_start_us;
+    uint32_t limit_elapsed_us;
+    float decay_start_f;
+    float ratio = FOC_HALL_NO_EDGE_DECAY_START_RATIO;
     float limit_rpm;
     float speed_abs;
 
@@ -279,8 +283,27 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
     if (elapsed == 0U) {
         return 0U;
     }
+
+    if (ratio < 1.0f) {
+        ratio = 1.0f;
+    }
+    decay_start_f = (float)ctx->hall_sector_dt_us * ratio;
+    decay_start_us = (uint32_t)(decay_start_f + 0.5f);
+    if (decay_start_us < ctx->hall_sector_dt_us) {
+        decay_start_us = ctx->hall_sector_dt_us;
+    }
+
+    if (elapsed <= decay_start_us) {
+        return 0U;
+    }
+
+    limit_elapsed_us = elapsed - decay_start_us + ctx->hall_sector_dt_us;
+    if (limit_elapsed_us == 0U) {
+        return 0U;
+    }
+
     limit_rpm = 10000000.0f /
-                ((float)pole_pairs * (float)elapsed);
+                ((float)pole_pairs * (float)limit_elapsed_us);
 
     if (limit_rpm < 0.0f) {
         limit_rpm = 0.0f;
@@ -305,8 +328,6 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
     return 1U;
 }
-
-
 
  /* ===================================================================
 
