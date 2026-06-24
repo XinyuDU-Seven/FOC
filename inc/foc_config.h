@@ -520,6 +520,13 @@ extern "C" {
 #define FOC_HALL_ANGLE_TRIM_S6_RAD      (-(6.0f  / 180.0f) * FOC_PI)
 #endif
 
+/* Hall sector direction produced by a positive/CW speed command.
+ * 0U: sector number increases, 1U: sector number decreases.
+ */
+#ifndef FOC_FORWARD_HALL_DIR
+#define FOC_FORWARD_HALL_DIR            1U
+#endif
+
 /* Reject Hall sector changes faster than this fraction of the theoretical
  * sector time at FOC_HALL_MIN_SECTOR_TIME_MAX_RPM.
  */

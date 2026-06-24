@@ -144,10 +144,33 @@ static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
     return 0.0f;
 }
 
-static float FOC_Observer_GetHallEntryAngle(uint8_t sector, FOC_Dir_e direction)
+static FOC_Dir_e FOC_Observer_GetOppositeDir(FOC_Dir_e direction)
+{
+    return (direction == FOC_DIR_CCW) ? FOC_DIR_CW : FOC_DIR_CCW;
+}
+
+static FOC_Dir_e FOC_Observer_GetConfiguredForwardHallDir(void)
+{
+#if FOC_FORWARD_HALL_DIR
+    return FOC_DIR_CCW;
+#else
+    return FOC_DIR_CW;
+#endif
+}
+
+static FOC_Dir_e FOC_Observer_GetHallMotionDir(const FOC_Context_t *ctx)
+{
+    FOC_Dir_e forward_dir = FOC_Observer_GetConfiguredForwardHallDir();
+
+    return (ctx->direction == FOC_DIR_CCW)
+         ? FOC_Observer_GetOppositeDir(forward_dir)
+         : forward_dir;
+}
+
+static float FOC_Observer_GetHallEntryAngle(uint8_t sector, FOC_Dir_e hall_dir)
 {
     if (sector >= 1U && sector <= 6U) {
-        float edge_offset = (direction == FOC_DIR_CCW)
+        float edge_offset = (hall_dir == FOC_DIR_CCW)
                           ? (FOC_PI / 6.0f)
                           : -(FOC_PI / 6.0f);
 
@@ -168,7 +191,8 @@ static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
     uint32_t age_us = (ctx->hall_sector_timestamp_us != 0U)
                     ? (now_us - ctx->hall_sector_timestamp_us)
                     : 0U;
-    float target = FOC_Observer_GetHallEntryAngle(sector, ctx->direction);
+    FOC_Dir_e hall_dir = FOC_Observer_GetHallMotionDir(ctx);
+    float target = FOC_Observer_GetHallEntryAngle(sector, hall_dir);
     float advance = omega_e * ((float)age_us * 1.0e-6f);
 
     if (advance < 0.0f) {
@@ -178,7 +202,7 @@ static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
         advance = FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD;
     }
 
-    if (ctx->direction == FOC_DIR_CCW) {
+    if (hall_dir == FOC_DIR_CCW) {
         return FOC_NormalizeAngle(target - advance);
     }
 
@@ -228,7 +252,7 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
     cw_steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
     ccw_steps = (uint8_t)((prev_sector + 6U - cur_sector) % 6U);
 
-    if (ctx->direction == FOC_DIR_CCW) {
+    if (FOC_Observer_GetHallMotionDir(ctx) == FOC_DIR_CCW) {
         return (ccw_steps <= cw_steps) ? 1U : 0U;
     }
 
@@ -317,7 +341,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      ctx->theta_e_predicted        = 0.0f;
      s_startup_predict_speed_rpm   = 0.0f;
-     s_predict_direction           = ctx->direction;
+     s_predict_direction           = FOC_Observer_GetHallMotionDir(ctx);
      g_foc_observer_direction_reset_count = 0U;
      g_foc_observer_no_edge_decay_count = 0U;
      g_foc_observer_no_edge_elapsed_us = 0U;
@@ -593,12 +617,14 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      float omega_e = 0.0f;
      uint32_t no_edge_elapsed_us = 0U;
      float no_edge_limit_rpm = 0.0f;
+     FOC_Dir_e hall_dir;
      uint8_t no_edge_overdue = FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
                                                                &no_edge_elapsed_us,
                                                                &no_edge_limit_rpm);
+     hall_dir = FOC_Observer_GetHallMotionDir(ctx);
 
-     if (s_predict_direction != ctx->direction) {
-         s_predict_direction = ctx->direction;
+     if (s_predict_direction != hall_dir) {
+         s_predict_direction = hall_dir;
          s_startup_predict_speed_rpm = 0.0f;
          if (cur_sector != 0U) {
              ctx->theta_e_predicted = ctx->hall_sector.theta_e;
@@ -647,7 +673,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      if (speed_for_predict > 0.0f) {
          omega_e = speed_for_predict * (FOC_2PI / 60.0f) * (float)pole_pairs;
-         if (ctx->direction == FOC_DIR_CCW) {
+         if (hall_dir == FOC_DIR_CCW) {
              ctx->theta_e_predicted -= omega_e * dt;
          } else {
              ctx->theta_e_predicted += omega_e * dt;
