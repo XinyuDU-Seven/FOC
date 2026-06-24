@@ -121,6 +121,8 @@ FocError Foc_DisableFocControl(uint8_t unId);
 
 FocError Foc_SetCurrentReference(uint8_t unId, float fId, float fIq);
 
+FocError Foc_SetVoltageReference(uint8_t unId, float fVd, float fVq);
+
  
 
 /*******************************************************************************************
@@ -221,6 +223,12 @@ FocError Foc_SetHybridControlReference(uint8_t unId, uint8_t unMode, uint16_t un
 
 FocError Foc_SetSpeedReference(uint8_t unId, float fSpeed);
 
+FocError Foc_SetTorqueReference(uint8_t unId, float fTorque);
+
+FocError Foc_SetIFReference(uint8_t unId, float fIq, float fSpeed);
+
+FocError Foc_SetVFReference(uint8_t unId, float fVq, float fSpeed);
+
  
 
 /*******************************************************************************************
@@ -238,6 +246,8 @@ FocError Foc_SetSpeedReference(uint8_t unId, float fSpeed);
              其他--错误码参看FOC_DataType.h
 
  *******************************************************************************************/
+
+FocError Foc_GetAngleAndSpeed(uint8_t unId, float *pfThetaElec, float *pfSpeed);
 
 FocError Foc_GetMotorFullParameters(uint8_t unId, MotorFullStates *pstMotorFullStates);
 
@@ -264,6 +274,10 @@ FocError Foc_GetMotorFullParameters(uint8_t unId, MotorFullStates *pstMotorFullS
  *******************************************************************************************/
 
 FocError Foc_GetMotorNum(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum);
+
+FocError Foc_ReadMotorHallStates(uint8_t unId, int16_t *pstHallStatesOffset);
+
+FocError Foc_WriteMotorHallStates(uint8_t unId, int16_t *pstHallStatesOffset, int16_t nHallDistanceOffset);
 
  
 

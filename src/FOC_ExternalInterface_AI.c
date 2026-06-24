@@ -83,6 +83,52 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_test_case_exec_count = 0U;
 
 static uint8_t s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
 
+#define FOC_EXT_API_TEST_LOG_SIZE       24U
+
+#define FOC_EXT_API_ID_ENABLE           1U
+#define FOC_EXT_API_ID_DISABLE          2U
+#define FOC_EXT_API_ID_SET_CURRENT      3U
+#define FOC_EXT_API_ID_SET_VOLTAGE      4U
+#define FOC_EXT_API_ID_SET_HYBRID_SPEED 5U
+#define FOC_EXT_API_ID_SET_HYBRID_IQ    6U
+#define FOC_EXT_API_ID_SET_SPEED        7U
+#define FOC_EXT_API_ID_SET_TORQUE       8U
+#define FOC_EXT_API_ID_SET_IF           9U
+#define FOC_EXT_API_ID_SET_VF           10U
+#define FOC_EXT_API_ID_GET_ANGLE_SPEED  11U
+#define FOC_EXT_API_ID_GET_FULL         12U
+#define FOC_EXT_API_ID_GET_MOTOR_NUM    13U
+#define FOC_EXT_API_ID_READ_HALL        14U
+#define FOC_EXT_API_ID_WRITE_HALL       15U
+
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_ext_api_test_enable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_ext_api_test_done = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_ext_api_test_step = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_ext_api_test_idx = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_ext_api_test_overflow = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_ext_api_test_call_disable = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_ext_api_test_motor_id = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_ext_api_test_skipped_mask = 0x0003U;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_test_speed_rpm = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_test_id_a = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_test_iq_a = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_test_vd_v = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_test_vq_v = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_test_torque_nm = 0.0f;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_ext_api_test_hall_offset = 0;
+
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ext_api_log_cb_count[FOC_EXT_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_ext_api_log_api_id[FOC_EXT_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_ext_api_log_result[FOC_EXT_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_log_arg0[FOC_EXT_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_log_arg1[FOC_EXT_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_log_arg2[FOC_EXT_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_log_out0[FOC_EXT_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_log_out1[FOC_EXT_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_log_out2[FOC_EXT_API_TEST_LOG_SIZE];
+
+static uint8_t s_foc_ext_api_test_prev_enable = 0U;
+
 #if 0
 static uint8_t s_foc_dyn_speed_prev_enable = 0U;
 static uint32_t s_foc_dyn_speed_start_us = 0U;
@@ -468,6 +514,228 @@ static void FOC_AI_ClearAutoModes(void)
   g_foc_bidir_speed_step_enable = 0U;
   g_foc_bidir_speed_reset_stats = 0U;
 }
+static void FOC_ExtApiTest_ClearLog(void)
+{
+  uint16_t i;
+
+  g_foc_ext_api_test_done = 0U;
+  g_foc_ext_api_test_step = 0U;
+  g_foc_ext_api_test_idx = 0U;
+  g_foc_ext_api_test_overflow = 0U;
+
+  for (i = 0U; i < FOC_EXT_API_TEST_LOG_SIZE; i++) {
+    g_foc_ext_api_log_cb_count[i] = 0U;
+    g_foc_ext_api_log_api_id[i] = 0U;
+    g_foc_ext_api_log_result[i] = 0U;
+    g_foc_ext_api_log_arg0[i] = 0.0f;
+    g_foc_ext_api_log_arg1[i] = 0.0f;
+    g_foc_ext_api_log_arg2[i] = 0.0f;
+    g_foc_ext_api_log_out0[i] = 0.0f;
+    g_foc_ext_api_log_out1[i] = 0.0f;
+    g_foc_ext_api_log_out2[i] = 0.0f;
+  }
+}
+
+static void FOC_ExtApiTest_Record(uint16_t api_id,
+                                  FocError result,
+                                  float arg0,
+                                  float arg1,
+                                  float arg2,
+                                  float out0,
+                                  float out1,
+                                  float out2)
+{
+  uint8_t idx = g_foc_ext_api_test_idx;
+
+  if (idx >= FOC_EXT_API_TEST_LOG_SIZE) {
+    g_foc_ext_api_test_overflow = 1U;
+    return;
+  }
+
+  g_foc_ext_api_log_cb_count[idx] = g_foc_ai_callback_count;
+  g_foc_ext_api_log_api_id[idx] = api_id;
+  g_foc_ext_api_log_result[idx] = (uint16_t)result;
+  g_foc_ext_api_log_arg0[idx] = arg0;
+  g_foc_ext_api_log_arg1[idx] = arg1;
+  g_foc_ext_api_log_arg2[idx] = arg2;
+  g_foc_ext_api_log_out0[idx] = out0;
+  g_foc_ext_api_log_out1[idx] = out1;
+  g_foc_ext_api_log_out2[idx] = out2;
+  g_foc_ext_api_test_idx = (uint8_t)(idx + 1U);
+}
+
+static void FOC_ExtApiTest_Service(void)
+{
+  const FOC_Context_t *ctx;
+  MotorFullStates full_states;
+  FocError result = FOC_SUCCESS;
+  uint8_t motor_id = g_foc_ext_api_test_motor_id;
+  uint8_t motor_num = 0U;
+  int16_t hall_offset = -32768;
+  float theta = 0.0f;
+  float speed = 0.0f;
+  float speed_ref = g_foc_ext_api_test_speed_rpm;
+  float id_ref = g_foc_ext_api_test_id_a;
+  float iq_ref = g_foc_ext_api_test_iq_a;
+  float vd_ref = g_foc_ext_api_test_vd_v;
+  float vq_ref = g_foc_ext_api_test_vq_v;
+  float torque_ref = g_foc_ext_api_test_torque_nm;
+  uint16_t hybrid_speed = (speed_ref > 0.0f) ? (uint16_t)speed_ref : 0U;
+  uint16_t hybrid_iq_mA = (iq_ref > 0.0f) ? (uint16_t)(iq_ref * 1000.0f) : 0U;
+
+  memset(&full_states, 0, sizeof(full_states));
+
+  if (g_foc_ext_api_test_enable == 0U) {
+    s_foc_ext_api_test_prev_enable = 0U;
+    return;
+  }
+
+  if (s_foc_ext_api_test_prev_enable == 0U) {
+    s_foc_ext_api_test_prev_enable = 1U;
+    FOC_ExtApiTest_ClearLog();
+  }
+
+  if (g_foc_ext_api_test_done != 0U) {
+    return;
+  }
+
+  switch (g_foc_ext_api_test_step) {
+  case 0U:
+    result = Foc_EnableFocControl(motor_id);
+    ctx = FOC_Core_GetContext();
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_ENABLE, result,
+                          (float)motor_id, 0.0f, 0.0f,
+                          (float)ctx->state, (float)ctx->fault, 0.0f);
+    break;
+
+  case 1U:
+    result = Foc_SetSpeedReference(motor_id, speed_ref);
+    ctx = FOC_Core_GetContext();
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_SPEED, result,
+                          (float)motor_id, speed_ref, 0.0f,
+                          ctx->speed_ref, (float)ctx->direction, 0.0f);
+    break;
+
+  case 2U:
+    result = Foc_SetCurrentReference(motor_id, id_ref, iq_ref);
+    ctx = FOC_Core_GetContext();
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_CURRENT, result,
+                          (float)motor_id, id_ref, iq_ref,
+                          ctx->id_ref, ctx->iq_ref, 0.0f);
+    break;
+
+  case 3U:
+    result = Foc_SetHybridControlReference(motor_id, FOC_APP_MODE_SPEED,
+                                           FOC_APP_DIR_FORWARD, 0U, 0U,
+                                           hybrid_speed, 0U);
+    ctx = FOC_Core_GetContext();
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_HYBRID_SPEED, result,
+                          (float)motor_id, (float)hybrid_speed, 0.0f,
+                          ctx->speed_ref, (float)ctx->direction, 0.0f);
+    break;
+
+  case 4U:
+    result = Foc_SetHybridControlReference(motor_id, FOC_APP_MODE_CURRENT,
+                                           FOC_APP_DIR_FORWARD, 0U, 0U,
+                                           0U, hybrid_iq_mA);
+    ctx = FOC_Core_GetContext();
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_HYBRID_IQ, result,
+                          (float)motor_id, (float)hybrid_iq_mA, 0.0f,
+                          ctx->id_ref, ctx->iq_ref, 0.0f);
+    break;
+
+  case 5U:
+    result = Foc_SetVoltageReference(motor_id, vd_ref, vq_ref);
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_VOLTAGE, result,
+                          (float)motor_id, vd_ref, vq_ref,
+                          0.0f, 0.0f, 0.0f);
+    break;
+
+  case 6U:
+    result = Foc_SetTorqueReference(motor_id, torque_ref);
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_TORQUE, result,
+                          (float)motor_id, torque_ref, 0.0f,
+                          0.0f, 0.0f, 0.0f);
+    break;
+
+  case 7U:
+    result = Foc_SetIFReference(motor_id, iq_ref, speed_ref);
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_IF, result,
+                          (float)motor_id, iq_ref, speed_ref,
+                          0.0f, 0.0f, 0.0f);
+    break;
+
+  case 8U:
+    result = Foc_SetVFReference(motor_id, vq_ref, speed_ref);
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_VF, result,
+                          (float)motor_id, vq_ref, speed_ref,
+                          0.0f, 0.0f, 0.0f);
+    break;
+
+  case 9U:
+    result = Foc_GetAngleAndSpeed(motor_id, &theta, &speed);
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_GET_ANGLE_SPEED, result,
+                          (float)motor_id, 0.0f, 0.0f,
+                          theta, speed, 0.0f);
+    break;
+
+  case 10U:
+    result = Foc_GetMotorFullParameters(motor_id, &full_states);
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_GET_FULL, result,
+                          (float)motor_id, 0.0f, 0.0f,
+                          full_states.fThetaElec,
+                          full_states.fSpeedMechEstimate,
+                          (float)full_states.enFocState);
+    break;
+
+  case 11U:
+    result = Foc_GetMotorNum(0U, 0U, 0U, &motor_num);
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_GET_MOTOR_NUM, result,
+                          0.0f, 0.0f, 0.0f,
+                          (float)motor_num, 0.0f, 0.0f);
+    break;
+
+  case 12U:
+    result = Foc_ReadMotorHallStates(motor_id, &hall_offset);
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_READ_HALL, result,
+                          (float)motor_id, 0.0f, 0.0f,
+                          (float)hall_offset, 0.0f, 0.0f);
+    break;
+
+  case 13U:
+    hall_offset = g_foc_ext_api_test_hall_offset;
+    result = Foc_WriteMotorHallStates(motor_id, &hall_offset,
+                                      g_foc_ext_api_test_hall_offset);
+    FOC_ExtApiTest_Record(FOC_EXT_API_ID_WRITE_HALL, result,
+                          (float)motor_id,
+                          (float)g_foc_ext_api_test_hall_offset,
+                          0.0f,
+                          (float)hall_offset, 0.0f, 0.0f);
+    break;
+
+  case 14U:
+    if (g_foc_ext_api_test_call_disable != 0U) {
+      result = Foc_DisableFocControl(motor_id);
+      ctx = FOC_Core_GetContext();
+      FOC_ExtApiTest_Record(FOC_EXT_API_ID_DISABLE, result,
+                            (float)motor_id, 0.0f, 0.0f,
+                            (float)ctx->state, (float)ctx->fault, 0.0f);
+    }
+    break;
+
+  default:
+    g_foc_ext_api_test_done = 1U;
+    g_foc_ext_api_test_enable = 0U;
+    return;
+  }
+
+  g_foc_ext_api_test_step++;
+  if (g_foc_ext_api_test_step > 14U) {
+    g_foc_ext_api_test_done = 1U;
+    g_foc_ext_api_test_enable = 0U;
+  }
+}
+
 void Foc_AlgorithmControlCallback_AI(void);
 void Foc_Init_AI(void);
 FocError Foc_EnableFocControl_AI(uint8_t unId);
@@ -478,6 +746,13 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
 FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed);
 FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFullStates);
 FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum);
+FocError Foc_SetVoltageReference_AI(uint8_t unId, float fVd, float fVq);
+FocError Foc_SetTorqueReference_AI(uint8_t unId, float fTorque);
+FocError Foc_SetIFReference_AI(uint8_t unId, float fIq, float fSpeed);
+FocError Foc_SetVFReference_AI(uint8_t unId, float fVq, float fSpeed);
+FocError Foc_GetAngleAndSpeed_AI(uint8_t unId, float *pfThetaElec, float *pfSpeed);
+FocError Foc_ReadMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset);
+FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset, int16_t nHallDistanceOffset);
 static void FOC_TestCase_Service(void);
 
 /*******************************************************************************************
@@ -501,6 +776,8 @@ void Foc_AlgorithmControlCallback_AI(void){
   FOC_TestCase_Service();
 
   FOC_MainLoop();
+
+  FOC_ExtApiTest_Service();
 
 }
 
@@ -820,6 +1097,115 @@ FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unM
 
  
 
+FocError Foc_SetVoltageReference_AI(uint8_t unId, float fVd, float fVq)
+{
+  FocError err = FOC_AI_CheckMotorId(unId);
+
+  (void)fVd;
+  (void)fVq;
+
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  return FOC_INPUT_PARAMETER_INVALID;
+}
+
+FocError Foc_SetTorqueReference_AI(uint8_t unId, float fTorque)
+{
+  FocError err = FOC_AI_CheckMotorId(unId);
+
+  (void)fTorque;
+
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  return FOC_INPUT_PARAMETER_INVALID;
+}
+
+FocError Foc_SetIFReference_AI(uint8_t unId, float fIq, float fSpeed)
+{
+  FocError err = FOC_AI_CheckMotorId(unId);
+
+  (void)fIq;
+  (void)fSpeed;
+
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  return FOC_INPUT_PARAMETER_INVALID;
+}
+
+FocError Foc_SetVFReference_AI(uint8_t unId, float fVq, float fSpeed)
+{
+  FocError err = FOC_AI_CheckMotorId(unId);
+
+  (void)fVq;
+  (void)fSpeed;
+
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  return FOC_INPUT_PARAMETER_INVALID;
+}
+
+FocError Foc_GetAngleAndSpeed_AI(uint8_t unId, float *pfThetaElec, float *pfSpeed)
+{
+  const FOC_Context_t *ctx;
+  FocError err;
+
+  if ((pfThetaElec == NULL) || (pfSpeed == NULL)) {
+    return FOC_POINTER_NULL;
+  }
+
+  err = FOC_AI_CheckMotorId(unId);
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  ctx = FOC_Core_GetContext();
+  *pfThetaElec = ctx->theta_e;
+  *pfSpeed = ctx->speed_fdb;
+
+  return FOC_SUCCESS;
+}
+
+FocError Foc_ReadMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset)
+{
+  FocError err;
+
+  if (pstHallStatesOffset == NULL) {
+    return FOC_POINTER_NULL;
+  }
+
+  err = FOC_AI_CheckMotorId(unId);
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  return FOC_INPUT_PARAMETER_INVALID;
+}
+
+FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset, int16_t nHallDistanceOffset)
+{
+  FocError err;
+
+  (void)nHallDistanceOffset;
+
+  if (pstHallStatesOffset == NULL) {
+    return FOC_POINTER_NULL;
+  }
+
+  err = FOC_AI_CheckMotorId(unId);
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  return FOC_INPUT_PARAMETER_INVALID;
+}
 float gfSpeedTarget = 0;
 
 uint8_t gunCtrl = 0;
@@ -988,4 +1374,39 @@ FocError Foc_GetMotorFullParameters(uint8_t unId, MotorFullStates *pstMotorFullS
 FocError Foc_GetMotorNum(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum)
 {
   return Foc_GetMotorNum_AI(unCarConfigID, unSeatID, unMotorID, punMotorNum);
+}
+
+FocError Foc_SetVoltageReference(uint8_t unId, float fVd, float fVq)
+{
+  return Foc_SetVoltageReference_AI(unId, fVd, fVq);
+}
+
+FocError Foc_SetTorqueReference(uint8_t unId, float fTorque)
+{
+  return Foc_SetTorqueReference_AI(unId, fTorque);
+}
+
+FocError Foc_SetIFReference(uint8_t unId, float fIq, float fSpeed)
+{
+  return Foc_SetIFReference_AI(unId, fIq, fSpeed);
+}
+
+FocError Foc_SetVFReference(uint8_t unId, float fVq, float fSpeed)
+{
+  return Foc_SetVFReference_AI(unId, fVq, fSpeed);
+}
+
+FocError Foc_GetAngleAndSpeed(uint8_t unId, float *pfThetaElec, float *pfSpeed)
+{
+  return Foc_GetAngleAndSpeed_AI(unId, pfThetaElec, pfSpeed);
+}
+
+FocError Foc_ReadMotorHallStates(uint8_t unId, int16_t *pstHallStatesOffset)
+{
+  return Foc_ReadMotorHallStates_AI(unId, pstHallStatesOffset);
+}
+
+FocError Foc_WriteMotorHallStates(uint8_t unId, int16_t *pstHallStatesOffset, int16_t nHallDistanceOffset)
+{
+  return Foc_WriteMotorHallStates_AI(unId, pstHallStatesOffset, nHallDistanceOffset);
 }
