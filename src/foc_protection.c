@@ -115,9 +115,9 @@ FOC_Fault_e FOC_Protection_Check(FOC_Context_t *ctx, float v_bus)
 
     /* ---- 启动失败/堵转检测：有速度指令但反馈速度长期接近 0 ---- */
     {
-        float speed_ref_abs = FOC_FABS(ctx->speed_ref);
+        float speed_ref_abs = FOC_FABS(ctx->speed_ref_ctrl);
         float speed_fdb_abs = FOC_FABS(ctx->speed_fdb);
-        float speed_err = FOC_FABS(ctx->speed_ref - ctx->speed_fdb);
+        float speed_err = FOC_FABS(ctx->speed_ref_ctrl - ctx->speed_fdb);
 
         if ((ctx->state == FOC_STATE_RUNNING) &&
             (speed_ref_abs >= FOC_STALL_MIN_SPEED_REF_RPM) &&
@@ -137,7 +137,7 @@ FOC_Fault_e FOC_Protection_Check(FOC_Context_t *ctx, float v_bus)
 
     /* ---- 堵转检测：速度误差持续超过阈值 ---- */
 
-    float speed_err = FOC_FABS(ctx->speed_ref - ctx->speed_fdb);
+    float speed_err = FOC_FABS(ctx->speed_ref_ctrl - ctx->speed_fdb);
 
     if (ctx->state == FOC_STATE_RUNNING && speed_err > s_threshold.stall_speed_err) {
 

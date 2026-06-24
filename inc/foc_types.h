@@ -338,6 +338,8 @@
 
      float                  speed_ref;        /**< 目标转速 (rpm) */
 
+     float                  speed_ref_ctrl;   /**< Slew-limited speed reference for control/protection (rpm) */
+
      float                  speed_fdb;        /**< 实际转速 (rpm) */
 
      float                  theta_e;          /**< 电角度 (rad) */

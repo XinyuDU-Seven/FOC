@@ -353,6 +353,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      ctx->speed_raw                = 0.0f;
 
+     ctx->speed_ref_ctrl           = 0.0f;
+
      ctx->speed_filtered           = 0.0f;
 
      ctx->speed_ctrl_fdb           = 0.0f;

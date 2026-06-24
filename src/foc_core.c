@@ -435,6 +435,7 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
  static void FOC_ResetSpeedRefRamp(void)
  {
      s_speed_ref_ctrl = 0.0f;
+     s_ctx.speed_ref_ctrl = 0.0f;
      s_speed_ref_ctrl_direction = s_ctx.direction;
      g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(FOC_FABS(s_ctx.speed_ref), 1.0f);
      g_foc_speed_ref_ctrl_rpm = 0;
@@ -519,6 +520,7 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
          }
      }
 
+     s_ctx.speed_ref_ctrl = s_speed_ref_ctrl;
      g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(target, 1.0f);
      g_foc_speed_ref_ctrl_rpm = FOC_Log_ToI16(s_speed_ref_ctrl, 1.0f);
      g_foc_speed_ref_ramp_active =
