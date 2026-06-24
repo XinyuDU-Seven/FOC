@@ -128,6 +128,41 @@ FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_log_out1[FOC_EXT_API_TEST_LOG_
 FOC_AI_DEBUG_ROOT volatile float    g_foc_ext_api_log_out2[FOC_EXT_API_TEST_LOG_SIZE];
 
 static uint8_t s_foc_ext_api_test_prev_enable = 0U;
+#define FOC_SPEED_API_TEST_LOG_SIZE     128U
+
+#define FOC_SPEED_API_PHASE_ENABLE      1U
+#define FOC_SPEED_API_PHASE_SET_SPEED   2U
+#define FOC_SPEED_API_PHASE_SAMPLE      3U
+#define FOC_SPEED_API_PHASE_DISABLE     4U
+
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_enable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_done = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_step = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_idx = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_overflow = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_call_disable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_use_hybrid = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_stop_on_fault = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_motor_id = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_test_decim = 100U;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_test_target_rpm = 0.0f;
+
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_speed_api_log_cb_count[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_log_phase[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_log_result[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_log_state[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_log_fault[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_target_rpm[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_ref_rpm[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_ctrl_ref_rpm[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_fdb_rpm[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_ctrl_fdb_rpm[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_iq_ref_a[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_iq_a[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_current_peak_a[FOC_SPEED_API_TEST_LOG_SIZE];
+
+static uint8_t s_foc_speed_api_test_prev_enable = 0U;
+static uint16_t s_foc_speed_api_test_decim_count = 0U;
 
 #if 0
 static uint8_t s_foc_dyn_speed_prev_enable = 0U;
@@ -514,6 +549,146 @@ static void FOC_AI_ClearAutoModes(void)
   g_foc_bidir_speed_step_enable = 0U;
   g_foc_bidir_speed_reset_stats = 0U;
 }
+
+static void FOC_SpeedApiTest_ClearLog(void)
+{
+  uint16_t i;
+
+  g_foc_speed_api_test_done = 0U;
+  g_foc_speed_api_test_step = 0U;
+  g_foc_speed_api_test_idx = 0U;
+  g_foc_speed_api_test_overflow = 0U;
+  s_foc_speed_api_test_decim_count = 0U;
+
+  for (i = 0U; i < FOC_SPEED_API_TEST_LOG_SIZE; i++) {
+    g_foc_speed_api_log_cb_count[i] = 0U;
+    g_foc_speed_api_log_phase[i] = 0U;
+    g_foc_speed_api_log_result[i] = 0U;
+    g_foc_speed_api_log_state[i] = 0U;
+    g_foc_speed_api_log_fault[i] = 0U;
+    g_foc_speed_api_log_target_rpm[i] = 0.0f;
+    g_foc_speed_api_log_ref_rpm[i] = 0.0f;
+    g_foc_speed_api_log_ctrl_ref_rpm[i] = 0.0f;
+    g_foc_speed_api_log_fdb_rpm[i] = 0.0f;
+    g_foc_speed_api_log_ctrl_fdb_rpm[i] = 0.0f;
+    g_foc_speed_api_log_iq_ref_a[i] = 0.0f;
+    g_foc_speed_api_log_iq_a[i] = 0.0f;
+    g_foc_speed_api_log_current_peak_a[i] = 0.0f;
+  }
+}
+
+static void FOC_SpeedApiTest_Record(uint16_t phase, FocError result)
+{
+  const FOC_Context_t *ctx = FOC_Core_GetContext();
+  uint8_t idx = g_foc_speed_api_test_idx;
+
+  if (idx >= FOC_SPEED_API_TEST_LOG_SIZE) {
+    g_foc_speed_api_test_overflow = 1U;
+    return;
+  }
+
+  g_foc_speed_api_log_cb_count[idx] = g_foc_ai_callback_count;
+  g_foc_speed_api_log_phase[idx] = phase;
+  g_foc_speed_api_log_result[idx] = (uint16_t)result;
+  g_foc_speed_api_log_state[idx] = (uint16_t)ctx->state;
+  g_foc_speed_api_log_fault[idx] = (uint16_t)ctx->fault;
+  g_foc_speed_api_log_target_rpm[idx] = g_foc_speed_api_test_target_rpm;
+  g_foc_speed_api_log_ref_rpm[idx] = ctx->speed_ref;
+  g_foc_speed_api_log_ctrl_ref_rpm[idx] = ctx->speed_ref_ctrl;
+  g_foc_speed_api_log_fdb_rpm[idx] = ctx->speed_fdb;
+  g_foc_speed_api_log_ctrl_fdb_rpm[idx] = ctx->speed_ctrl_fdb;
+  g_foc_speed_api_log_iq_ref_a[idx] = ctx->iq_ref;
+  g_foc_speed_api_log_iq_a[idx] = ctx->i_dq.q;
+  g_foc_speed_api_log_current_peak_a[idx] = ctx->current_peak;
+  g_foc_speed_api_test_idx = (uint8_t)(idx + 1U);
+}
+
+static void FOC_SpeedApiTest_Finish(void)
+{
+  FocError result;
+
+  if (g_foc_speed_api_test_call_disable != 0U) {
+    result = Foc_DisableFocControl(g_foc_speed_api_test_motor_id);
+    if (g_foc_speed_api_test_idx < FOC_SPEED_API_TEST_LOG_SIZE) {
+      FOC_SpeedApiTest_Record(FOC_SPEED_API_PHASE_DISABLE, result);
+    }
+  }
+
+  g_foc_speed_api_test_done = 1U;
+  g_foc_speed_api_test_enable = 0U;
+}
+
+static void FOC_SpeedApiTest_Service(void)
+{
+  const FOC_Context_t *ctx;
+  FocError result;
+  uint16_t decim;
+  uint16_t target_rpm_u16;
+
+  if (g_foc_speed_api_test_enable == 0U) {
+    s_foc_speed_api_test_prev_enable = 0U;
+    return;
+  }
+
+  if (s_foc_speed_api_test_prev_enable == 0U) {
+    s_foc_speed_api_test_prev_enable = 1U;
+    g_foc_ext_api_test_enable = 0U;
+    FOC_SpeedApiTest_ClearLog();
+  }
+
+  if (g_foc_speed_api_test_done != 0U) {
+    return;
+  }
+
+  if (g_foc_speed_api_test_step == 0U) {
+    result = Foc_EnableFocControl(g_foc_speed_api_test_motor_id);
+    FOC_SpeedApiTest_Record(FOC_SPEED_API_PHASE_ENABLE, result);
+    g_foc_speed_api_test_step = 1U;
+    return;
+  }
+
+  if (g_foc_speed_api_test_step == 1U) {
+    if (g_foc_speed_api_test_use_hybrid != 0U) {
+      target_rpm_u16 = (g_foc_speed_api_test_target_rpm > 0.0f)
+          ? (uint16_t)g_foc_speed_api_test_target_rpm
+          : 0U;
+      result = Foc_SetHybridControlReference(g_foc_speed_api_test_motor_id,
+                                             FOC_APP_MODE_SPEED,
+                                             FOC_APP_DIR_FORWARD,
+                                             0U,
+                                             0U,
+                                             target_rpm_u16,
+                                             0U);
+    } else {
+      result = Foc_SetSpeedReference(g_foc_speed_api_test_motor_id,
+                                     g_foc_speed_api_test_target_rpm);
+    }
+    FOC_SpeedApiTest_Record(FOC_SPEED_API_PHASE_SET_SPEED, result);
+    g_foc_speed_api_test_step = 2U;
+    return;
+  }
+
+  decim = g_foc_speed_api_test_decim;
+  if (decim == 0U) {
+    decim = 1U;
+  }
+
+  s_foc_speed_api_test_decim_count++;
+  if (s_foc_speed_api_test_decim_count < decim) {
+    return;
+  }
+  s_foc_speed_api_test_decim_count = 0U;
+
+  FOC_SpeedApiTest_Record(FOC_SPEED_API_PHASE_SAMPLE, FOC_SUCCESS);
+
+  ctx = FOC_Core_GetContext();
+  if ((g_foc_speed_api_test_idx >= FOC_SPEED_API_TEST_LOG_SIZE) ||
+      ((g_foc_speed_api_test_stop_on_fault != 0U) &&
+       ((ctx->state == FOC_STATE_FAULT) || (ctx->fault != FOC_FAULT_NONE)))) {
+    FOC_SpeedApiTest_Finish();
+  }
+}
+
 static void FOC_ExtApiTest_ClearLog(void)
 {
   uint16_t i;
@@ -776,6 +951,8 @@ void Foc_AlgorithmControlCallback_AI(void){
   FOC_TestCase_Service();
 
   FOC_MainLoop();
+
+  FOC_SpeedApiTest_Service();
 
   FOC_ExtApiTest_Service();
 
