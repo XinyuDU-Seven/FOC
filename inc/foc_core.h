@@ -143,6 +143,14 @@ const FOC_Context_t *FOC_Core_GetContext(void);
 
 int FOC_Core_SetSpeedRef(float rpm);
 
+/**
+ * @brief Set direct d/q current references.
+ * @param id d-axis current reference (A)
+ * @param iq q-axis current reference (A), positive forward, negative reverse
+ * @return FOC_OK on success
+ */
+int FOC_Core_SetCurrentRef(float id, float iq);
+
  
 
 /**

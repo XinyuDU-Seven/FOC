@@ -51,9 +51,11 @@ FOC_Context_t s_ctx;
 
 FOC_Config_t  s_config;
 
- 
+#define FOC_CTRL_SOURCE_SPEED   0U
+#define FOC_CTRL_SOURCE_CURRENT 1U
+static uint8_t s_foc_ctrl_source = FOC_CTRL_SOURCE_SPEED;
 
- /** 保护阈值实例 */
+/** 保护阈值实例 */
 
 FOC_Protection_Threshold_t s_prot_threshold;
 
@@ -1452,6 +1454,7 @@ static void FOC_Prof_Reset(void)
      s_speed_loop_accum_us = 0U;
      s_speed_error_boost_prev_ref = 0.0f;
 
+
      s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
                                    s_ctx.id_ref - s_ctx.i_dq.d,
                                    pid_dt,
@@ -1903,7 +1906,8 @@ static void FOC_Prof_Reset(void)
 
      s_ctx.id_ref = 0.0f;
 
- 
+     s_ctx.iq_ref = 0.0f;
+     s_foc_ctrl_source = FOC_CTRL_SOURCE_SPEED;
 
      /* 默认方向正转 */
 
@@ -2073,6 +2077,8 @@ static void FOC_Prof_Reset(void)
      g_foc_bidir_speed_reset_stats = 0U;
 
      s_ctx.iq_ref    = 0.0f;
+     s_ctx.id_ref = 0.0f;
+     s_foc_ctrl_source = FOC_CTRL_SOURCE_SPEED;
      s_ctx.speed_ctrl_fdb = 0.0f;
      g_foc_speed_ctrl_fdb_rpm = 0;
      s_ctx.speed_loop_counter = 0U;
@@ -2387,7 +2393,8 @@ static void FOC_Prof_Reset(void)
              s_ctx.speed_loop_counter++;
          }
 
-         if (s_speed_loop_accum_us >= speed_loop_period_us) {
+         if ((s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
+             (s_speed_loop_accum_us >= speed_loop_period_us)) {
              float speed_dt = (float)s_speed_loop_accum_us * 1.0e-6f;
              float speed_inv_dt = 1000000.0f / (float)s_speed_loop_accum_us;
              float speed_ref_ctrl = s_speed_ref_ctrl;
@@ -2438,6 +2445,13 @@ static void FOC_Prof_Reset(void)
  
 
      /* ---- 7. 电流环 PID ---- */
+
+     if (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED) {
+         s_speed_loop_accum_us = 0U;
+         s_ctx.speed_loop_counter = 0U;
+         g_foc_speed_error_boost_mA = 0;
+         s_speed_error_boost_prev_ref = 0.0f;
+     }
 
      s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
 
@@ -2582,6 +2596,11 @@ static void FOC_Prof_Reset(void)
 
  {
 
+     FOC_HAL_EnterCritical();
+     s_foc_ctrl_source = FOC_CTRL_SOURCE_SPEED;
+     s_ctx.id_ref = 0.0f;
+     FOC_HAL_ExitCritical();
+
      /* 限幅到电机最大转速 */
 
      if (FOC_DynSpeed_HandleSetRef(rpm) != 0U) {
@@ -2632,6 +2651,59 @@ static void FOC_Prof_Reset(void)
 
  
 
+ int FOC_Core_SetCurrentRef(float id, float iq)
+
+{
+
+     float max_current = s_config.motor.max_current_a;
+
+     if (max_current <= 0.0f) {
+         return FOC_ERR;
+     }
+
+     id = FOC_CLAMP(id, -max_current, max_current);
+     iq = FOC_CLAMP(iq, -max_current, max_current);
+
+     FOC_HAL_EnterCritical();
+
+     s_foc_ctrl_source = FOC_CTRL_SOURCE_CURRENT;
+     s_ctx.speed_ref = 0.0f;
+     s_ctx.speed_ref_ctrl = 0.0f;
+     s_speed_ref_ctrl = 0.0f;
+     s_speed_ref_ctrl_direction = (iq < 0.0f) ? FOC_DIR_CCW : FOC_DIR_CW;
+     g_foc_speed_ref_cmd_rpm = 0;
+     g_foc_speed_ref_ctrl_rpm = 0;
+     g_foc_speed_ref_ramp_active = 0U;
+
+     g_foc_dyn_speed_enable = 0U;
+     g_foc_bidir_speed_enable = 0U;
+     s_dyn_speed_prev_enable = 0U;
+     s_bidir_speed_prev_enable = 0U;
+     g_foc_dyn_speed_reset_stats = 0U;
+     g_foc_bidir_speed_reset_stats = 0U;
+
+     FOC_PID_Reset(&s_ctx.pid_speed);
+     s_speed_loop_accum_us = 0U;
+     s_ctx.speed_loop_counter = 0U;
+     s_ctx.speed_ctrl_fdb = 0.0f;
+     g_foc_speed_ctrl_fdb_rpm = 0;
+     g_foc_speed_error_boost_mA = 0;
+     s_speed_error_boost_prev_ref = 0.0f;
+
+     s_ctx.id_ref = id;
+     if (iq < 0.0f) {
+         s_ctx.direction = FOC_DIR_CCW;
+         s_ctx.iq_ref = -iq;
+     } else {
+         s_ctx.direction = FOC_DIR_CW;
+         s_ctx.iq_ref = iq;
+     }
+
+     FOC_HAL_ExitCritical();
+
+     return FOC_OK;
+
+}
  int FOC_Core_SetDirection(FOC_Dir_e dir)
 
  {

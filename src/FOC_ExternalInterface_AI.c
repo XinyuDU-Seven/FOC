@@ -1,6 +1,8 @@
 
 #include "FOC_ExternalInterface.h"
 
+#include <string.h>
+
 #include "foc_api.h"
 #include "foc_core.h"
 #include "foc_hal_if.h"
@@ -369,6 +371,113 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 }
 #endif
 
+#define FOC_APP_MOTOR_ID       0U
+#define FOC_APP_POLE_PAIRS     4U
+#define FOC_APP_DIR_NONE       0U
+#define FOC_APP_DIR_FORWARD    1U
+#define FOC_APP_DIR_REVERSE    2U
+#define FOC_APP_MODE_SPEED     1U
+#define FOC_APP_MODE_CURRENT   3U
+
+static FocError FOC_AI_CheckMotorId(uint8_t unId)
+{
+  return (unId == FOC_APP_MOTOR_ID) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
+}
+
+static FocError FOC_AI_MapResult(int result)
+{
+  if (result == FOC_OK) {
+    return FOC_SUCCESS;
+  }
+  if (result == FOC_BUSY || result == FOC_FAULT) {
+    return FOC_MOTOR_DISABLED;
+  }
+  return FOC_INPUT_PARAMETER_INVALID;
+}
+
+static FocError FOC_AI_MapFault(FOC_Fault_e fault)
+{
+  if (fault == FOC_FAULT_NONE) {
+    return FOC_SUCCESS;
+  }
+  if ((fault & FOC_FAULT_STALL) != 0U) {
+    return FOC_MOTOR_STUCKED;
+  }
+  if ((fault & FOC_FAULT_HALL) != 0U) {
+    return FOC_HALL_STATES_INVALID;
+  }
+  if ((fault & FOC_FAULT_OVERCURRENT) != 0U) {
+    return FOC_PHASE_ABC_SQRT_CURRENT_EXCEED;
+  }
+  if ((fault & FOC_FAULT_OVERVOLTAGE) != 0U) {
+    return FOC_PHASE_VOLTAGE_HIGH_EXCEED;
+  }
+  if ((fault & FOC_FAULT_UNDERVOLTAGE) != 0U) {
+    return FOC_PHASE_VOLTAGE_LOW_EXCEED;
+  }
+  if ((fault & FOC_FAULT_SPEED_DROP) != 0U) {
+    return FOC_MOTOR_STUCKED;
+  }
+  return FOC_INPUT_PARAMETER_INVALID;
+}
+
+static uint8_t FOC_AI_HallRawToU8(const FOC_HallRaw_t *hall_raw)
+{
+  return (uint8_t)((hall_raw->h1 << 2) | (hall_raw->h2 << 1) | hall_raw->h3);
+}
+
+static uint16_t FOC_AI_DirectionToApp(FOC_Dir_e direction)
+{
+  return (direction == FOC_DIR_CCW) ? FOC_APP_DIR_REVERSE : FOC_APP_DIR_FORWARD;
+}
+
+static float FOC_AI_SignedIqRef(const FOC_Context_t *ctx)
+{
+  return (ctx->direction == FOC_DIR_CCW) ? -ctx->iq_ref : ctx->iq_ref;
+}
+
+static FocError FOC_AI_MakeSignedTarget(uint16_t direction,
+                                        float magnitude,
+                                        float *target)
+{
+  if (target == NULL) {
+    return FOC_POINTER_NULL;
+  }
+  if (magnitude == 0.0f) {
+    *target = 0.0f;
+    return FOC_SUCCESS;
+  }
+  if (direction == FOC_APP_DIR_FORWARD) {
+    *target = magnitude;
+    return FOC_SUCCESS;
+  }
+  if (direction == FOC_APP_DIR_REVERSE) {
+    *target = -magnitude;
+    return FOC_SUCCESS;
+  }
+  return FOC_INVALID_DIRECITON;
+}
+
+static void FOC_AI_ClearAutoModes(void)
+{
+  speed_ref = -1.0f;
+  g_foc_dyn_speed_enable = 0U;
+  g_foc_dyn_speed_reverse = 0U;
+  g_foc_dyn_speed_reset_stats = 0U;
+  g_foc_bidir_speed_enable = 0U;
+  g_foc_bidir_speed_step_enable = 0U;
+  g_foc_bidir_speed_reset_stats = 0U;
+}
+void Foc_AlgorithmControlCallback_AI(void);
+void Foc_Init_AI(void);
+FocError Foc_EnableFocControl_AI(uint8_t unId);
+FocError Foc_DisableFocControl_AI(uint8_t unId);
+FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq);
+FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t unParam1, uint16_t unParam2,
+                                          uint16_t unParam3, uint16_t unParam4, uint16_t unParam5);
+FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed);
+FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFullStates);
+FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum);
 static void FOC_TestCase_Service(void);
 
 /*******************************************************************************************
@@ -411,60 +520,39 @@ void Foc_AlgorithmControlCallback_AI(void){
 
  *******************************************************************************************/
 
-void Foc_Init_AI(void){
-
+void Foc_Init_AI(void)
+{
   FOC_Config_t config;
 
-  memset(&config,0,sizeof(FOC_Config_t));
+  memset(&config, 0, sizeof(FOC_Config_t));
 
-  config.motor.pole_pairs = 4;
-
-  config.motor.rs = 0.65;
-
-  config.motor.ls_d = 0.00007;
-
-  config.motor.ls_q = 0.00007;
-
-  config.motor.v_bus = 12;
-
-  config.motor.max_speed_rpm = 4000;
-
-  config.motor.max_current_a = 5;
+  config.motor.pole_pairs = FOC_APP_POLE_PAIRS;
+  config.motor.rs = 0.65f;
+  config.motor.ls_d = 0.00007f;
+  config.motor.ls_q = 0.00007f;
+  config.motor.v_bus = 12.0f;
+  config.motor.max_speed_rpm = 4000.0f;
+  config.motor.max_current_a = 5.0f;
 
   config.current_d_pid.kp = 0.25f;
-
   config.current_d_pid.ki = 60.0f;
-
-  config.current_d_pid.kd = 0;
-
-  config.current_d_pid.out_max = 10;
-
-  config.current_d_pid.out_min = -10;
+  config.current_d_pid.kd = 0.0f;
+  config.current_d_pid.out_max = 10.0f;
+  config.current_d_pid.out_min = -10.0f;
 
   config.current_q_pid.kp = 0.25f;
-
   config.current_q_pid.ki = 60.0f;
-
-  config.current_q_pid.kd = 0;
-
-  config.current_q_pid.out_max = 10;
-
-  config.current_q_pid.out_min = -10;
+  config.current_q_pid.kd = 0.0f;
+  config.current_q_pid.out_max = 10.0f;
+  config.current_q_pid.out_min = -10.0f;
 
   config.speed_pid.kp = 0.0065f;
-
   config.speed_pid.ki = 0.0008f;
-
   config.speed_pid.kd = 0.0f;
-
   config.speed_pid.out_max = config.motor.max_current_a;
-
   config.speed_pid.out_min = -config.motor.max_current_a;
 
-  FOC_Init(&config);
-
-  FOC_Start();
-
+  (void)FOC_Init(&config);
 }
 
  
@@ -483,14 +571,24 @@ void Foc_Init_AI(void){
 
  *******************************************************************************************/
 
-FocError Foc_EnableFocControl_AI(uint8_t unId){
+FocError Foc_EnableFocControl_AI(uint8_t unId)
+{
+  const FOC_Context_t *ctx;
+  FocError err = FOC_AI_CheckMotorId(unId);
 
-    (void)unId;
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
 
-    FOC_Start();
+  ctx = FOC_Core_GetContext();
+  if (ctx->state == FOC_STATE_RUNNING) {
+    return FOC_SUCCESS;
+  }
+  if (ctx->state == FOC_STATE_FAULT) {
+    return FOC_AI_MapFault(ctx->fault);
+  }
 
-    return 0;
-
+  return FOC_AI_MapResult(FOC_Start());
 }
 
  
@@ -509,14 +607,16 @@ FocError Foc_EnableFocControl_AI(uint8_t unId){
 
  *******************************************************************************************/
 
-FocError Foc_DisableFocControl_AI(uint8_t unId){
+FocError Foc_DisableFocControl_AI(uint8_t unId)
+{
+  FocError err = FOC_AI_CheckMotorId(unId);
 
-    (void)unId;
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
 
-    FOC_Stop();
-
-    return 0;
-
+  FOC_AI_ClearAutoModes();
+  return FOC_AI_MapResult(FOC_Stop());
 }
 
 /*******************************************************************************************
@@ -537,16 +637,16 @@ FocError Foc_DisableFocControl_AI(uint8_t unId){
 
  *******************************************************************************************/
 
-FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq){
+FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq)
+{
+  FocError err = FOC_AI_CheckMotorId(unId);
 
-    (void)unId;
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
 
-    (void)fId;
-
-    (void)fIq;
-
-    return 0;
-
+  FOC_AI_ClearAutoModes();
+  return FOC_AI_MapResult(FOC_SetCurrentRef(fId, fIq));
 }
 
  
@@ -560,27 +660,36 @@ FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq){
    *******************************************************************************************/
 
 FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t unParam1, uint16_t unParam2,
-
                                        uint16_t unParam3, uint16_t unParam4, uint16_t unParam5)
-
 {
+  float target;
+  FocError err;
 
-    (void)unId;
+  (void)unParam2;
+  (void)unParam3;
 
-    (void)unMode;
+  err = FOC_AI_CheckMotorId(unId);
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
 
-    (void)unParam1;
+  if (unMode == FOC_APP_MODE_SPEED) {
+    err = FOC_AI_MakeSignedTarget(unParam1, (float)unParam4, &target);
+    if (err != FOC_SUCCESS) {
+      return err;
+    }
+    return Foc_SetSpeedReference_AI(unId, target);
+  }
 
-    (void)unParam2;
+  if (unMode == FOC_APP_MODE_CURRENT) {
+    err = FOC_AI_MakeSignedTarget(unParam1, (float)unParam5 * 0.001f, &target);
+    if (err != FOC_SUCCESS) {
+      return err;
+    }
+    return Foc_SetCurrentReference_AI(unId, 0.0f, target);
+  }
 
-    (void)unParam3;
-
-    (void)unParam4;
-
-    (void)unParam5;
-
-    return 0;
-
+  return FOC_INPUT_PARAMETER_INVALID;
 }
 
  
@@ -601,16 +710,16 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
 
  *******************************************************************************************/
 
-FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed){
+FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed)
+{
+  FocError err = FOC_AI_CheckMotorId(unId);
 
-    (void)unId;
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
 
-    g_foc_bidir_speed_enable = 0U;
-
-    FOC_SetSpeedRef(fSpeed);
-
-    return 0;
-
+  FOC_AI_ClearAutoModes();
+  return FOC_AI_MapResult(FOC_SetSpeedRef(fSpeed));
 }
 
  
@@ -631,14 +740,46 @@ FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed){
 
  *******************************************************************************************/
 
-FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFullStates){
+FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFullStates)
+{
+  const FOC_Context_t *ctx;
+  FocError err;
 
-    (void)unId;
+  if (pstMotorFullStates == NULL) {
+    return FOC_POINTER_NULL;
+  }
 
-    (void)pstMotorFullStates;
+  err = FOC_AI_CheckMotorId(unId);
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
 
-    return 0;
+  ctx = FOC_Core_GetContext();
+  memset(pstMotorFullStates, 0, sizeof(*pstMotorFullStates));
 
+  pstMotorFullStates->unId = unId;
+  pstMotorFullStates->unHallState = FOC_AI_HallRawToU8(&ctx->hall_raw);
+  pstMotorFullStates->fSpeedMechEstimate = ctx->speed_fdb;
+  pstMotorFullStates->fSpeedMechEstimateFiltered = ctx->speed_filtered;
+  pstMotorFullStates->fThetaElec = ctx->theta_e;
+  pstMotorFullStates->fId = ctx->i_dq.d;
+  pstMotorFullStates->fIq = ctx->i_dq.q;
+  pstMotorFullStates->fIqRef = FOC_AI_SignedIqRef(ctx);
+  pstMotorFullStates->fIa = ctx->i_abc.ia;
+  pstMotorFullStates->fIb = ctx->i_abc.ib;
+  pstMotorFullStates->fIc = ctx->i_abc.ic;
+  pstMotorFullStates->fUd = ctx->v_dq.d;
+  pstMotorFullStates->fUq = ctx->v_dq.q;
+  pstMotorFullStates->unNumberPoles = FOC_APP_POLE_PAIRS;
+  pstMotorFullStates->unUpdateTime = (ctx->hall_sector_timestamp_us != 0U)
+      ? ctx->hall_sector_timestamp_us
+      : FOC_HAL_GetTimestampUs();
+  pstMotorFullStates->enFocState = FOC_AI_MapFault(ctx->fault);
+  pstMotorFullStates->unHeadIndexHall = -1;
+  pstMotorFullStates->unHeadIndexAppHall = -1;
+  pstMotorFullStates->unDirection = FOC_AI_DirectionToApp(ctx->direction);
+
+  return FOC_SUCCESS;
 }
 
  
@@ -663,14 +804,18 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
 
  *******************************************************************************************/
 
-FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum){
+FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum)
+{
+  (void)unCarConfigID;
+  (void)unSeatID;
+  (void)unMotorID;
 
-    (void)unCarConfigID;
+  if (punMotorNum == NULL) {
+    return FOC_POINTER_NULL;
+  }
 
-    (void)unSeatID;
-
-    return 0;
-
+  *punMotorNum = FOC_APP_MOTOR_ID;
+  return FOC_SUCCESS;
 }
 
  
@@ -798,11 +943,49 @@ void Foc_TestCase(void)
   s_foc_test_case_last_select = gunCtrl;
   FOC_TestCase_Apply(gunCtrl);
 }
+void Foc_AlgorithmControlCallback(void)
+{
+  Foc_AlgorithmControlCallback_AI();
+}
 
- 
+void Foc_Init(void)
+{
+  Foc_Init_AI();
+}
 
- 
+FocError Foc_EnableFocControl(uint8_t unId)
+{
+  return Foc_EnableFocControl_AI(unId);
+}
 
- 
+FocError Foc_DisableFocControl(uint8_t unId)
+{
+  return Foc_DisableFocControl_AI(unId);
+}
 
+FocError Foc_SetCurrentReference(uint8_t unId, float fId, float fIq)
+{
+  return Foc_SetCurrentReference_AI(unId, fId, fIq);
+}
 
+FocError Foc_SetHybridControlReference(uint8_t unId, uint8_t unMode, uint16_t unParam1, uint16_t unParam2,
+                                       uint16_t unParam3, uint16_t unParam4, uint16_t unParam5)
+{
+  return Foc_SetHybridControlReference_AI(unId, unMode, unParam1, unParam2,
+                                          unParam3, unParam4, unParam5);
+}
+
+FocError Foc_SetSpeedReference(uint8_t unId, float fSpeed)
+{
+  return Foc_SetSpeedReference_AI(unId, fSpeed);
+}
+
+FocError Foc_GetMotorFullParameters(uint8_t unId, MotorFullStates *pstMotorFullStates)
+{
+  return Foc_GetMotorFullParameters_AI(unId, pstMotorFullStates);
+}
+
+FocError Foc_GetMotorNum(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum)
+{
+  return Foc_GetMotorNum_AI(unCarConfigID, unSeatID, unMotorID, punMotorNum);
+}

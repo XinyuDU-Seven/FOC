@@ -68,6 +68,14 @@ int  FOC_Stop(void);
 int  FOC_SetSpeedRef(float rpm);
 
 /**
+ * @brief Set direct d/q current references.
+ * @param id d-axis current reference (A)
+ * @param iq q-axis current reference (A), positive forward, negative reverse
+ * @return FOC_OK on success
+ */
+int  FOC_SetCurrentRef(float id, float iq);
+
+/**
  * @brief 设定旋转方向
  * @param dir 旋转方向 (FOC_DIR_CW / FOC_DIR_CCW)
  * @return FOC_OK 成功
