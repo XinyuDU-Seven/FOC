@@ -115,6 +115,10 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_speed_limit_rpm
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_no_edge_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_resync_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_resync_diff_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_ref_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_predict_speed_rpm = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_release_rpm =
+    (uint16_t)FOC_STARTUP_PREDICT_RELEASE_RPM;
 
 static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
 {
@@ -644,11 +648,21 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      float omega_e = 0.0f;
      uint32_t no_edge_elapsed_us = 0U;
      float no_edge_limit_rpm = 0.0f;
+     float startup_release_rpm = (float)g_foc_observer_startup_release_rpm;
      FOC_Dir_e hall_dir;
+     uint8_t use_startup_ref_predict;
      uint8_t no_edge_overdue = FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
                                                                &no_edge_elapsed_us,
                                                                &no_edge_limit_rpm);
      hall_dir = FOC_Observer_GetHallMotionDir(ctx);
+     if (startup_release_rpm < FOC_STARTUP_PREDICT_START_RPM) {
+         startup_release_rpm = FOC_STARTUP_PREDICT_START_RPM;
+     }
+     use_startup_ref_predict =
+         ((ctx->hall_sector_dt_us == 0U) ||
+          (FOC_FABS(ctx->speed_filtered) < startup_release_rpm))
+         ? 1U : 0U;
+     g_foc_observer_startup_ref_active = 0U;
 
      if (s_predict_direction != hall_dir) {
          s_predict_direction = hall_dir;
@@ -674,11 +688,18 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      }
      /* Always extrapolate by the real control interval first. */
      if ((no_edge_overdue == 0U) &&
+         (use_startup_ref_predict != 0U) &&
          (ctx->speed_ref > 0.0f) &&
          (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
-         float startup_target = ctx->speed_ref;
+         float startup_target = ctx->speed_ref_ctrl;
          float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
 
+         if (startup_target < FOC_STARTUP_PREDICT_START_RPM) {
+             startup_target = FOC_STARTUP_PREDICT_START_RPM;
+         }
+         if (startup_target > ctx->speed_ref) {
+             startup_target = ctx->speed_ref;
+         }
          if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {
              startup_target = FOC_STARTUP_PREDICT_MAX_RPM;
          }
@@ -694,9 +715,12 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
              s_startup_predict_speed_rpm = startup_target;
          }
          speed_for_predict = s_startup_predict_speed_rpm;
+         g_foc_observer_startup_ref_active = 1U;
      } else {
          s_startup_predict_speed_rpm = speed_for_predict;
      }
+     g_foc_observer_predict_speed_rpm =
+         (uint16_t)((speed_for_predict > 65535.0f) ? 65535U : speed_for_predict);
 
      if (speed_for_predict > 0.0f) {
          omega_e = speed_for_predict * (FOC_2PI / 60.0f) * (float)pole_pairs;

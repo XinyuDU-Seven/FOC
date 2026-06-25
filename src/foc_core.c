@@ -243,6 +243,15 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_ctrl_rpm = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_ref_ramp_active = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_smooth_enable =
+    FOC_LOW_SPEED_SMOOTH_ENABLE;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_smooth_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_smooth_max_rpm =
+    (uint16_t)FOC_LOW_SPEED_SMOOTH_MAX_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_ctrl_alpha_milli =
+    (uint16_t)(FOC_LOW_SPEED_CTRL_FILTER_ALPHA * 1000.0f);
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_overspeed_deadband_rpm =
+    (uint16_t)FOC_LOW_SPEED_OVERSPEED_DEADBAND_RPM;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_enable = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_min_rpm = 600U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_max_rpm = 1100U;
@@ -1195,6 +1204,22 @@ static void FOC_CheckSpeedDropFault(void)
 static void FOC_UpdateSpeedControlFeedback(void)
 {
     float alpha = FOC_SPEED_CTRL_FILTER_ALPHA;
+    float ref_abs = FOC_FABS(s_speed_ref_ctrl);
+    float smooth_max = (float)g_foc_low_speed_smooth_max_rpm;
+    float overspeed_deadband = 0.0f;
+
+    g_foc_low_speed_smooth_active = 0U;
+    if ((g_foc_low_speed_smooth_enable != 0U) &&
+        (ref_abs >= 1.0f) &&
+        (smooth_max >= 1.0f) &&
+        (ref_abs <= smooth_max)) {
+        alpha = (float)g_foc_low_speed_ctrl_alpha_milli * 0.001f;
+        overspeed_deadband =
+            (float)g_foc_low_speed_overspeed_deadband_rpm;
+        g_foc_low_speed_smooth_active = 1U;
+    }
+
+    alpha = FOC_CLAMP(alpha, 0.0f, 1.0f);
 
     if ((FOC_FABS(s_speed_ref_ctrl) < 1.0f) &&
         (FOC_FABS(s_ctx.speed_fdb) < 1.0f)) {
@@ -1202,7 +1227,7 @@ static void FOC_UpdateSpeedControlFeedback(void)
     } else if ((FOC_FABS(s_ctx.speed_ctrl_fdb) < 1.0f) &&
                (FOC_FABS(s_ctx.speed_fdb) >= 1.0f)) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
-    } else if (s_ctx.speed_fdb > s_speed_ref_ctrl) {
+    } else if (s_ctx.speed_fdb > (s_speed_ref_ctrl + overspeed_deadband)) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if ((g_foc_observer_no_edge_active != 0U) &&
                (s_ctx.speed_fdb < s_ctx.speed_ctrl_fdb)) {
@@ -2403,6 +2428,8 @@ static void FOC_Prof_Reset(void)
          return;
      }
 
+     FOC_UpdateSpeedRefRamp(control_period_us);
+
      float theta_e_ctrl = FOC_Observer_PredictAngle(&s_ctx, observer_dt,
 
                                                      s_config.motor.pole_pairs);
@@ -2412,7 +2439,6 @@ static void FOC_Prof_Reset(void)
      s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
 
                                                observer_dt, s_config.motor.pole_pairs);
-     FOC_UpdateSpeedRefRamp(control_period_us);
      FOC_UpdateSpeedControlFeedback();
 
      if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
