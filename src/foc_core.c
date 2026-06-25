@@ -269,6 +269,17 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_full_rpm =
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_err_rpm =
     FOC_LOW_SPEED_TORQUE_ERR_RPM;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_torque_applied_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_iq_slew_enable =
+    FOC_LOW_SPEED_IQ_SLEW_ENABLE;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_iq_slew_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_max_rpm =
+    FOC_LOW_SPEED_IQ_SLEW_MAX_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_up_mA_per_s =
+    FOC_LOW_SPEED_IQ_SLEW_UP_MA_PER_S;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s =
+    FOC_LOW_SPEED_IQ_SLEW_DOWN_MA_PER_S;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_iq_slew_limited_mA = 0;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_low_speed_iq_slew_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_current_ff_enable =
     FOC_LOW_SPEED_CURRENT_FF_ENABLE;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_current_ff_max_rpm =
@@ -619,6 +630,8 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      g_foc_low_speed_torque_active = 0U;
      g_foc_low_speed_torque_applied_mA = 0;
      g_foc_current_q_ff_mV = 0;
+     g_foc_low_speed_iq_slew_active = 0U;
+     g_foc_low_speed_iq_slew_limited_mA = 0;
  }
 
  static float FOC_ApplyBidirTailDriveAssist(float iq_ref,
@@ -833,6 +846,50 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      }
 
      return iq_ref;
+ }
+
+ static float FOC_ApplyLowSpeedIqSlew(float iq_ref,
+                                      float speed_ref_ctrl,
+                                      float speed_dt)
+ {
+     float max_rpm = (float)g_foc_low_speed_iq_slew_max_rpm;
+     float up_rate =
+         (float)g_foc_low_speed_iq_slew_up_mA_per_s * 0.001f;
+     float down_rate =
+         (float)g_foc_low_speed_iq_slew_down_mA_per_s * 0.001f;
+     float prev = s_ctx.iq_ref;
+     float delta = iq_ref - prev;
+     float rate;
+     float max_step;
+
+     g_foc_low_speed_iq_slew_active = 0U;
+     g_foc_low_speed_iq_slew_limited_mA = 0;
+
+     if ((g_foc_low_speed_iq_slew_enable == 0U) ||
+         (max_rpm < 1.0f) ||
+         (FOC_FABS(speed_ref_ctrl) > max_rpm) ||
+         (speed_dt <= 0.0f)) {
+         return iq_ref;
+     }
+
+     rate = (FOC_FABS(iq_ref) > FOC_FABS(prev)) ? up_rate : down_rate;
+     if (rate <= 0.0f) {
+         return iq_ref;
+     }
+
+     max_step = rate * speed_dt;
+     if (FOC_FABS(delta) <= max_step) {
+         return iq_ref;
+     }
+
+     g_foc_low_speed_iq_slew_active = 1U;
+     g_foc_low_speed_iq_slew_limited_mA =
+         FOC_Log_ToI16(FOC_FABS(delta) - max_step, 1000.0f);
+     if (g_foc_low_speed_iq_slew_count < 0xFFFFFFFFU) {
+         g_foc_low_speed_iq_slew_count++;
+     }
+
+     return (delta > 0.0f) ? (prev + max_step) : (prev - max_step);
  }
 
  static float FOC_ApplyLowSpeedCurrentFeedForward(float vq)
@@ -3318,6 +3375,9 @@ static void FOC_Prof_Reset(void)
              speed_iq_ref = FOC_ApplyBidirTailDriveAssist(speed_iq_ref,
                                                           speed_ref_ctrl,
                                                           speed_error);
+             speed_iq_ref = FOC_ApplyLowSpeedIqSlew(speed_iq_ref,
+                                                    speed_ref_ctrl,
+                                                    speed_dt);
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
                                       s_ctx.pid_speed.out_min,
@@ -3343,6 +3403,8 @@ static void FOC_Prof_Reset(void)
          s_speed_error_boost_prev_ref = 0.0f;
          g_foc_low_speed_torque_active = 0U;
          g_foc_low_speed_torque_applied_mA = 0;
+         g_foc_low_speed_iq_slew_active = 0U;
+         g_foc_low_speed_iq_slew_limited_mA = 0;
          g_foc_current_q_ff_mV = 0;
      }
 
