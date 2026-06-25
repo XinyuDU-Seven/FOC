@@ -347,6 +347,18 @@ extern "C" {
 #define FOC_LOW_SPEED_TORQUE_ERR_RPM    35U
 #endif
 
+#ifndef FOC_LOW_SPEED_CURRENT_FF_ENABLE
+#define FOC_LOW_SPEED_CURRENT_FF_ENABLE 1U
+#endif
+
+#ifndef FOC_LOW_SPEED_CURRENT_FF_MAX_RPM
+#define FOC_LOW_SPEED_CURRENT_FF_MAX_RPM 650U
+#endif
+
+#ifndef FOC_CURRENT_Q_RS_FF_GAIN_MILLI
+#define FOC_CURRENT_Q_RS_FF_GAIN_MILLI  1000
+#endif
+
  
 
 /** 角度预测软同步系数 (0~1)：扇区跳变时预测角度向扇区中心角度靠拢的比例，
@@ -458,6 +470,12 @@ extern "C" {
 #ifndef FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD
 
 #define FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD  (-600)
+
+#endif
+
+#ifndef FOC_CW_CONTROL_ANGLE_OFFSET_MRAD
+
+#define FOC_CW_CONTROL_ANGLE_OFFSET_MRAD   0
 
 #endif
 

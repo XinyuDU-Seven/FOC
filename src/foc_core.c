@@ -231,6 +231,8 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_min_time_last_min_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_prev_sector = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_current_angle_trim_mrad = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_cw_angle_offset_mrad =
+    FOC_CW_CONTROL_ANGLE_OFFSET_MRAD;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_angle_offset_mrad =
     FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_control_angle_offset_mrad = 0;
@@ -262,6 +264,13 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_torque_min_iq_mA =
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_err_rpm =
     FOC_LOW_SPEED_TORQUE_ERR_RPM;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_torque_applied_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_current_ff_enable =
+    FOC_LOW_SPEED_CURRENT_FF_ENABLE;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_current_ff_max_rpm =
+    FOC_LOW_SPEED_CURRENT_FF_MAX_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_current_q_rs_ff_gain_milli =
+    FOC_CURRENT_Q_RS_FF_GAIN_MILLI;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_current_q_ff_mV = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_enable = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_min_rpm = 600U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_max_rpm = 1100U;
@@ -681,6 +690,31 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      }
 
      return iq_ref;
+ }
+
+ static float FOC_ApplyLowSpeedCurrentFeedForward(float vq)
+ {
+     float ref_abs = FOC_FABS(s_ctx.speed_ref_ctrl);
+     float max_rpm = (float)g_foc_low_speed_current_ff_max_rpm;
+     float gain = (float)g_foc_current_q_rs_ff_gain_milli * 0.001f;
+     float ff_v = 0.0f;
+
+     g_foc_current_q_ff_mV = 0;
+
+     if ((g_foc_low_speed_current_ff_enable == 0U) ||
+         (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED) ||
+         (max_rpm < 1.0f) ||
+         (ref_abs > max_rpm) ||
+         (gain <= 0.0f)) {
+         return vq;
+     }
+
+     ff_v = s_config.motor.rs * FOC_ControlIqRef() * gain;
+     g_foc_current_q_ff_mV = FOC_Log_ToI16(ff_v, 1000.0f);
+
+     return FOC_CLAMP(vq + ff_v,
+                      s_ctx.pid_iq.out_min,
+                      s_ctx.pid_iq.out_max);
  }
 
 static uint8_t FOC_DynSpeed_Near(float a, float b)
@@ -1116,6 +1150,8 @@ static void FOC_DynSpeed_ServiceMetrics(void)
 
      if (s_ctx.direction == FOC_DIR_CCW) {
          offset_rad += (float)g_foc_ccw_angle_offset_mrad * 0.001f;
+     } else {
+         offset_rad += (float)g_foc_cw_angle_offset_mrad * 0.001f;
      }
 
 #if FOC_CURRENT_ANGLE_TRIM_ENABLE
@@ -2611,6 +2647,7 @@ static void FOC_Prof_Reset(void)
          s_speed_error_boost_prev_ref = 0.0f;
          g_foc_low_speed_torque_active = 0U;
          g_foc_low_speed_torque_applied_mA = 0;
+         g_foc_current_q_ff_mV = 0;
      }
 
      s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
@@ -2624,6 +2661,7 @@ static void FOC_Prof_Reset(void)
                                      FOC_ControlIqRef() - s_ctx.i_dq.q,
 
                                      pid_dt, pid_inv_dt);
+     s_ctx.v_dq.q = FOC_ApplyLowSpeedCurrentFeedForward(s_ctx.v_dq.q);
 
  
 
