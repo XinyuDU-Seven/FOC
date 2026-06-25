@@ -264,6 +264,8 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_max_rpm =
     FOC_LOW_SPEED_TORQUE_MAX_RPM;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_torque_min_iq_mA =
     FOC_LOW_SPEED_TORQUE_MIN_IQ_MA;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_full_rpm =
+    FOC_LOW_SPEED_TORQUE_FULL_RPM;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_err_rpm =
     FOC_LOW_SPEED_TORQUE_ERR_RPM;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_torque_applied_mA = 0;
@@ -795,7 +797,10 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
  {
      float min_iq = (float)g_foc_low_speed_torque_min_iq_mA * 0.001f;
      float max_rpm = (float)g_foc_low_speed_torque_max_rpm;
+     float full_rpm = (float)g_foc_low_speed_torque_full_rpm;
      float err_rpm = (float)g_foc_low_speed_torque_err_rpm;
+     float speed_scale;
+     float err_scale;
 
      g_foc_low_speed_torque_active = 0U;
      g_foc_low_speed_torque_applied_mA = 0;
@@ -809,6 +814,16 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
          (iq_ref < 0.0f)) {
          return iq_ref;
      }
+
+     if (full_rpm < 1.0f) {
+         full_rpm = max_rpm;
+     }
+     if (err_rpm < 1.0f) {
+         err_rpm = 1.0f;
+     }
+     speed_scale = FOC_CLAMP(speed_ref_ctrl / full_rpm, 0.0f, 1.0f);
+     err_scale = FOC_CLAMP((speed_error - err_rpm) / err_rpm, 0.0f, 1.0f);
+     min_iq *= speed_scale * err_scale;
 
      if (iq_ref < min_iq) {
          g_foc_low_speed_torque_active = 1U;
