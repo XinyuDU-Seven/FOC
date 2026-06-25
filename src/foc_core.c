@@ -390,6 +390,9 @@ extern volatile uint8_t  g_foc_bidir_zero_tail_active;
 extern volatile uint16_t g_foc_bidir_zero_tail_fdb_drop_rpm;
 extern volatile uint16_t g_foc_bidir_zero_tail_fdb_lead_rpm;
 extern volatile uint32_t g_foc_bidir_zero_tail_fdb_catch_count;
+extern volatile uint16_t g_foc_bidir_zero_tail_min_drive_mA;
+extern volatile uint16_t g_foc_bidir_zero_tail_drive_deadband_rpm;
+extern volatile uint32_t g_foc_bidir_zero_tail_drive_assist_count;
 extern volatile uint8_t  g_foc_bidir_zero_cross_state;
 extern volatile uint32_t g_foc_bidir_zero_cross_count;
 extern volatile uint16_t g_foc_bidir_zero_cross_elapsed_ms;
@@ -614,6 +617,35 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      g_foc_low_speed_torque_active = 0U;
      g_foc_low_speed_torque_applied_mA = 0;
      g_foc_current_q_ff_mV = 0;
+ }
+
+ static float FOC_ApplyBidirTailDriveAssist(float iq_ref,
+                                            float speed_ref_ctrl,
+                                            float speed_error)
+ {
+     float min_drive =
+         (float)g_foc_bidir_zero_tail_min_drive_mA * 0.001f;
+     float deadband =
+         (float)g_foc_bidir_zero_tail_drive_deadband_rpm;
+     float zero_speed = (float)g_foc_bidir_zero_speed_rpm;
+
+     if ((g_foc_bidir_speed_enable == 0U) ||
+         (g_foc_bidir_zero_tail_active == 0U) ||
+         (g_foc_bidir_zero_cross_state == FOC_BIDIR_ZERO_STATE_HOLD) ||
+         (min_drive <= 0.0f) ||
+         (speed_ref_ctrl <= zero_speed) ||
+         (speed_error < -deadband)) {
+         return iq_ref;
+     }
+
+     if (iq_ref < min_drive) {
+         if (g_foc_bidir_zero_tail_drive_assist_count < 0xFFFFFFFFU) {
+             g_foc_bidir_zero_tail_drive_assist_count++;
+         }
+         return min_drive;
+     }
+
+     return iq_ref;
  }
  static void FOC_NormalizeSignedSpeedRef(void)
  {
@@ -1139,6 +1171,7 @@ static void FOC_BidirSpeed_ResetZeroCross(void)
     g_foc_bidir_zero_approach_active = 0U;
     g_foc_bidir_zero_tail_active = 0U;
     g_foc_bidir_zero_tail_fdb_catch_count = 0U;
+    g_foc_bidir_zero_tail_drive_assist_count = 0U;
     g_foc_bidir_zero_ref_rpm = 0;
 }
 
@@ -3227,6 +3260,9 @@ static void FOC_Prof_Reset(void)
              speed_iq_ref = FOC_ApplyLowSpeedTorqueAssist(speed_iq_ref,
                                                            speed_ref_ctrl,
                                                            speed_error);
+             speed_iq_ref = FOC_ApplyBidirTailDriveAssist(speed_iq_ref,
+                                                          speed_ref_ctrl,
+                                                          speed_error);
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
                                       s_ctx.pid_speed.out_min,
