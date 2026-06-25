@@ -295,6 +295,14 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_decel_hold_err_rpm =
 FOC_DEBUG_ROOT volatile int16_t  g_foc_bidir_decel_hold_raw_err_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_bidir_decel_hold_applied_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_bidir_decel_hold_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_soft_enable =
+    FOC_BIDIR_ZERO_SOFT_ENABLE;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_soft_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_soft_start_rpm =
+    FOC_BIDIR_ZERO_SOFT_START_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_soft_scale_percent = 100U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_bidir_zero_soft_limited_mA = 0;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_bidir_zero_soft_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_current_ff_enable =
     FOC_LOW_SPEED_CURRENT_FF_ENABLE;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_current_ff_max_rpm =
@@ -452,6 +460,7 @@ static FOC_Dir_e s_speed_ref_ctrl_direction_store[FOC_CORE_MOTOR_COUNT] = {
 };
 static float s_speed_error_boost_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static float s_bidir_decel_hold_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+static float s_bidir_zero_soft_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static float s_current_angle_trim_rad_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 
@@ -470,6 +479,7 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_speed_ref_ctrl_direction       (s_speed_ref_ctrl_direction_store[s_foc_core_active_motor])
 #define s_speed_error_boost_prev_ref     (s_speed_error_boost_prev_ref_store[s_foc_core_active_motor])
 #define s_bidir_decel_hold_prev_ref      (s_bidir_decel_hold_prev_ref_store[s_foc_core_active_motor])
+#define s_bidir_zero_soft_prev_ref       (s_bidir_zero_soft_prev_ref_store[s_foc_core_active_motor])
 #define s_current_angle_trim_rad         (s_current_angle_trim_rad_store[s_foc_core_active_motor])
 #define s_hall_event_seq_seen            (s_hall_event_seq_seen_store[s_foc_core_active_motor])
 static uint8_t s_dyn_speed_prev_enable = 0U;
@@ -653,6 +663,10 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      g_foc_bidir_decel_hold_applied_mA = 0;
      g_foc_bidir_decel_hold_raw_err_rpm = 0;
      s_bidir_decel_hold_prev_ref = 0.0f;
+     g_foc_bidir_zero_soft_active = 0U;
+     g_foc_bidir_zero_soft_scale_percent = 100U;
+     g_foc_bidir_zero_soft_limited_mA = 0;
+     s_bidir_zero_soft_prev_ref = 0.0f;
  }
 
 static float FOC_ApplyBidirTailDriveAssist(float iq_ref,
@@ -751,6 +765,48 @@ static float FOC_ApplyBidirDecelHoldAssist(float iq_ref,
      }
 
      return iq_ref;
+}
+
+static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
+                                           float speed_ref_ctrl)
+{
+    float prev_ref = s_bidir_zero_soft_prev_ref;
+    float start_rpm = (float)g_foc_bidir_zero_soft_start_rpm;
+    float ref_scale;
+    float limited_iq;
+    uint8_t ref_decreasing =
+        ((prev_ref - speed_ref_ctrl) > 0.5f) ? 1U : 0U;
+
+    g_foc_bidir_zero_soft_active = 0U;
+    g_foc_bidir_zero_soft_scale_percent = 100U;
+    g_foc_bidir_zero_soft_limited_mA = 0;
+    s_bidir_zero_soft_prev_ref = speed_ref_ctrl;
+
+    if ((g_foc_bidir_zero_soft_enable == 0U) ||
+        (g_foc_bidir_speed_enable == 0U) ||
+        (g_foc_bidir_speed_step_enable != 2U) ||
+        (ref_decreasing == 0U) ||
+        (start_rpm < 1.0f) ||
+        (speed_ref_ctrl >= start_rpm)) {
+        return iq_ref;
+    }
+
+    ref_scale = FOC_CLAMP(speed_ref_ctrl / start_rpm, 0.0f, 1.0f);
+    ref_scale *= ref_scale;
+    g_foc_bidir_zero_soft_scale_percent =
+        FOC_Log_ToU16(ref_scale, 100.0f);
+
+    limited_iq = iq_ref * ref_scale;
+    if (FOC_FABS(iq_ref - limited_iq) > 0.001f) {
+        g_foc_bidir_zero_soft_active = 1U;
+        g_foc_bidir_zero_soft_limited_mA =
+            FOC_Log_ToI16(FOC_FABS(iq_ref - limited_iq), 1000.0f);
+        if (g_foc_bidir_zero_soft_count < 0xFFFFFFFFU) {
+            g_foc_bidir_zero_soft_count++;
+        }
+    }
+
+    return limited_iq;
 }
 
  static void FOC_NormalizeSignedSpeedRef(void)
@@ -1060,6 +1116,11 @@ static void FOC_DynSpeed_ResetStats(uint32_t now_us)
     g_foc_bidir_decel_hold_raw_err_rpm = 0;
     g_foc_bidir_decel_hold_count = 0U;
     s_bidir_decel_hold_prev_ref = 0.0f;
+    g_foc_bidir_zero_soft_active = 0U;
+    g_foc_bidir_zero_soft_scale_percent = 100U;
+    g_foc_bidir_zero_soft_limited_mA = 0;
+    g_foc_bidir_zero_soft_count = 0U;
+    s_bidir_zero_soft_prev_ref = 0.0f;
     s_dyn_abs_err_avg_rpm = 0.0f;
     s_dyn_speed_start_us = now_us;
     FOC_DynSpeed_ResetLog();
@@ -2990,6 +3051,10 @@ static void FOC_Prof_Reset(void)
      g_foc_bidir_decel_hold_active = 0U;
      g_foc_bidir_decel_hold_applied_mA = 0;
      g_foc_bidir_decel_hold_raw_err_rpm = 0;
+     s_bidir_zero_soft_prev_ref = 0.0f;
+     g_foc_bidir_zero_soft_active = 0U;
+     g_foc_bidir_zero_soft_scale_percent = 100U;
+     g_foc_bidir_zero_soft_limited_mA = 0;
 
 
 
@@ -3082,6 +3147,10 @@ static void FOC_Prof_Reset(void)
      g_foc_bidir_decel_hold_active = 0U;
      g_foc_bidir_decel_hold_applied_mA = 0;
      g_foc_bidir_decel_hold_raw_err_rpm = 0;
+     s_bidir_zero_soft_prev_ref = 0.0f;
+     g_foc_bidir_zero_soft_active = 0U;
+     g_foc_bidir_zero_soft_scale_percent = 100U;
+     g_foc_bidir_zero_soft_limited_mA = 0;
 
 
 
@@ -3470,6 +3539,8 @@ static void FOC_Prof_Reset(void)
                                                           speed_error);
              speed_iq_ref = FOC_ApplyBidirDecelHoldAssist(speed_iq_ref,
                                                           speed_ref_ctrl);
+             speed_iq_ref = FOC_ApplyBidirZeroSoftLanding(speed_iq_ref,
+                                                          speed_ref_ctrl);
              speed_iq_ref = FOC_ApplyLowSpeedIqSlew(speed_iq_ref,
                                                     speed_ref_ctrl,
                                                     speed_dt);
@@ -3503,6 +3574,9 @@ static void FOC_Prof_Reset(void)
          g_foc_bidir_decel_hold_active = 0U;
          g_foc_bidir_decel_hold_applied_mA = 0;
          g_foc_bidir_decel_hold_raw_err_rpm = 0;
+         g_foc_bidir_zero_soft_active = 0U;
+         g_foc_bidir_zero_soft_scale_percent = 100U;
+         g_foc_bidir_zero_soft_limited_mA = 0;
          g_foc_current_q_ff_mV = 0;
      }
 
@@ -3760,6 +3834,10 @@ static void FOC_Prof_Reset(void)
      g_foc_bidir_decel_hold_active = 0U;
      g_foc_bidir_decel_hold_applied_mA = 0;
      g_foc_bidir_decel_hold_raw_err_rpm = 0;
+     s_bidir_zero_soft_prev_ref = 0.0f;
+     g_foc_bidir_zero_soft_active = 0U;
+     g_foc_bidir_zero_soft_scale_percent = 100U;
+     g_foc_bidir_zero_soft_limited_mA = 0;
 
      s_ctx.id_ref = id;
      if (iq < 0.0f) {
