@@ -1386,10 +1386,39 @@ static void FOC_BidirSpeed_ServiceRef(void)
     elapsed_us = now_us - s_bidir_speed_start_us;
     phase_us = (period_us > 0U) ? (elapsed_us % period_us) : 0U;
     phase = ((float)phase_us / (float)period_us) * FOC_2PI;
-    if (g_foc_bidir_speed_step_enable != 0U) {
+    if (g_foc_bidir_speed_step_enable == 1U) {
         raw_target = (phase_us < (period_us / 2U))
                    ? (float)g_foc_bidir_speed_max_rpm
                    : -(float)g_foc_bidir_speed_max_rpm;
+    } else if (g_foc_bidir_speed_step_enable == 2U) {
+        uint32_t quarter_us = period_us / 4U;
+        uint32_t segment;
+        uint32_t segment_us;
+        float u;
+        float ease;
+
+        if (quarter_us == 0U) {
+            quarter_us = 1U;
+        }
+        segment = phase_us / quarter_us;
+        if (segment > 3U) {
+            segment = 3U;
+        }
+        segment_us = phase_us - (segment * quarter_us);
+        u = (float)segment_us / (float)quarter_us;
+        ease = 0.5f * (1.0f - FOC_FastCos(FOC_PI * u));
+
+        if (segment == 0U) {
+            raw_target = (float)g_foc_bidir_speed_max_rpm * ease;
+        } else if (segment == 1U) {
+            raw_target = (float)g_foc_bidir_speed_max_rpm *
+                         (1.0f - ease);
+        } else if (segment == 2U) {
+            raw_target = -(float)g_foc_bidir_speed_max_rpm * ease;
+        } else {
+            raw_target = -(float)g_foc_bidir_speed_max_rpm *
+                         (1.0f - ease);
+        }
     } else {
         raw_target = (float)g_foc_bidir_speed_max_rpm * FOC_FastSin(phase);
     }
