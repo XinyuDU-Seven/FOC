@@ -288,6 +288,10 @@ extern "C" {
 #define FOC_HALL_NO_EDGE_ANGLE_LIMIT_RAD  ((35.0f / 180.0f) * FOC_PI)
 #endif
 
+#ifndef FOC_HALL_NO_EDGE_ANGLE_CLAMP_STEP_RAD
+#define FOC_HALL_NO_EDGE_ANGLE_CLAMP_STEP_RAD  (FOC_PI / 30.0f)
+#endif
+
  
 
 /** 速度环降采样比：电流环每执行 N 次，速度环执行 1 次 */
@@ -461,6 +465,10 @@ extern "C" {
 
 #define FOC_ANGLE_SYNC_RESYNC_DIFF_RAD   ((2.0f * FOC_PI) / 3.0f)
 
+#endif
+
+#ifndef FOC_ANGLE_SYNC_RESYNC_STEP_MAX_RAD
+#define FOC_ANGLE_SYNC_RESYNC_STEP_MAX_RAD  (FOC_PI / 30.0f)
 #endif
 
 #ifndef FOC_LATE_PERIOD_ANGLE_SYNC_FACTOR
