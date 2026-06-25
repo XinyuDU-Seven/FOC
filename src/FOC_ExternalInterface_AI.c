@@ -84,6 +84,10 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_timeout_ms = 600U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_approach_start_rpm = 900U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_approach_slew_rpm_per_s = 1200U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_zero_approach_brake_limit_mA = 300;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_tail_start_rpm = 500U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_tail_slew_rpm_per_s = 700U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_zero_tail_brake_limit_mA = 150;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_tail_active = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_cross_state = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_zero_cross_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_cross_elapsed_ms = 0U;
@@ -1607,10 +1611,13 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_bidir_zero_speed_rpm = 120U;
     g_foc_bidir_zero_confirm_ms = 50U;
     g_foc_bidir_zero_hold_ms = 120U;
-    g_foc_bidir_zero_timeout_ms = 900U;
+    g_foc_bidir_zero_timeout_ms = 1200U;
     g_foc_bidir_zero_approach_start_rpm = 1000U;
     g_foc_bidir_zero_approach_slew_rpm_per_s = 2000U;
     g_foc_bidir_zero_approach_brake_limit_mA = 300;
+    g_foc_bidir_zero_tail_start_rpm = 500U;
+    g_foc_bidir_zero_tail_slew_rpm_per_s = 700U;
+    g_foc_bidir_zero_tail_brake_limit_mA = 150;
     g_foc_bidir_speed_enable = 1U;
 
     g_foc_bidir_speed_reset_stats = 1U;
