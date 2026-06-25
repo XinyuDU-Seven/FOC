@@ -281,6 +281,8 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_drop_fault_ref_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_drop_fault_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_drop_fault_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_drop_fault_err_last_rpm = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_drop_fault_iq_ref_mA = 0;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_min_iq_ref_mA = 800U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_sector_no_change_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_drop_fault_edge_elapsed_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_direction = 0U;
@@ -1223,6 +1225,7 @@ static void FOC_ResetSpeedDropFaultMonitor(void)
     g_foc_speed_drop_fault_fdb_rpm = 0;
     g_foc_speed_drop_fault_ctrl_fdb_rpm = 0;
     g_foc_speed_drop_fault_err_last_rpm = 0;
+    g_foc_speed_drop_fault_iq_ref_mA = 0;
     g_foc_speed_drop_fault_sector_no_change_count = 0U;
     g_foc_speed_drop_fault_edge_elapsed_us = 0U;
     g_foc_speed_drop_fault_direction = 0U;
@@ -1235,10 +1238,13 @@ static void FOC_CheckSpeedDropFault(void)
     int16_t fdb_rpm;
     int16_t ctrl_fdb_rpm;
     int16_t err_rpm;
+    int16_t iq_ref_mA;
     uint16_t abs_ref;
     uint16_t abs_fdb;
+    uint16_t abs_iq_ref;
     uint16_t count_limit;
     uint8_t ref_decreasing;
+    uint8_t low_torque_no_edge;
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
 
@@ -1259,11 +1265,21 @@ static void FOC_CheckSpeedDropFault(void)
     fdb_rpm = FOC_Log_ToI16(signed_speed_fdb, 1.0f);
     ctrl_fdb_rpm = FOC_Log_ToI16(signed_speed_ctrl_fdb, 1.0f);
     err_rpm = FOC_Log_ToI16((float)ref_rpm - signed_speed_fdb, 1.0f);
+    iq_ref_mA = FOC_Log_ToI16(FOC_ControlIqRef(), 1000.0f);
     abs_ref = (ref_rpm < 0) ? (uint16_t)(-ref_rpm) : (uint16_t)ref_rpm;
     abs_fdb = FOC_Log_ToU16(FOC_FABS(signed_speed_fdb), 1.0f);
+    abs_iq_ref = (iq_ref_mA < 0)
+               ? (uint16_t)(-iq_ref_mA)
+               : (uint16_t)iq_ref_mA;
     ref_decreasing = (abs_ref < s_speed_drop_prev_abs_ref_rpm) ? 1U : 0U;
+    low_torque_no_edge =
+        ((s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) &&
+         (abs_iq_ref < g_foc_speed_drop_fault_min_iq_ref_mA))
+        ? 1U
+        : 0U;
 
     if ((ref_decreasing != 0U) &&
+        (low_torque_no_edge == 0U) &&
         (abs_ref >= g_foc_speed_drop_fault_ref_min_rpm) &&
         (abs_ref <= g_foc_speed_drop_fault_ref_max_rpm) &&
         (abs_ref > abs_fdb) &&
@@ -1280,6 +1296,7 @@ static void FOC_CheckSpeedDropFault(void)
     g_foc_speed_drop_fault_fdb_rpm = fdb_rpm;
     g_foc_speed_drop_fault_ctrl_fdb_rpm = ctrl_fdb_rpm;
     g_foc_speed_drop_fault_err_last_rpm = err_rpm;
+    g_foc_speed_drop_fault_iq_ref_mA = iq_ref_mA;
     g_foc_speed_drop_fault_sector_no_change_count =
         FOC_Log_U32ToU16((uint32_t)s_ctx.sector_no_change_count);
     g_foc_speed_drop_fault_edge_elapsed_us =
