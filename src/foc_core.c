@@ -1247,7 +1247,8 @@ static void FOC_BidirSpeed_ServiceRef(void)
     }
 
     target = raw_target;
-    if ((g_foc_bidir_speed_slew_enable != 0U) &&
+    if (((g_foc_bidir_speed_slew_enable != 0U) ||
+         (g_foc_bidir_zero_cross_enable != 0U)) &&
         (g_foc_bidir_speed_step_enable == 0U)) {
         float slew = (float)g_foc_bidir_speed_slew_rpm_per_s;
         uint32_t dt_us = now_us - s_bidir_speed_last_us;
@@ -1443,6 +1444,40 @@ static void FOC_UpdateCurrentAngleTrim(float dt)
      (void)dt;
      FOC_ResetCurrentAngleTrim();
 #endif
+}
+
+static void FOC_DecaySpeedControlFeedback(float target_fdb)
+{
+    float decay_rate = (float)g_foc_speed_ctrl_fdb_no_edge_decay_rpm_per_s;
+    float decay_step;
+    float delta;
+
+    if (target_fdb < 0.0f) {
+        target_fdb = 0.0f;
+    }
+    if (s_ctx.speed_ctrl_fdb <= target_fdb) {
+        s_ctx.speed_ctrl_fdb = target_fdb;
+        return;
+    }
+
+    if (decay_rate < 1.0f) {
+        decay_rate = 1.0f;
+    }
+    decay_step =
+        decay_rate * ((float)s_foc_control_period_us * 1.0e-6f);
+    delta = s_ctx.speed_ctrl_fdb - target_fdb;
+
+    if (decay_step >= delta) {
+        s_ctx.speed_ctrl_fdb = target_fdb;
+    } else {
+        s_ctx.speed_ctrl_fdb -= decay_step;
+    }
+    if (s_ctx.speed_ctrl_fdb < 0.0f) {
+        s_ctx.speed_ctrl_fdb = 0.0f;
+    }
+    if (g_foc_speed_ctrl_fdb_no_edge_decay_count < 0xFFFFFFFFU) {
+        g_foc_speed_ctrl_fdb_no_edge_decay_count++;
+    }
 }
 
 static void FOC_ResetSpeedDropFaultMonitor(void)
@@ -1674,8 +1709,6 @@ static void FOC_UpdateSpeedControlFeedback(void)
     float ref_abs = FOC_FABS(s_speed_ref_ctrl);
     float smooth_max = (float)g_foc_low_speed_smooth_max_rpm;
     float overspeed_deadband = 0.0f;
-    float no_edge_decay_step;
-    float no_edge_decay_rate;
 
     g_foc_low_speed_smooth_active = 0U;
     if ((g_foc_low_speed_smooth_enable != 0U) &&
@@ -1692,32 +1725,18 @@ static void FOC_UpdateSpeedControlFeedback(void)
 
     if ((FOC_FABS(s_speed_ref_ctrl) < 1.0f) &&
         (FOC_FABS(s_ctx.speed_fdb) < 1.0f)) {
-        s_ctx.speed_ctrl_fdb = 0.0f;
+        if (FOC_FABS(s_ctx.speed_ctrl_fdb) < 1.0f) {
+            s_ctx.speed_ctrl_fdb = 0.0f;
+        } else {
+            FOC_DecaySpeedControlFeedback(0.0f);
+        }
     } else if ((FOC_FABS(s_ctx.speed_ctrl_fdb) < 1.0f) &&
                (FOC_FABS(s_ctx.speed_fdb) >= 1.0f)) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (s_ctx.speed_fdb > (s_speed_ref_ctrl + overspeed_deadband)) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
-    } else if ((g_foc_observer_no_edge_active != 0U) &&
-               (s_ctx.speed_fdb < s_ctx.speed_ctrl_fdb)) {
-        no_edge_decay_rate =
-            (float)g_foc_speed_ctrl_fdb_no_edge_decay_rpm_per_s;
-        if (no_edge_decay_rate < 1.0f) {
-            no_edge_decay_rate = 1.0f;
-        }
-        no_edge_decay_step =
-            no_edge_decay_rate * ((float)s_foc_control_period_us * 1.0e-6f);
-        if (no_edge_decay_step >= (s_ctx.speed_ctrl_fdb - s_ctx.speed_fdb)) {
-            s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
-        } else {
-            s_ctx.speed_ctrl_fdb -= no_edge_decay_step;
-        }
-        if (s_ctx.speed_ctrl_fdb < 0.0f) {
-            s_ctx.speed_ctrl_fdb = 0.0f;
-        }
-        if (g_foc_speed_ctrl_fdb_no_edge_decay_count < 0xFFFFFFFFU) {
-            g_foc_speed_ctrl_fdb_no_edge_decay_count++;
-        }
+    } else if (s_ctx.speed_fdb < s_ctx.speed_ctrl_fdb) {
+        FOC_DecaySpeedControlFeedback(s_ctx.speed_fdb);
     } else if (alpha >= 1.0f) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (alpha > 0.0f) {

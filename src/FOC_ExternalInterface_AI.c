@@ -1593,6 +1593,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_dyn_speed_reset_stats = 0U;
 
     g_foc_bidir_speed_step_enable = 0U;
+    g_foc_bidir_speed_slew_enable = 1U;
     g_foc_bidir_speed_enable = 1U;
 
     g_foc_bidir_speed_reset_stats = 1U;
