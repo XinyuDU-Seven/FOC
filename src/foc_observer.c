@@ -123,6 +123,22 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_sync_active = 0
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_recovery_sync_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_sync_step_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_sync_diff_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_no_edge_angle_clamp_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_angle_clamp_count = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_diff_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_limit_mrad = 0;
+
+static float FOC_Observer_NormalizeAngleDiff(float diff)
+{
+    while (diff > FOC_PI) {
+        diff -= FOC_2PI;
+    }
+    while (diff < -FOC_PI) {
+        diff += FOC_2PI;
+    }
+
+    return diff;
+}
 
 static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
 {
@@ -382,6 +398,10 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_no_edge_active = 0U;
      g_foc_observer_resync_count = 0U;
      g_foc_observer_resync_diff_mrad = 0;
+     g_foc_observer_no_edge_angle_clamp_active = 0U;
+     g_foc_observer_no_edge_angle_clamp_count = 0U;
+     g_foc_observer_no_edge_angle_diff_mrad = 0;
+     g_foc_observer_no_edge_angle_limit_mrad = 0;
 
  
 
@@ -671,6 +691,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_recovery_sync_active = 0U;
      g_foc_observer_sync_step_mrad = 0;
      g_foc_observer_sync_diff_mrad = 0;
+     g_foc_observer_no_edge_angle_clamp_active = 0U;
+     g_foc_observer_no_edge_angle_diff_mrad = 0;
 
      if (s_predict_direction != hall_dir) {
          s_predict_direction = hall_dir;
@@ -744,6 +766,38 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      /* 扇区跳变时：软同步到跳变后的扇区中心角度，
 
       * 避免硬同步导致角度突变引发电流尖峰 */
+
+#if FOC_HALL_NO_EDGE_ANGLE_CLAMP_ENABLE
+     if ((no_edge_overdue != 0U) && (cur_sector != 0U)) {
+         float limit = FOC_HALL_NO_EDGE_ANGLE_LIMIT_RAD;
+         float diff = FOC_Observer_NormalizeAngleDiff(ctx->theta_e_predicted -
+                                                      ctx->hall_sector.theta_e);
+
+         if (limit < 0.0f) {
+             limit = -limit;
+         }
+         if (limit > (FOC_PI / 3.0f)) {
+             limit = FOC_PI / 3.0f;
+         }
+
+         g_foc_observer_no_edge_angle_diff_mrad =
+             (int16_t)(diff * 1000.0f);
+         g_foc_observer_no_edge_angle_limit_mrad =
+             (int16_t)(limit * 1000.0f);
+
+         if (diff > limit) {
+             ctx->theta_e_predicted =
+                 FOC_NormalizeAngle(ctx->hall_sector.theta_e + limit);
+             g_foc_observer_no_edge_angle_clamp_active = 1U;
+             g_foc_observer_no_edge_angle_clamp_count++;
+         } else if (diff < -limit) {
+             ctx->theta_e_predicted =
+                 FOC_NormalizeAngle(ctx->hall_sector.theta_e - limit);
+             g_foc_observer_no_edge_angle_clamp_active = 1U;
+             g_foc_observer_no_edge_angle_clamp_count++;
+         }
+     }
+#endif
 
      if (cur_sector != ctx->hall_sector_prev && cur_sector != 0U) {
 

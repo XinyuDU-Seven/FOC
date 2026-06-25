@@ -280,6 +280,14 @@ extern "C" {
 #define FOC_HALL_STOP_TIMEOUT_MIN_US  10000U
 #endif
 
+#ifndef FOC_HALL_NO_EDGE_ANGLE_CLAMP_ENABLE
+#define FOC_HALL_NO_EDGE_ANGLE_CLAMP_ENABLE  1U
+#endif
+
+#ifndef FOC_HALL_NO_EDGE_ANGLE_LIMIT_RAD
+#define FOC_HALL_NO_EDGE_ANGLE_LIMIT_RAD  ((35.0f / 180.0f) * FOC_PI)
+#endif
+
  
 
 /** 速度环降采样比：电流环每执行 N 次，速度环执行 1 次 */
