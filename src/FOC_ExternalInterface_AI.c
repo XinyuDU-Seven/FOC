@@ -165,6 +165,23 @@ FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_current_peak_a[FOC_SPEED
 static uint8_t s_foc_speed_api_test_prev_enable = 0U;
 static uint16_t s_foc_speed_api_test_decim_count = 0U;
 
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_apply = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_disable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_auto_enable = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_motor_id = 0U;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_id_a = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_iq_a = 0.0f;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_current_cmd_result = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_current_cmd_seq = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_current_cmd_state = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_current_cmd_fault = 0U;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_id_ref_a = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_iq_ref_a = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_id_fdb_a = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_iq_fdb_a = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_current_peak_a = 0.0f;
+FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_speed_fdb_rpm = 0.0f;
+
 #if 0
 static uint8_t s_foc_dyn_speed_prev_enable = 0U;
 static uint32_t s_foc_dyn_speed_start_us = 0U;
@@ -703,6 +720,65 @@ static void FOC_SpeedApiTest_Service(void)
   }
 }
 
+static void FOC_CurrentCmd_UpdateMonitor(void)
+{
+  const FOC_Context_t *ctx;
+  uint8_t motor_id = g_foc_current_cmd_motor_id;
+
+  ctx = FOC_Core_GetContextByMotor(motor_id);
+
+  g_foc_current_cmd_state = (uint16_t)ctx->state;
+  g_foc_current_cmd_fault = (uint16_t)ctx->fault;
+  g_foc_current_cmd_id_ref_a = ctx->id_ref;
+  g_foc_current_cmd_iq_ref_a = (ctx->direction == FOC_DIR_CCW) ? -ctx->iq_ref : ctx->iq_ref;
+  g_foc_current_cmd_id_fdb_a = ctx->i_dq.d;
+  g_foc_current_cmd_iq_fdb_a = ctx->i_dq.q;
+  g_foc_current_cmd_current_peak_a = ctx->current_peak;
+  g_foc_current_cmd_speed_fdb_rpm = ctx->speed_fdb;
+}
+
+static void FOC_CurrentCmd_Service(void)
+{
+  FocError result = FOC_SUCCESS;
+  uint8_t motor_id = g_foc_current_cmd_motor_id;
+  uint8_t has_cmd = 0U;
+
+  if (g_foc_current_cmd_apply != 0U) {
+    g_foc_current_cmd_apply = 0U;
+    has_cmd = 1U;
+
+    g_foc_test_case_select = FOC_TEST_CASE_STOP;
+    g_foc_speed_api_test_enable = 0U;
+    g_foc_ext_api_test_enable = 0U;
+    FOC_AI_ClearAutoModes();
+
+    if (g_foc_current_cmd_auto_enable != 0U) {
+      result = Foc_EnableFocControl(motor_id);
+    }
+
+    if (result == FOC_SUCCESS) {
+      result = Foc_SetCurrentReference(motor_id,
+                                       g_foc_current_cmd_id_a,
+                                       g_foc_current_cmd_iq_a);
+    }
+  }
+
+  if (g_foc_current_cmd_disable != 0U) {
+    g_foc_current_cmd_disable = 0U;
+    has_cmd = 1U;
+    g_foc_current_cmd_id_a = 0.0f;
+    g_foc_current_cmd_iq_a = 0.0f;
+    result = Foc_DisableFocControl(motor_id);
+  }
+
+  if (has_cmd != 0U) {
+    g_foc_current_cmd_result = (uint16_t)result;
+    g_foc_current_cmd_seq++;
+  }
+
+  FOC_CurrentCmd_UpdateMonitor();
+}
+
 static void FOC_ExtApiTest_ClearLog(void)
 {
   uint16_t i;
@@ -964,7 +1040,11 @@ void Foc_AlgorithmControlCallback_AI(void){
 
   FOC_TestCase_Service();
 
+  FOC_CurrentCmd_Service();
+
   FOC_MainLoop();
+
+  FOC_CurrentCmd_UpdateMonitor();
 
   FOC_SpeedApiTest_Service();
 
