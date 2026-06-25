@@ -379,10 +379,16 @@ extern volatile uint16_t g_foc_bidir_zero_speed_rpm;
 extern volatile uint16_t g_foc_bidir_zero_confirm_ms;
 extern volatile uint16_t g_foc_bidir_zero_hold_ms;
 extern volatile uint16_t g_foc_bidir_zero_timeout_ms;
+extern volatile uint16_t g_foc_bidir_zero_approach_start_rpm;
+extern volatile uint16_t g_foc_bidir_zero_approach_slew_rpm_per_s;
+extern volatile int16_t  g_foc_bidir_zero_approach_brake_limit_mA;
 extern volatile uint8_t  g_foc_bidir_zero_cross_state;
 extern volatile uint32_t g_foc_bidir_zero_cross_count;
 extern volatile uint16_t g_foc_bidir_zero_cross_elapsed_ms;
 extern volatile uint16_t g_foc_bidir_zero_below_elapsed_ms;
+extern volatile uint8_t  g_foc_bidir_zero_approach_active;
+extern volatile int16_t  g_foc_bidir_zero_ref_rpm;
+extern volatile uint32_t g_foc_bidir_zero_brake_limited_count;
 extern volatile uint8_t  g_foc_observer_no_edge_active;
 
 static uint16_t s_foc_log_decim = 0U;
@@ -437,6 +443,8 @@ static uint8_t s_bidir_zero_state = 0U;
 static uint32_t s_bidir_zero_start_us = 0U;
 static uint32_t s_bidir_zero_hold_start_us = 0U;
 static uint32_t s_bidir_zero_below_start_us = 0U;
+static uint32_t s_bidir_zero_last_us = 0U;
+static float s_bidir_zero_ref_rpm = 0.0f;
 static int16_t s_bidir_zero_command_sign = 0;
 static int16_t s_bidir_zero_pending_sign = 0;
 static FOC_Dir_e s_bidir_zero_hold_dir = FOC_DIR_CW;
@@ -1063,18 +1071,51 @@ static FOC_Dir_e FOC_BidirSpeed_DirFromSign(int16_t sign)
     return (sign < 0) ? FOC_DIR_CCW : FOC_DIR_CW;
 }
 
+static float FOC_BidirSpeed_LimitTargetStep(float current,
+                                            float target,
+                                            float slew_rpm_per_s,
+                                            uint32_t dt_us)
+{
+    float max_delta;
+    float delta;
+
+    if (slew_rpm_per_s < 1.0f) {
+        slew_rpm_per_s = 1.0f;
+    }
+    if (dt_us == 0U) {
+        dt_us = FOC_CONTROL_PERIOD_US;
+    } else if (dt_us > FOC_CONTROL_PID_DT_MAX_US) {
+        dt_us = FOC_CONTROL_PID_DT_MAX_US;
+    }
+
+    max_delta = slew_rpm_per_s * ((float)dt_us * 1.0e-6f);
+    delta = target - current;
+    if (delta > max_delta) {
+        return current + max_delta;
+    }
+    if (delta < -max_delta) {
+        return current - max_delta;
+    }
+
+    return target;
+}
+
 static void FOC_BidirSpeed_ResetZeroCross(void)
 {
     s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_IDLE;
     s_bidir_zero_start_us = 0U;
     s_bidir_zero_hold_start_us = 0U;
     s_bidir_zero_below_start_us = 0U;
+    s_bidir_zero_last_us = 0U;
+    s_bidir_zero_ref_rpm = 0.0f;
     s_bidir_zero_command_sign = 0;
     s_bidir_zero_pending_sign = 0;
     s_bidir_zero_hold_dir = s_ctx.direction;
     g_foc_bidir_zero_cross_state = FOC_BIDIR_ZERO_STATE_IDLE;
     g_foc_bidir_zero_cross_elapsed_ms = 0U;
     g_foc_bidir_zero_below_elapsed_ms = 0U;
+    g_foc_bidir_zero_approach_active = 0U;
+    g_foc_bidir_zero_ref_rpm = 0;
 }
 
 static float FOC_BidirSpeed_ApplyZeroCross(float target,
@@ -1115,14 +1156,17 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
     if ((s_bidir_zero_state == FOC_BIDIR_ZERO_STATE_IDLE) &&
         (raw_sign != 0) &&
         (raw_sign != s_bidir_zero_command_sign)) {
+        float decel_start_ref = FOC_FABS(target);
+
         s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_DECEL;
         s_bidir_zero_start_us = now_us;
         s_bidir_zero_hold_start_us = 0U;
         s_bidir_zero_below_start_us = 0U;
+        s_bidir_zero_last_us = now_us;
+        s_bidir_zero_ref_rpm = decel_start_ref;
         s_bidir_zero_pending_sign = raw_sign;
         s_bidir_zero_hold_dir =
             FOC_BidirSpeed_DirFromSign(s_bidir_zero_command_sign);
-        s_bidir_speed_limited_ref_rpm = 0.0f;
         if (g_foc_bidir_zero_cross_count < 0xFFFFFFFFU) {
             g_foc_bidir_zero_cross_count++;
         }
@@ -1136,8 +1180,21 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
         confirm_us = (uint32_t)g_foc_bidir_zero_confirm_ms * 1000U;
         elapsed_us = now_us - s_bidir_zero_start_us;
         *zero_dir = s_bidir_zero_hold_dir;
-        target = 0.0f;
-        s_bidir_speed_limited_ref_rpm = 0.0f;
+        target = (s_bidir_zero_command_sign < 0)
+               ? -s_bidir_zero_ref_rpm
+               : s_bidir_zero_ref_rpm;
+        target = FOC_BidirSpeed_LimitTargetStep(
+            target, 0.0f,
+            (float)g_foc_bidir_zero_approach_slew_rpm_per_s,
+            now_us - s_bidir_zero_last_us);
+        if (FOC_FABS(target) < 0.5f) {
+            target = 0.0f;
+        }
+        s_bidir_zero_last_us = now_us;
+        s_bidir_zero_ref_rpm = FOC_FABS(target);
+        s_bidir_speed_limited_ref_rpm = target;
+        g_foc_bidir_zero_approach_active = 1U;
+        g_foc_bidir_zero_ref_rpm = FOC_Log_ToI16(target, 1.0f);
 
         if (FOC_FABS(s_ctx.speed_fdb) <= (float)zero_speed) {
             if (s_bidir_zero_below_start_us == 0U) {
@@ -1163,12 +1220,16 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
         *zero_dir = s_bidir_zero_hold_dir;
         target = 0.0f;
         s_bidir_speed_limited_ref_rpm = 0.0f;
+        s_bidir_zero_ref_rpm = 0.0f;
+        g_foc_bidir_zero_approach_active = 1U;
+        g_foc_bidir_zero_ref_rpm = 0;
 
         if ((now_us - s_bidir_zero_hold_start_us) >= hold_us) {
             if (s_bidir_zero_pending_sign != 0) {
                 s_bidir_zero_command_sign = s_bidir_zero_pending_sign;
             }
             s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_IDLE;
+            s_bidir_zero_last_us = 0U;
             *zero_dir = FOC_BidirSpeed_DirFromSign(s_bidir_zero_command_sign);
         }
     }
@@ -1197,6 +1258,7 @@ static void FOC_BidirSpeed_ServiceRef(void)
     uint32_t period_us;
     uint32_t elapsed_us;
     uint32_t phase_us;
+    uint32_t dt_us;
     float phase;
     float raw_target;
     float target;
@@ -1247,27 +1309,32 @@ static void FOC_BidirSpeed_ServiceRef(void)
     }
 
     target = raw_target;
+    dt_us = now_us - s_bidir_speed_last_us;
+    g_foc_bidir_zero_approach_active = 0U;
     if (((g_foc_bidir_speed_slew_enable != 0U) ||
          (g_foc_bidir_zero_cross_enable != 0U)) &&
         (g_foc_bidir_speed_step_enable == 0U)) {
         float slew = (float)g_foc_bidir_speed_slew_rpm_per_s;
-        uint32_t dt_us = now_us - s_bidir_speed_last_us;
-        float max_delta;
-        float delta;
+        int16_t raw_sign = FOC_BidirSpeed_TargetSign(raw_target);
+        int16_t limited_sign =
+            FOC_BidirSpeed_TargetSign(s_bidir_speed_limited_ref_rpm);
 
-        if (slew < 1.0f) {
-            slew = 1.0f;
+        if ((g_foc_bidir_zero_cross_enable != 0U) &&
+            (limited_sign != 0) &&
+            ((raw_sign == limited_sign) || (raw_sign == 0)) &&
+            (FOC_FABS(raw_target) < FOC_FABS(s_bidir_speed_limited_ref_rpm)) &&
+            (FOC_FABS(raw_target) <=
+             (float)g_foc_bidir_zero_approach_start_rpm)) {
+            float approach_slew =
+                (float)g_foc_bidir_zero_approach_slew_rpm_per_s;
+
+            if ((approach_slew >= 1.0f) && (approach_slew < slew)) {
+                slew = approach_slew;
+            }
+            g_foc_bidir_zero_approach_active = 1U;
         }
-        if (dt_us > FOC_CONTROL_PID_DT_MAX_US) {
-            dt_us = FOC_CONTROL_PID_DT_MAX_US;
-        }
-        max_delta = slew * ((float)dt_us * 1.0e-6f);
-        delta = raw_target - s_bidir_speed_limited_ref_rpm;
-        if (delta > max_delta) {
-            target = s_bidir_speed_limited_ref_rpm + max_delta;
-        } else if (delta < -max_delta) {
-            target = s_bidir_speed_limited_ref_rpm - max_delta;
-        }
+        target = FOC_BidirSpeed_LimitTargetStep(
+            s_bidir_speed_limited_ref_rpm, raw_target, slew, dt_us);
         s_bidir_speed_limited_ref_rpm = target;
     } else {
         s_bidir_speed_limited_ref_rpm = target;
@@ -1275,6 +1342,12 @@ static void FOC_BidirSpeed_ServiceRef(void)
     s_bidir_speed_last_us = now_us;
     target = FOC_BidirSpeed_ApplyZeroCross(target, raw_target, now_us,
                                            &zero_dir);
+    if ((g_foc_bidir_zero_approach_active == 0U) &&
+        (s_bidir_zero_state == FOC_BIDIR_ZERO_STATE_IDLE)) {
+        g_foc_bidir_zero_ref_rpm = 0;
+    } else {
+        g_foc_bidir_zero_ref_rpm = FOC_Log_ToI16(target, 1.0f);
+    }
 
     g_foc_bidir_speed_elapsed_ms = elapsed_us / 1000U;
     g_foc_bidir_speed_phase_u16 = FOC_Log_ToU16(phase, 65535.0f / FOC_2PI);
@@ -3053,6 +3126,23 @@ static void FOC_Prof_Reset(void)
 #else
              g_foc_speed_error_boost_mA = 0;
 #endif
+             if ((g_foc_bidir_speed_enable != 0U) &&
+                 (g_foc_bidir_zero_cross_state == FOC_BIDIR_ZERO_STATE_IDLE) &&
+                 (g_foc_bidir_zero_approach_active != 0U)) {
+                 float brake_limit =
+                     (float)g_foc_bidir_zero_approach_brake_limit_mA *
+                     0.001f;
+
+                 if (brake_limit < 0.0f) {
+                     brake_limit = -brake_limit;
+                 }
+                 if (speed_iq_ref < -brake_limit) {
+                     speed_iq_ref = -brake_limit;
+                     if (g_foc_bidir_zero_brake_limited_count < 0xFFFFFFFFU) {
+                         g_foc_bidir_zero_brake_limited_count++;
+                     }
+                 }
+             }
              s_speed_error_boost_prev_ref = speed_ref_ctrl;
 
              speed_iq_ref = FOC_ApplyLowSpeedTorqueAssist(speed_iq_ref,
