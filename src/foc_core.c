@@ -271,7 +271,8 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_current_ff_max_rpm =
 FOC_DEBUG_ROOT volatile uint16_t g_foc_current_q_rs_ff_gain_milli =
     FOC_CURRENT_Q_RS_FF_GAIN_MILLI;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_current_q_ff_mV = 0;
-FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_enable = 1U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_enable =
+    FOC_SPEED_DROP_FAULT_ENABLE;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_min_rpm = 600U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_max_rpm = 1100U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_err_rpm = 350U;

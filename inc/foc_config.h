@@ -257,6 +257,11 @@ extern "C" {
 
 #endif
 
+/* Legacy speed-drop diagnostic is disabled during loaded low-speed tuning. */
+#ifndef FOC_SPEED_DROP_FAULT_ENABLE
+#define FOC_SPEED_DROP_FAULT_ENABLE     0U
+#endif
+
 /* Hall invalid-sector persistence threshold. */
 #ifndef FOC_HALL_INVALID_COUNT_THRESHOLD
 
