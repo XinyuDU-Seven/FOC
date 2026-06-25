@@ -252,6 +252,16 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_ctrl_alpha_milli =
     (uint16_t)(FOC_LOW_SPEED_CTRL_FILTER_ALPHA * 1000.0f);
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_overspeed_deadband_rpm =
     (uint16_t)FOC_LOW_SPEED_OVERSPEED_DEADBAND_RPM;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_torque_enable =
+    FOC_LOW_SPEED_TORQUE_ENABLE;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_torque_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_max_rpm =
+    FOC_LOW_SPEED_TORQUE_MAX_RPM;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_torque_min_iq_mA =
+    FOC_LOW_SPEED_TORQUE_MIN_IQ_MA;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_err_rpm =
+    FOC_LOW_SPEED_TORQUE_ERR_RPM;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_torque_applied_mA = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_enable = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_min_rpm = 600U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_max_rpm = 1100U;
@@ -639,6 +649,37 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      }
 
      g_foc_vbus_brake_active = 0U;
+     return iq_ref;
+ }
+
+ static float FOC_ApplyLowSpeedTorqueAssist(float iq_ref,
+                                            float speed_ref_ctrl,
+                                            float speed_error)
+ {
+     float min_iq = (float)g_foc_low_speed_torque_min_iq_mA * 0.001f;
+     float max_rpm = (float)g_foc_low_speed_torque_max_rpm;
+     float err_rpm = (float)g_foc_low_speed_torque_err_rpm;
+
+     g_foc_low_speed_torque_active = 0U;
+     g_foc_low_speed_torque_applied_mA = 0;
+
+     if ((g_foc_low_speed_torque_enable == 0U) ||
+         (min_iq <= 0.0f) ||
+         (max_rpm < 1.0f) ||
+         (speed_ref_ctrl < 1.0f) ||
+         (speed_ref_ctrl > max_rpm) ||
+         (speed_error <= err_rpm) ||
+         (iq_ref < 0.0f)) {
+         return iq_ref;
+     }
+
+     if (iq_ref < min_iq) {
+         g_foc_low_speed_torque_active = 1U;
+         g_foc_low_speed_torque_applied_mA =
+             FOC_Log_ToI16(min_iq - iq_ref, 1000.0f);
+         return min_iq;
+     }
+
      return iq_ref;
  }
 
@@ -2548,6 +2589,9 @@ static void FOC_Prof_Reset(void)
 #endif
              s_speed_error_boost_prev_ref = speed_ref_ctrl;
 
+             speed_iq_ref = FOC_ApplyLowSpeedTorqueAssist(speed_iq_ref,
+                                                           speed_ref_ctrl,
+                                                           speed_error);
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
                                       s_ctx.pid_speed.out_min,
@@ -2565,6 +2609,8 @@ static void FOC_Prof_Reset(void)
          s_ctx.speed_loop_counter = 0U;
          g_foc_speed_error_boost_mA = 0;
          s_speed_error_boost_prev_ref = 0.0f;
+         g_foc_low_speed_torque_active = 0U;
+         g_foc_low_speed_torque_applied_mA = 0;
      }
 
      s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,

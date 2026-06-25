@@ -331,6 +331,22 @@ extern "C" {
 #define FOC_SPEED_ERROR_BOOST_REF_RISE_MIN_RPM  0.2f
 #endif
 
+#ifndef FOC_LOW_SPEED_TORQUE_ENABLE
+#define FOC_LOW_SPEED_TORQUE_ENABLE     1U
+#endif
+
+#ifndef FOC_LOW_SPEED_TORQUE_MAX_RPM
+#define FOC_LOW_SPEED_TORQUE_MAX_RPM    650U
+#endif
+
+#ifndef FOC_LOW_SPEED_TORQUE_MIN_IQ_MA
+#define FOC_LOW_SPEED_TORQUE_MIN_IQ_MA  1000
+#endif
+
+#ifndef FOC_LOW_SPEED_TORQUE_ERR_RPM
+#define FOC_LOW_SPEED_TORQUE_ERR_RPM    35U
+#endif
+
  
 
 /** 角度预测软同步系数 (0~1)：扇区跳变时预测角度向扇区中心角度靠拢的比例，
