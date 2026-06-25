@@ -254,6 +254,8 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_ctrl_alpha_milli =
     (uint16_t)(FOC_LOW_SPEED_CTRL_FILTER_ALPHA * 1000.0f);
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_overspeed_deadband_rpm =
     (uint16_t)FOC_LOW_SPEED_OVERSPEED_DEADBAND_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ctrl_fdb_no_edge_decay_rpm_per_s = 2500U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_ctrl_fdb_no_edge_decay_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_torque_enable =
     FOC_LOW_SPEED_TORQUE_ENABLE;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_torque_active = 0U;
@@ -374,11 +376,13 @@ extern volatile int16_t  g_foc_bidir_speed_raw_ref_rpm;
 extern volatile int16_t  g_foc_bidir_speed_ref_rpm;
 extern volatile uint8_t  g_foc_bidir_zero_cross_enable;
 extern volatile uint16_t g_foc_bidir_zero_speed_rpm;
+extern volatile uint16_t g_foc_bidir_zero_confirm_ms;
 extern volatile uint16_t g_foc_bidir_zero_hold_ms;
 extern volatile uint16_t g_foc_bidir_zero_timeout_ms;
 extern volatile uint8_t  g_foc_bidir_zero_cross_state;
 extern volatile uint32_t g_foc_bidir_zero_cross_count;
 extern volatile uint16_t g_foc_bidir_zero_cross_elapsed_ms;
+extern volatile uint16_t g_foc_bidir_zero_below_elapsed_ms;
 extern volatile uint8_t  g_foc_observer_no_edge_active;
 
 static uint16_t s_foc_log_decim = 0U;
@@ -432,6 +436,7 @@ static float s_bidir_speed_limited_ref_rpm = 0.0f;
 static uint8_t s_bidir_zero_state = 0U;
 static uint32_t s_bidir_zero_start_us = 0U;
 static uint32_t s_bidir_zero_hold_start_us = 0U;
+static uint32_t s_bidir_zero_below_start_us = 0U;
 static int16_t s_bidir_zero_command_sign = 0;
 static int16_t s_bidir_zero_pending_sign = 0;
 static FOC_Dir_e s_bidir_zero_hold_dir = FOC_DIR_CW;
@@ -1063,11 +1068,13 @@ static void FOC_BidirSpeed_ResetZeroCross(void)
     s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_IDLE;
     s_bidir_zero_start_us = 0U;
     s_bidir_zero_hold_start_us = 0U;
+    s_bidir_zero_below_start_us = 0U;
     s_bidir_zero_command_sign = 0;
     s_bidir_zero_pending_sign = 0;
     s_bidir_zero_hold_dir = s_ctx.direction;
     g_foc_bidir_zero_cross_state = FOC_BIDIR_ZERO_STATE_IDLE;
     g_foc_bidir_zero_cross_elapsed_ms = 0U;
+    g_foc_bidir_zero_below_elapsed_ms = 0U;
 }
 
 static float FOC_BidirSpeed_ApplyZeroCross(float target,
@@ -1079,6 +1086,8 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
     uint32_t elapsed_us = 0U;
     uint32_t hold_us;
     uint32_t timeout_us;
+    uint32_t confirm_us;
+    uint32_t below_elapsed_us = 0U;
     uint16_t zero_speed = g_foc_bidir_zero_speed_rpm;
 
     if (zero_dir == NULL) {
@@ -1109,6 +1118,7 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
         s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_DECEL;
         s_bidir_zero_start_us = now_us;
         s_bidir_zero_hold_start_us = 0U;
+        s_bidir_zero_below_start_us = 0U;
         s_bidir_zero_pending_sign = raw_sign;
         s_bidir_zero_hold_dir =
             FOC_BidirSpeed_DirFromSign(s_bidir_zero_command_sign);
@@ -1123,12 +1133,24 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
             s_bidir_zero_pending_sign = raw_sign;
         }
         timeout_us = (uint32_t)g_foc_bidir_zero_timeout_ms * 1000U;
+        confirm_us = (uint32_t)g_foc_bidir_zero_confirm_ms * 1000U;
         elapsed_us = now_us - s_bidir_zero_start_us;
         *zero_dir = s_bidir_zero_hold_dir;
         target = 0.0f;
         s_bidir_speed_limited_ref_rpm = 0.0f;
 
-        if ((FOC_FABS(s_ctx.speed_fdb) <= (float)zero_speed) ||
+        if (FOC_FABS(s_ctx.speed_fdb) <= (float)zero_speed) {
+            if (s_bidir_zero_below_start_us == 0U) {
+                s_bidir_zero_below_start_us = now_us;
+            }
+            below_elapsed_us = now_us - s_bidir_zero_below_start_us;
+        } else {
+            s_bidir_zero_below_start_us = 0U;
+            below_elapsed_us = 0U;
+        }
+
+        if (((s_bidir_zero_below_start_us != 0U) &&
+             (below_elapsed_us >= confirm_us)) ||
             ((timeout_us > 0U) && (elapsed_us >= timeout_us))) {
             s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_HOLD;
             s_bidir_zero_hold_start_us = now_us;
@@ -1153,12 +1175,17 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
 
     if (s_bidir_zero_state == FOC_BIDIR_ZERO_STATE_IDLE) {
         elapsed_us = 0U;
+        below_elapsed_us = 0U;
     }
     g_foc_bidir_zero_cross_state = s_bidir_zero_state;
     g_foc_bidir_zero_cross_elapsed_ms =
         (uint16_t)((elapsed_us / 1000U) > 65535U
                  ? 65535U
                  : (elapsed_us / 1000U));
+    g_foc_bidir_zero_below_elapsed_ms =
+        (uint16_t)((below_elapsed_us / 1000U) > 65535U
+                 ? 65535U
+                 : (below_elapsed_us / 1000U));
 
     return target;
 }
@@ -1647,6 +1674,8 @@ static void FOC_UpdateSpeedControlFeedback(void)
     float ref_abs = FOC_FABS(s_speed_ref_ctrl);
     float smooth_max = (float)g_foc_low_speed_smooth_max_rpm;
     float overspeed_deadband = 0.0f;
+    float no_edge_decay_step;
+    float no_edge_decay_rate;
 
     g_foc_low_speed_smooth_active = 0U;
     if ((g_foc_low_speed_smooth_enable != 0U) &&
@@ -1671,7 +1700,24 @@ static void FOC_UpdateSpeedControlFeedback(void)
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if ((g_foc_observer_no_edge_active != 0U) &&
                (s_ctx.speed_fdb < s_ctx.speed_ctrl_fdb)) {
-        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+        no_edge_decay_rate =
+            (float)g_foc_speed_ctrl_fdb_no_edge_decay_rpm_per_s;
+        if (no_edge_decay_rate < 1.0f) {
+            no_edge_decay_rate = 1.0f;
+        }
+        no_edge_decay_step =
+            no_edge_decay_rate * ((float)s_foc_control_period_us * 1.0e-6f);
+        if (no_edge_decay_step >= (s_ctx.speed_ctrl_fdb - s_ctx.speed_fdb)) {
+            s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+        } else {
+            s_ctx.speed_ctrl_fdb -= no_edge_decay_step;
+        }
+        if (s_ctx.speed_ctrl_fdb < 0.0f) {
+            s_ctx.speed_ctrl_fdb = 0.0f;
+        }
+        if (g_foc_speed_ctrl_fdb_no_edge_decay_count < 0xFFFFFFFFU) {
+            g_foc_speed_ctrl_fdb_no_edge_decay_count++;
+        }
     } else if (alpha >= 1.0f) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (alpha > 0.0f) {
