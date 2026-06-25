@@ -427,7 +427,7 @@ extern "C" {
 #endif
 
 #ifndef FOC_BIDIR_ZERO_SOFT_ENABLE
-#define FOC_BIDIR_ZERO_SOFT_ENABLE      1U
+#define FOC_BIDIR_ZERO_SOFT_ENABLE      0U
 #endif
 
 #ifndef FOC_BIDIR_ZERO_SOFT_START_RPM

@@ -411,6 +411,7 @@ extern volatile uint16_t g_foc_detail_log_decim_ms;
 extern volatile uint16_t g_foc_detail_log_trigger_rpm;
 extern volatile uint32_t g_foc_detail_log_trigger_count;
 extern volatile uint32_t g_foc_detail_log_t_ms[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_raw_ref_rpm[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_ref_rpm[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_fdb_rpm[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_ctrl_fdb_rpm[FOC_DETAIL_LOG_SIZE];
@@ -430,6 +431,7 @@ extern volatile uint16_t g_foc_detail_log_duty_c[FOC_DETAIL_LOG_SIZE];
 extern volatile uint16_t g_foc_detail_log_zero_soft_scale_percent[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_zero_soft_limited_mA[FOC_DETAIL_LOG_SIZE];
 extern volatile uint8_t  g_foc_detail_log_zero_soft_active[FOC_DETAIL_LOG_SIZE];
+extern volatile uint8_t  g_foc_detail_log_min_drive_active[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_decel_hold_mA[FOC_DETAIL_LOG_SIZE];
 extern volatile uint32_t g_foc_detail_log_edge_elapsed_us[FOC_DETAIL_LOG_SIZE];
 extern volatile uint16_t g_foc_detail_log_fault[FOC_DETAIL_LOG_SIZE];
@@ -444,6 +446,10 @@ extern volatile uint32_t g_foc_bidir_speed_elapsed_ms;
 extern volatile uint16_t g_foc_bidir_speed_phase_u16;
 extern volatile int16_t  g_foc_bidir_speed_raw_ref_rpm;
 extern volatile int16_t  g_foc_bidir_speed_ref_rpm;
+extern volatile uint8_t  g_foc_bidir_zero_min_drive_enable;
+extern volatile uint8_t  g_foc_bidir_zero_min_drive_active;
+extern volatile uint16_t g_foc_bidir_zero_min_drive_rpm;
+extern volatile uint32_t g_foc_bidir_zero_min_drive_count;
 extern volatile uint8_t  g_foc_bidir_zero_cross_enable;
 extern volatile uint16_t g_foc_bidir_zero_speed_rpm;
 extern volatile uint16_t g_foc_bidir_zero_confirm_ms;
@@ -820,6 +826,7 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
     if ((g_foc_bidir_zero_soft_enable == 0U) ||
         (g_foc_bidir_speed_enable == 0U) ||
         (g_foc_bidir_speed_step_enable != 2U) ||
+        (g_foc_bidir_zero_min_drive_active != 0U) ||
         (ref_decreasing == 0U) ||
         (start_rpm < 1.0f) ||
         (speed_ref_ctrl >= start_rpm)) {
@@ -1142,6 +1149,7 @@ static void FOC_DetailLog_Reset(void)
 
     for (i = 0U; i < FOC_DETAIL_LOG_SIZE; i++) {
         g_foc_detail_log_t_ms[i] = 0U;
+        g_foc_detail_log_raw_ref_rpm[i] = 0;
         g_foc_detail_log_ref_rpm[i] = 0;
         g_foc_detail_log_fdb_rpm[i] = 0;
         g_foc_detail_log_ctrl_fdb_rpm[i] = 0;
@@ -1161,6 +1169,7 @@ static void FOC_DetailLog_Reset(void)
         g_foc_detail_log_zero_soft_scale_percent[i] = 0U;
         g_foc_detail_log_zero_soft_limited_mA[i] = 0;
         g_foc_detail_log_zero_soft_active[i] = 0U;
+        g_foc_detail_log_min_drive_active[i] = 0U;
         g_foc_detail_log_decel_hold_mA[i] = 0;
         g_foc_detail_log_edge_elapsed_us[i] = 0U;
         g_foc_detail_log_fault[i] = 0U;
@@ -1204,6 +1213,7 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
 
     s_detail_log_last_us = now_us;
     g_foc_detail_log_t_ms[idx] = g_foc_bidir_speed_elapsed_ms;
+    g_foc_detail_log_raw_ref_rpm[idx] = g_foc_bidir_speed_raw_ref_rpm;
     g_foc_detail_log_ref_rpm[idx] = g_foc_dyn_speed_ref_rpm;
     g_foc_detail_log_fdb_rpm[idx] =
         FOC_Log_ToI16(signed_speed_fdb, 1.0f);
@@ -1234,6 +1244,8 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
     g_foc_detail_log_zero_soft_limited_mA[idx] =
         g_foc_bidir_zero_soft_limited_mA;
     g_foc_detail_log_zero_soft_active[idx] = g_foc_bidir_zero_soft_active;
+    g_foc_detail_log_min_drive_active[idx] =
+        g_foc_bidir_zero_min_drive_active;
     g_foc_detail_log_decel_hold_mA[idx] =
         g_foc_bidir_decel_hold_applied_mA;
     g_foc_detail_log_edge_elapsed_us[idx] = edge_elapsed_us;
@@ -1303,6 +1315,8 @@ static void FOC_DynSpeed_ResetStats(uint32_t now_us)
     g_foc_dyn_speed_sample_count = 0U;
     g_foc_bidir_speed_raw_ref_rpm = 0;
     g_foc_bidir_speed_ref_rpm = 0;
+    g_foc_bidir_zero_min_drive_active = 0U;
+    g_foc_bidir_zero_min_drive_count = 0U;
     g_foc_bidir_decel_hold_active = 0U;
     g_foc_bidir_decel_hold_applied_mA = 0;
     g_foc_bidir_decel_hold_raw_err_rpm = 0;
@@ -1547,6 +1561,29 @@ static FOC_Dir_e FOC_BidirSpeed_DirFromSign(int16_t sign)
     return (sign < 0) ? FOC_DIR_CCW : FOC_DIR_CW;
 }
 
+static float FOC_BidirSpeed_ApplyZeroMinDrive(float target)
+{
+    float min_rpm = (float)g_foc_bidir_zero_min_drive_rpm;
+    int16_t sign = FOC_BidirSpeed_TargetSign(target);
+
+    g_foc_bidir_zero_min_drive_active = 0U;
+
+    if ((g_foc_bidir_zero_min_drive_enable == 0U) ||
+        (g_foc_bidir_speed_step_enable != 2U) ||
+        (sign == 0) ||
+        (min_rpm < 1.0f) ||
+        (FOC_FABS(target) >= min_rpm)) {
+        return target;
+    }
+
+    g_foc_bidir_zero_min_drive_active = 1U;
+    if (g_foc_bidir_zero_min_drive_count < 0xFFFFFFFFU) {
+        g_foc_bidir_zero_min_drive_count++;
+    }
+
+    return (sign < 0) ? -min_rpm : min_rpm;
+}
+
 static float FOC_BidirSpeed_LimitTargetStep(float current,
                                             float target,
                                             float slew_rpm_per_s,
@@ -1594,6 +1631,7 @@ static void FOC_BidirSpeed_ResetZeroCross(void)
     g_foc_bidir_zero_tail_active = 0U;
     g_foc_bidir_zero_tail_fdb_catch_count = 0U;
     g_foc_bidir_zero_tail_drive_assist_count = 0U;
+    g_foc_bidir_zero_min_drive_active = 0U;
     g_foc_bidir_zero_ref_rpm = 0;
 }
 
@@ -1870,6 +1908,8 @@ static void FOC_BidirSpeed_ServiceRef(void)
     } else {
         s_bidir_speed_limited_ref_rpm = target;
     }
+    target = FOC_BidirSpeed_ApplyZeroMinDrive(target);
+    s_bidir_speed_limited_ref_rpm = target;
     s_bidir_speed_last_us = now_us;
     target = FOC_BidirSpeed_ApplyZeroCross(target, raw_target, now_us,
                                            &zero_dir);
