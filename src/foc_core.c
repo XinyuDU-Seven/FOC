@@ -286,6 +286,8 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_min_iq_ref_mA = 800U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_sector_no_change_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_drop_fault_edge_elapsed_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_direction = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_bidir_no_edge_skip = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_drop_fault_bidir_no_edge_skip_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_fdb_drop_fault_enable = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_min_ref_rpm = 1000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_min_peak_rpm = 1000U;
@@ -1229,6 +1231,7 @@ static void FOC_ResetSpeedDropFaultMonitor(void)
     g_foc_speed_drop_fault_sector_no_change_count = 0U;
     g_foc_speed_drop_fault_edge_elapsed_us = 0U;
     g_foc_speed_drop_fault_direction = 0U;
+    g_foc_speed_drop_fault_bidir_no_edge_skip = 0U;
     s_speed_drop_prev_abs_ref_rpm = 0U;
 }
 
@@ -1245,6 +1248,7 @@ static void FOC_CheckSpeedDropFault(void)
     uint16_t count_limit;
     uint8_t ref_decreasing;
     uint8_t low_torque_no_edge;
+    uint8_t bidir_no_edge_stop;
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
 
@@ -1277,9 +1281,20 @@ static void FOC_CheckSpeedDropFault(void)
          (abs_iq_ref < g_foc_speed_drop_fault_min_iq_ref_mA))
         ? 1U
         : 0U;
+    bidir_no_edge_stop =
+        ((g_foc_bidir_speed_enable != 0U) &&
+         (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD))
+        ? 1U
+        : 0U;
+    g_foc_speed_drop_fault_bidir_no_edge_skip = bidir_no_edge_stop;
+    if ((bidir_no_edge_stop != 0U) &&
+        (g_foc_speed_drop_fault_bidir_no_edge_skip_count < 0xFFFFFFFFU)) {
+        g_foc_speed_drop_fault_bidir_no_edge_skip_count++;
+    }
 
     if ((ref_decreasing != 0U) &&
         (low_torque_no_edge == 0U) &&
+        (bidir_no_edge_stop == 0U) &&
         (abs_ref >= g_foc_speed_drop_fault_ref_min_rpm) &&
         (abs_ref <= g_foc_speed_drop_fault_ref_max_rpm) &&
         (abs_ref > abs_fdb) &&
