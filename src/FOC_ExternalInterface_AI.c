@@ -84,8 +84,11 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_select = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_applied = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_last_error = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_test_case_exec_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_motor_id = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_motor_id_applied = 0U;
 
 static uint8_t s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
+static uint8_t s_foc_test_case_last_motor_id = 0U;
 
 #define FOC_EXT_API_TEST_LOG_SIZE       24U
 
@@ -1491,6 +1494,13 @@ FOC_AI_DEBUG_ROOT volatile uint8_t gunCtrl = 0U;
 
 static float s_foc_test_case_last_fixed_ref = 0.0f;
 
+static uint8_t FOC_TestCase_GetMotorId(void)
+{
+  return (g_foc_test_motor_id < FOC_APP_MOTOR_COUNT)
+       ? g_foc_test_motor_id
+       : 0U;
+}
+
 static void FOC_TestCase_ClearAutoModes(void)
 {
   speed_ref = -1.0f;
@@ -1519,10 +1529,15 @@ static float FOC_TestCase_GetFixedSpeedRef(uint8_t unId)
 
 static void FOC_TestCase_Apply(uint8_t test_case)
 {
-  uint8_t unId = 0U;
+  uint8_t unId = FOC_TestCase_GetMotorId();
 
   g_foc_test_case_last_error = 0U;
   speed_ref = -1.0f;
+
+  if (unId != s_foc_test_case_last_motor_id) {
+    FOC_TestCase_ClearAutoModes();
+    Foc_DisableFocControl(s_foc_test_case_last_motor_id);
+  }
 
   if(test_case == FOC_TEST_CASE_STOP){
 
@@ -1599,15 +1614,19 @@ static void FOC_TestCase_Apply(uint8_t test_case)
   }
 
   g_foc_test_case_applied = test_case;
+  g_foc_test_motor_id_applied = unId;
+  s_foc_test_case_last_motor_id = unId;
   g_foc_test_case_exec_count++;
 }
 static void FOC_TestCase_Service(void)
 {
   uint8_t test_case = g_foc_test_case_select;
+  uint8_t motor_id = FOC_TestCase_GetMotorId();
 
-  if(test_case == s_foc_test_case_last_select){
+  if((test_case == s_foc_test_case_last_select) &&
+     (motor_id == s_foc_test_case_last_motor_id)){
     if (test_case == FOC_TEST_CASE_FIXED_SPEED) {
-      float fixed_ref = FOC_TestCase_GetFixedSpeedRef(0U);
+      float fixed_ref = FOC_TestCase_GetFixedSpeedRef(motor_id);
       if (FOC_FABS(fixed_ref - s_foc_test_case_last_fixed_ref) >= 0.5f) {
         FOC_TestCase_Apply(test_case);
       }
