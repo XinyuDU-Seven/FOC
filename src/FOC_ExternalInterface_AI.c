@@ -20,6 +20,7 @@ extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 extern volatile float speed_ref;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
+#define FOC_DETAIL_LOG_SIZE    512U
 
 #define FOC_TEST_CASE_STOP              0U
 #define FOC_TEST_CASE_FIXED_SPEED       1U
@@ -64,6 +65,39 @@ FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_log_iq_ref_mA[FOC_DYN_SPEED_LOG_SI
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_dyn_log_iq_mA[FOC_DYN_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_current_peak_mA[FOC_DYN_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
+
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_enable = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_reset = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_armed = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_active = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_stop = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_idx = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_decim_ms = 1U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_trigger_rpm = 650U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_trigger_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_t_ms[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_ref_rpm[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_fdb_rpm[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_ctrl_fdb_rpm[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_iq_ref_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_id_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_iq_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_current_peak_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_hall_raw[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_hall_sector[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_sector_no_change_count[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_theta_hall[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_theta_pred[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_theta_ctrl[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_duty_a[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_duty_b[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_duty_c[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_zero_soft_scale_percent[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_zero_soft_limited_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_zero_soft_active[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_decel_hold_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_edge_elapsed_us[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_fault[FOC_DETAIL_LOG_SIZE];
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_step_enable = 0U;

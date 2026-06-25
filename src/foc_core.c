@@ -364,6 +364,7 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_core_state = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_core_trigger_source = 0U;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
+#define FOC_DETAIL_LOG_SIZE    512U
 
 extern volatile uint8_t  g_foc_dyn_speed_enable;
 extern volatile uint8_t  g_foc_dyn_speed_reverse;
@@ -400,6 +401,38 @@ extern volatile int16_t  g_foc_dyn_log_iq_ref_mA[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile int16_t  g_foc_dyn_log_iq_mA[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile uint16_t g_foc_dyn_log_current_peak_mA[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
+extern volatile uint8_t  g_foc_detail_log_enable;
+extern volatile uint8_t  g_foc_detail_log_reset;
+extern volatile uint8_t  g_foc_detail_log_armed;
+extern volatile uint8_t  g_foc_detail_log_active;
+extern volatile uint8_t  g_foc_detail_log_stop;
+extern volatile uint16_t g_foc_detail_log_idx;
+extern volatile uint16_t g_foc_detail_log_decim_ms;
+extern volatile uint16_t g_foc_detail_log_trigger_rpm;
+extern volatile uint32_t g_foc_detail_log_trigger_count;
+extern volatile uint32_t g_foc_detail_log_t_ms[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_ref_rpm[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_fdb_rpm[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_ctrl_fdb_rpm[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_iq_ref_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_id_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_iq_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_current_peak_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile uint8_t  g_foc_detail_log_hall_raw[FOC_DETAIL_LOG_SIZE];
+extern volatile uint8_t  g_foc_detail_log_hall_sector[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_sector_no_change_count[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_theta_hall[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_theta_pred[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_theta_ctrl[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_duty_a[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_duty_b[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_duty_c[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_zero_soft_scale_percent[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_zero_soft_limited_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile uint8_t  g_foc_detail_log_zero_soft_active[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_decel_hold_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile uint32_t g_foc_detail_log_edge_elapsed_us[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_fault[FOC_DETAIL_LOG_SIZE];
 extern volatile uint8_t  g_foc_bidir_speed_enable;
 extern volatile uint8_t  g_foc_bidir_speed_step_enable;
 extern volatile uint8_t  g_foc_bidir_speed_reset_stats;
@@ -486,6 +519,8 @@ static uint8_t s_dyn_speed_prev_enable = 0U;
 static uint32_t s_dyn_speed_start_us = 0U;
 static uint32_t s_dyn_log_last_us = 0U;
 static float s_dyn_abs_err_avg_rpm = 0.0f;
+static uint32_t s_detail_log_last_us = 0U;
+static float s_detail_log_prev_abs_ref_rpm = 0.0f;
 static uint8_t s_bidir_speed_prev_enable = 0U;
 static uint32_t s_bidir_speed_start_us = 0U;
 static uint32_t s_bidir_speed_last_us = 0U;
@@ -1093,6 +1128,163 @@ static void FOC_DynSpeed_ResetLog(void)
     }
 }
 
+static void FOC_DetailLog_Reset(void)
+{
+    uint16_t i;
+
+    g_foc_detail_log_idx = 0U;
+    g_foc_detail_log_active = 0U;
+    g_foc_detail_log_stop = (g_foc_detail_log_enable != 0U) ? 0U : 1U;
+    g_foc_detail_log_armed = (g_foc_detail_log_enable != 0U) ? 1U : 0U;
+    g_foc_detail_log_reset = 0U;
+    s_detail_log_last_us = 0U;
+    s_detail_log_prev_abs_ref_rpm = 0.0f;
+
+    for (i = 0U; i < FOC_DETAIL_LOG_SIZE; i++) {
+        g_foc_detail_log_t_ms[i] = 0U;
+        g_foc_detail_log_ref_rpm[i] = 0;
+        g_foc_detail_log_fdb_rpm[i] = 0;
+        g_foc_detail_log_ctrl_fdb_rpm[i] = 0;
+        g_foc_detail_log_iq_ref_mA[i] = 0;
+        g_foc_detail_log_id_mA[i] = 0;
+        g_foc_detail_log_iq_mA[i] = 0;
+        g_foc_detail_log_current_peak_mA[i] = 0U;
+        g_foc_detail_log_hall_raw[i] = 0U;
+        g_foc_detail_log_hall_sector[i] = 0U;
+        g_foc_detail_log_sector_no_change_count[i] = 0U;
+        g_foc_detail_log_theta_hall[i] = 0U;
+        g_foc_detail_log_theta_pred[i] = 0U;
+        g_foc_detail_log_theta_ctrl[i] = 0U;
+        g_foc_detail_log_duty_a[i] = 0U;
+        g_foc_detail_log_duty_b[i] = 0U;
+        g_foc_detail_log_duty_c[i] = 0U;
+        g_foc_detail_log_zero_soft_scale_percent[i] = 0U;
+        g_foc_detail_log_zero_soft_limited_mA[i] = 0;
+        g_foc_detail_log_zero_soft_active[i] = 0U;
+        g_foc_detail_log_decel_hold_mA[i] = 0;
+        g_foc_detail_log_edge_elapsed_us[i] = 0U;
+        g_foc_detail_log_fault[i] = 0U;
+    }
+}
+
+static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
+{
+    uint16_t idx;
+    uint32_t decim_us = (uint32_t)g_foc_detail_log_decim_ms * 1000U;
+    uint32_t edge_elapsed_us = 0U;
+    float signed_speed_fdb = s_ctx.speed_fdb;
+    float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
+
+    if (g_foc_detail_log_active == 0U) {
+        return;
+    }
+    if (decim_us < 1000U) {
+        decim_us = 1000U;
+    }
+    if ((s_detail_log_last_us != 0U) &&
+        ((now_us - s_detail_log_last_us) < decim_us)) {
+        return;
+    }
+
+    idx = g_foc_detail_log_idx;
+    if (idx >= FOC_DETAIL_LOG_SIZE) {
+        g_foc_detail_log_active = 0U;
+        g_foc_detail_log_stop = 1U;
+        return;
+    }
+
+    if ((g_foc_dyn_speed_ref_rpm < 0) &&
+        (s_ctx.direction == FOC_DIR_CCW)) {
+        signed_speed_fdb = -signed_speed_fdb;
+        signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
+    }
+    if (s_ctx.timestamp_prev != 0U) {
+        edge_elapsed_us = now_us - s_ctx.timestamp_prev;
+    }
+
+    s_detail_log_last_us = now_us;
+    g_foc_detail_log_t_ms[idx] = g_foc_bidir_speed_elapsed_ms;
+    g_foc_detail_log_ref_rpm[idx] = g_foc_dyn_speed_ref_rpm;
+    g_foc_detail_log_fdb_rpm[idx] =
+        FOC_Log_ToI16(signed_speed_fdb, 1.0f);
+    g_foc_detail_log_ctrl_fdb_rpm[idx] =
+        FOC_Log_ToI16(signed_speed_ctrl_fdb, 1.0f);
+    g_foc_detail_log_iq_ref_mA[idx] =
+        FOC_Log_ToI16(FOC_ControlIqRef(), 1000.0f);
+    g_foc_detail_log_id_mA[idx] = FOC_Log_ToI16(s_ctx.i_dq.d, 1000.0f);
+    g_foc_detail_log_iq_mA[idx] = FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
+    g_foc_detail_log_current_peak_mA[idx] =
+        FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
+    g_foc_detail_log_hall_raw[idx] =
+        (uint8_t)((s_ctx.hall_raw.h1 << 2) |
+                  (s_ctx.hall_raw.h2 << 1) |
+                   s_ctx.hall_raw.h3);
+    g_foc_detail_log_hall_sector[idx] = s_ctx.hall_sector.sector;
+    g_foc_detail_log_sector_no_change_count[idx] =
+        FOC_Log_U32ToU16((uint32_t)s_ctx.sector_no_change_count);
+    g_foc_detail_log_theta_hall[idx] = FOC_Log_AngleU16(s_ctx.theta_e);
+    g_foc_detail_log_theta_pred[idx] =
+        FOC_Log_AngleU16(s_ctx.theta_e_predicted);
+    g_foc_detail_log_theta_ctrl[idx] = FOC_Log_AngleU16(theta_ctrl);
+    g_foc_detail_log_duty_a[idx] = FOC_Log_ToU16(s_ctx.duty_a, 10000.0f);
+    g_foc_detail_log_duty_b[idx] = FOC_Log_ToU16(s_ctx.duty_b, 10000.0f);
+    g_foc_detail_log_duty_c[idx] = FOC_Log_ToU16(s_ctx.duty_c, 10000.0f);
+    g_foc_detail_log_zero_soft_scale_percent[idx] =
+        g_foc_bidir_zero_soft_scale_percent;
+    g_foc_detail_log_zero_soft_limited_mA[idx] =
+        g_foc_bidir_zero_soft_limited_mA;
+    g_foc_detail_log_zero_soft_active[idx] = g_foc_bidir_zero_soft_active;
+    g_foc_detail_log_decel_hold_mA[idx] =
+        g_foc_bidir_decel_hold_applied_mA;
+    g_foc_detail_log_edge_elapsed_us[idx] = edge_elapsed_us;
+    g_foc_detail_log_fault[idx] = (uint16_t)s_ctx.fault;
+
+    idx++;
+    g_foc_detail_log_idx = idx;
+    if (idx >= FOC_DETAIL_LOG_SIZE) {
+        g_foc_detail_log_active = 0U;
+        g_foc_detail_log_stop = 1U;
+    }
+}
+
+static void FOC_DetailLog_Service(float theta_ctrl, uint32_t now_us)
+{
+    float ref_abs = FOC_FABS((float)g_foc_dyn_speed_ref_rpm);
+    uint8_t ref_decreasing =
+        ((s_detail_log_prev_abs_ref_rpm - ref_abs) > 0.5f) ? 1U : 0U;
+
+    if (g_foc_detail_log_reset != 0U) {
+        FOC_DetailLog_Reset();
+    }
+    if (g_foc_detail_log_enable == 0U) {
+        g_foc_detail_log_active = 0U;
+        g_foc_detail_log_armed = 0U;
+        g_foc_detail_log_stop = 1U;
+        s_detail_log_prev_abs_ref_rpm = ref_abs;
+        return;
+    }
+
+    if ((g_foc_detail_log_armed != 0U) &&
+        (g_foc_detail_log_active == 0U) &&
+        (g_foc_detail_log_stop == 0U) &&
+        (g_foc_bidir_speed_enable != 0U) &&
+        (g_foc_bidir_speed_step_enable == 2U) &&
+        (ref_decreasing != 0U) &&
+        (ref_abs <= (float)g_foc_detail_log_trigger_rpm) &&
+        (ref_abs >= 1.0f)) {
+        g_foc_detail_log_idx = 0U;
+        g_foc_detail_log_active = 1U;
+        g_foc_detail_log_armed = 0U;
+        s_detail_log_last_us = 0U;
+        if (g_foc_detail_log_trigger_count < 0xFFFFFFFFU) {
+            g_foc_detail_log_trigger_count++;
+        }
+    }
+
+    FOC_DetailLog_Record(now_us, theta_ctrl);
+    s_detail_log_prev_abs_ref_rpm = ref_abs;
+}
+
 static void FOC_DynSpeed_ResetStats(uint32_t now_us)
 {
     g_foc_dyn_speed_elapsed_ms = 0U;
@@ -1124,6 +1316,7 @@ static void FOC_DynSpeed_ResetStats(uint32_t now_us)
     s_dyn_abs_err_avg_rpm = 0.0f;
     s_dyn_speed_start_us = now_us;
     FOC_DynSpeed_ResetLog();
+    FOC_DetailLog_Reset();
 }
 
 static void FOC_DynSpeed_ResetStatsAtMax(uint32_t now_us)
@@ -3630,6 +3823,7 @@ static void FOC_Prof_Reset(void)
 
      FOC_Log_Record(theta_e_ctrl);
      FOC_DynSpeed_ServiceMetrics();
+     FOC_DetailLog_Service(theta_e_ctrl, FOC_HAL_GetTimestampUs());
      prof_next_us = FOC_HAL_GetTimestampUs();
      FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 6U);
      FOC_Prof_Exit(prof_enter_us, prof_next_us);
