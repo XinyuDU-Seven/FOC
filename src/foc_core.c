@@ -256,6 +256,7 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_overspeed_deadband_rpm =
     (uint16_t)FOC_LOW_SPEED_OVERSPEED_DEADBAND_RPM;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ctrl_fdb_no_edge_decay_rpm_per_s = 2500U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_ctrl_fdb_no_edge_decay_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ctrl_fdb_max_lead_rpm = 300U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_torque_enable =
     FOC_LOW_SPEED_TORQUE_ENABLE;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_torque_active = 0U;
@@ -1522,6 +1523,7 @@ static void FOC_UpdateCurrentAngleTrim(float dt)
 static void FOC_DecaySpeedControlFeedback(float target_fdb)
 {
     float decay_rate = (float)g_foc_speed_ctrl_fdb_no_edge_decay_rpm_per_s;
+    float max_lead = (float)g_foc_speed_ctrl_fdb_max_lead_rpm;
     float decay_step;
     float delta;
 
@@ -1547,6 +1549,10 @@ static void FOC_DecaySpeedControlFeedback(float target_fdb)
     }
     if (s_ctx.speed_ctrl_fdb < 0.0f) {
         s_ctx.speed_ctrl_fdb = 0.0f;
+    }
+    if ((max_lead > 0.0f) &&
+        (s_ctx.speed_ctrl_fdb > (target_fdb + max_lead))) {
+        s_ctx.speed_ctrl_fdb = target_fdb + max_lead;
     }
     if (g_foc_speed_ctrl_fdb_no_edge_decay_count < 0xFFFFFFFFU) {
         g_foc_speed_ctrl_fdb_no_edge_decay_count++;
