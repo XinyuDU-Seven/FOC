@@ -112,6 +112,8 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_direction_reset_count =
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_decay_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_elapsed_us = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_speed_limit_rpm = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_decay_min_speed_rpm =
+    FOC_HALL_NO_EDGE_DECAY_MIN_SPEED_RPM;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_no_edge_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_resync_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_resync_diff_mrad = 0;
@@ -298,6 +300,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
     float ratio = FOC_HALL_NO_EDGE_DECAY_START_RATIO;
     float limit_rpm;
     float speed_abs;
+    float min_speed_rpm;
 
     if ((ctx->hall_sector_dt_us == 0U) ||
         (ctx->hall_sector.sector == 0U) ||
@@ -308,6 +311,15 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
     now_us = FOC_HAL_GetTimestampUs();
     elapsed = now_us - ctx->timestamp_prev;
     if (elapsed == 0U) {
+        return 0U;
+    }
+
+    speed_abs = ctx->speed_filtered;
+    if (speed_abs < 0.0f) {
+        speed_abs = -speed_abs;
+    }
+    min_speed_rpm = (float)g_foc_observer_no_edge_decay_min_speed_rpm;
+    if ((min_speed_rpm > 0.0f) && (speed_abs < min_speed_rpm)) {
         return 0U;
     }
 
@@ -338,10 +350,6 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
         limit_rpm = FOC_SPEED_ESTIMATE_MAX_RPM;
     }
 
-    speed_abs = ctx->speed_filtered;
-    if (speed_abs < 0.0f) {
-        speed_abs = -speed_abs;
-    }
     if (limit_rpm >= speed_abs) {
         return 0U;
     }
@@ -396,6 +404,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_no_edge_decay_count = 0U;
      g_foc_observer_no_edge_elapsed_us = 0U;
      g_foc_observer_no_edge_speed_limit_rpm = 0U;
+     g_foc_observer_no_edge_decay_min_speed_rpm =
+         FOC_HALL_NO_EDGE_DECAY_MIN_SPEED_RPM;
      g_foc_observer_no_edge_active = 0U;
      g_foc_observer_resync_count = 0U;
      g_foc_observer_resync_diff_mrad = 0;
