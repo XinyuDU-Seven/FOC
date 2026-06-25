@@ -594,6 +594,20 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      g_foc_speed_ref_ctrl_rpm = 0;
      g_foc_speed_ref_ramp_active = 0U;
  }
+ static void FOC_ResetSpeedLoopForZeroHold(void)
+ {
+     FOC_ResetSpeedRefRamp();
+     FOC_PID_Reset(&s_ctx.pid_speed);
+     FOC_PID_Reset(&s_ctx.pid_iq);
+     s_ctx.iq_ref = 0.0f;
+     s_ctx.speed_loop_counter = 0U;
+     s_speed_loop_accum_us = 0U;
+     s_speed_error_boost_prev_ref = 0.0f;
+     g_foc_speed_error_boost_mA = 0;
+     g_foc_low_speed_torque_active = 0U;
+     g_foc_low_speed_torque_applied_mA = 0;
+     g_foc_current_q_ff_mV = 0;
+ }
  static void FOC_NormalizeSignedSpeedRef(void)
  {
      uint8_t reset_loop = 0U;
@@ -1137,8 +1151,7 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
     }
     *zero_dir = s_ctx.direction;
 
-    if ((g_foc_bidir_zero_cross_enable == 0U) ||
-        (g_foc_bidir_speed_step_enable != 0U)) {
+    if (g_foc_bidir_zero_cross_enable == 0U) {
         FOC_BidirSpeed_ResetZeroCross();
         if (raw_sign != 0) {
             s_bidir_zero_command_sign = raw_sign;
@@ -1312,9 +1325,8 @@ static void FOC_BidirSpeed_ServiceRef(void)
     target = raw_target;
     dt_us = now_us - s_bidir_speed_last_us;
     g_foc_bidir_zero_approach_active = 0U;
-    if (((g_foc_bidir_speed_slew_enable != 0U) ||
-         (g_foc_bidir_zero_cross_enable != 0U)) &&
-        (g_foc_bidir_speed_step_enable == 0U)) {
+    if ((g_foc_bidir_speed_slew_enable != 0U) ||
+        (g_foc_bidir_zero_cross_enable != 0U)) {
         float slew = (float)g_foc_bidir_speed_slew_rpm_per_s;
         int16_t raw_sign = FOC_BidirSpeed_TargetSign(raw_target);
         int16_t limited_sign =
@@ -3014,6 +3026,11 @@ static void FOC_Prof_Reset(void)
      }
 
      FOC_UpdateSpeedRefRamp(control_period_us);
+     if ((g_foc_bidir_speed_enable != 0U) &&
+         (s_bidir_zero_state == FOC_BIDIR_ZERO_STATE_HOLD) &&
+         (FOC_FABS(s_ctx.speed_ref) < 0.5f)) {
+         FOC_ResetSpeedLoopForZeroHold();
+     }
 
      float theta_e_ctrl = FOC_Observer_PredictAngle(&s_ctx, observer_dt,
 
@@ -3133,7 +3150,7 @@ static void FOC_Prof_Reset(void)
              g_foc_speed_error_boost_mA = 0;
 #endif
              if ((g_foc_bidir_speed_enable != 0U) &&
-                 (g_foc_bidir_zero_cross_state == FOC_BIDIR_ZERO_STATE_IDLE) &&
+                 (g_foc_bidir_zero_cross_state != FOC_BIDIR_ZERO_STATE_HOLD) &&
                  (g_foc_bidir_zero_approach_active != 0U)) {
                  float brake_limit =
                      (float)g_foc_bidir_zero_approach_brake_limit_mA *
@@ -3165,6 +3182,12 @@ static void FOC_Prof_Reset(void)
  
 
      /* ---- 7. 电流环 PID ---- */
+
+     if ((g_foc_bidir_speed_enable != 0U) &&
+         (s_bidir_zero_state == FOC_BIDIR_ZERO_STATE_HOLD) &&
+         (FOC_FABS(s_ctx.speed_ref) < 0.5f)) {
+         FOC_ResetSpeedLoopForZeroHold();
+     }
 
      if (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED) {
          s_speed_loop_accum_us = 0U;
