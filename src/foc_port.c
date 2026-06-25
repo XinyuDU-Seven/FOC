@@ -58,6 +58,8 @@
 
 #define MOTOR_HALL_IO_PIN_W_1 P14_02 /* 高调电机HW(V0.2模具件硬件: P14_02, V0.1模具件硬件: P14_02) */
 
+#define FOC_PORT_MOTOR_COUNT 2U
+
  
 
 typedef struct {
@@ -72,21 +74,63 @@ typedef struct {
 
  
 
-HallState_t gstHallState[2] = {0};
+HallState_t gstHallState[FOC_PORT_MOTOR_COUNT] = {0};
+
+static volatile uint8_t s_foc_selected_motor = 0U;
 
 static uint16_t s_foc_adc_raw[4] = {0};
 static uint8_t s_foc_adc_cache_valid = 0U;
-static volatile uint8_t s_hall_event_h1[2] = {0U, 0U};
-static volatile uint8_t s_hall_event_h2[2] = {0U, 0U};
-static volatile uint8_t s_hall_event_h3[2] = {0U, 0U};
-static volatile uint8_t s_hall_event_valid[2] = {0U, 0U};
-static volatile uint32_t s_hall_event_timestamp_us[2] = {0U, 0U};
-static volatile uint32_t s_hall_event_seq[2] = {0U, 0U};
-static volatile uint32_t s_hall_event_version[2] = {0U, 0U};
+static volatile uint8_t s_hall_event_h1[FOC_PORT_MOTOR_COUNT] = {0U, 0U};
+static volatile uint8_t s_hall_event_h2[FOC_PORT_MOTOR_COUNT] = {0U, 0U};
+static volatile uint8_t s_hall_event_h3[FOC_PORT_MOTOR_COUNT] = {0U, 0U};
+static volatile uint8_t s_hall_event_valid[FOC_PORT_MOTOR_COUNT] = {0U, 0U};
+static volatile uint32_t s_hall_event_timestamp_us[FOC_PORT_MOTOR_COUNT] = {0U, 0U};
+static volatile uint32_t s_hall_event_seq[FOC_PORT_MOTOR_COUNT] = {0U, 0U};
+static volatile uint32_t s_hall_event_version[FOC_PORT_MOTOR_COUNT] = {0U, 0U};
 
+static uint8_t FOC_HAL_GetActiveMotor(void)
+{
+    uint8_t motor = s_foc_selected_motor;
+
+    return (motor < FOC_PORT_MOTOR_COUNT) ? motor : 0U;
+}
+
+void FOC_HAL_SelectMotor(uint8_t motor_id)
+{
+    if (motor_id >= FOC_PORT_MOTOR_COUNT) {
+        return;
+    }
+
+    if (FOC_HAL_GetActiveMotor() != motor_id) {
+        s_foc_adc_cache_valid = 0U;
+        s_foc_selected_motor = motor_id;
+    }
+}
+
+uint8_t FOC_HAL_GetSelectedMotor(void)
+{
+    return FOC_HAL_GetActiveMotor();
+}
+
+static void FOC_HAL_ReadHallRawByMotor(uint8_t motor, FOC_HallRaw_t *hall)
+{
+    if (motor == 1U) {
+        hall->h1 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_U_1);
+        hall->h2 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_V_1);
+        hall->h3 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_W_1);
+    } else {
+        hall->h1 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_U_0);
+        hall->h2 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_V_0);
+        hall->h3 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_W_0);
+    }
+
+    gstHallState[motor].unHA = hall->h1;
+    gstHallState[motor].unHB = hall->h2;
+    gstHallState[motor].unHC = hall->h3;
+}
 static void FOC_HAL_UpdateAdcCache(void)
 {
-    int unId = 0;
+    uint8_t unId = FOC_HAL_GetActiveMotor();
 
     Adc_GetBldcFocCurrentVoltage(unId, s_foc_adc_raw);
     s_foc_adc_cache_valid = 1U;
@@ -97,7 +141,7 @@ static void FOC_HAL_RecordHallEvent(uint8_t motor,
                                     uint8_t h2,
                                     uint8_t h3)
 {
-    if (motor >= 2U) {
+    if (motor >= FOC_PORT_MOTOR_COUNT) {
         return;
     }
 
@@ -222,31 +266,21 @@ int FOC_HAL_Init(void)
  
 
 void FOC_HAL_GetHallRaw(FOC_HallRaw_t *hall)
-
 {
+    uint8_t motor = FOC_HAL_GetActiveMotor();
 
-    //目前仅支持单个电机
+    if (hall == NULL) {
+        return;
+    }
 
-    /* Read GPIO directly in the control loop; do not depend on Hall IRQ cache. */
-
-    hall->h1 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_U_0);
-
-    hall->h2 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_V_0);
-
-    hall->h3 = (uint8_t)Dio_ReadChannel(MOTOR_HALL_IO_PIN_W_0);
-
-    gstHallState[0].unHA = hall->h1;
-
-    gstHallState[0].unHB = hall->h2;
-
-    gstHallState[0].unHC = hall->h3;
-
+    FOC_HAL_ReadHallRawByMotor(motor, hall);
 }
 
 uint8_t FOC_HAL_GetHallEvent(FOC_HallRaw_t *hall,
                              uint32_t *timestamp_us,
                              uint32_t *seq)
 {
+    uint8_t motor = FOC_HAL_GetActiveMotor();
     uint32_t version_before;
     uint32_t version_after;
     uint8_t h1;
@@ -261,14 +295,14 @@ uint8_t FOC_HAL_GetHallEvent(FOC_HallRaw_t *hall,
     }
 
     do {
-        version_before = s_hall_event_version[0];
-        h1 = s_hall_event_h1[0];
-        h2 = s_hall_event_h2[0];
-        h3 = s_hall_event_h3[0];
-        timestamp = s_hall_event_timestamp_us[0];
-        event_seq = s_hall_event_seq[0];
-        valid = s_hall_event_valid[0];
-        version_after = s_hall_event_version[0];
+        version_before = s_hall_event_version[motor];
+        h1 = s_hall_event_h1[motor];
+        h2 = s_hall_event_h2[motor];
+        h3 = s_hall_event_h3[motor];
+        timestamp = s_hall_event_timestamp_us[motor];
+        event_seq = s_hall_event_seq[motor];
+        valid = s_hall_event_valid[motor];
+        version_after = s_hall_event_version[motor];
     } while ((version_before != version_after) || ((version_after & 1U) != 0U));
 
     if (valid == 0U) {
@@ -341,10 +375,8 @@ void FOC_HAL_GetCurrentOffset(FOC_CurrentCalib_t *offset)
  * =================================================================== */
 
 void FOC_HAL_SetDutyCycle(float dA, float dB, float dC)
-
 {
-
-    uint8_t unId = 0;
+    uint8_t unId = FOC_HAL_GetActiveMotor();
 
     uint32_t unDutyA = dA * 10000;
 
@@ -383,7 +415,6 @@ void FOC_HAL_EnablePWM(void)
  
 
 void FOC_HAL_DisablePWM(void)
-
 {
 
     /*
@@ -392,9 +423,9 @@ void FOC_HAL_DisablePWM(void)
 
      */
 
-    uint8_t unId = 0;
+    uint8_t unId = FOC_HAL_GetActiveMotor();
 
-    Pwm_BldcFocPwmToSVPwm(unId, 0, 0, 0); /* 先直接停机，再改状态 */
+    Pwm_BldcFocPwmToSVPwm(unId, 0U, 0U, 0U); /* 先直接停机，再改状态 */
 
 }
 
@@ -466,6 +497,7 @@ uint32_t FOC_HAL_GetBusVoltageRaw(void)
 #define FOC_BSP_ADC_VREF                  5.0f      /* ADC参考电压 */
 
 #define MOTOR_ADC_AMPF_0                  12.50f    /* 0号电机ADC电流放大倍率 */
+#define MOTOR_ADC_AMPF_1                  12.50f    /* 1号电机ADC电流放大倍率 */
 
 #define FOC_BSP_ADC_VOLTAGE_DIVIDER_RATIO 13.0f/3.0f /* 电压分压比 */
 
@@ -490,13 +522,13 @@ uint32_t FOC_HAL_GetBusVoltageRaw(void)
 */
 
 float FOC_HAL_GetCurrentScale(void)
-
 {
+    float amp = (FOC_HAL_GetActiveMotor() == 1U)
+        ? MOTOR_ADC_AMPF_1
+        : MOTOR_ADC_AMPF_0;
 
     /* 计算相电流: I = 放大系数 * 5 * (ADC  - 2048) / 4095 ; */
-
-    return MOTOR_ADC_AMPF_0 * FOC_BSP_ADC_VREF / FOC_BSP_ADC_CURRENT_RESOLUTION;
-
+    return amp * FOC_BSP_ADC_VREF / FOC_BSP_ADC_CURRENT_RESOLUTION;
 }
 
  

@@ -15,6 +15,7 @@
 #endif
 
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_selected_motor_id = 0U;
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 extern volatile float speed_ref;
 
@@ -452,7 +453,7 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 }
 #endif
 
-#define FOC_APP_MOTOR_ID       0U
+#define FOC_APP_MOTOR_COUNT    2U
 #define FOC_APP_POLE_PAIRS     4U
 #define FOC_APP_DIR_NONE       0U
 #define FOC_APP_DIR_FORWARD    1U
@@ -462,7 +463,20 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 
 static FocError FOC_AI_CheckMotorId(uint8_t unId)
 {
-  return (unId == FOC_APP_MOTOR_ID) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
+  return (unId < FOC_APP_MOTOR_COUNT) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
+}
+
+static FocError FOC_AI_SelectMotor(uint8_t unId)
+{
+  FocError err = FOC_AI_CheckMotorId(unId);
+
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  FOC_Core_SelectMotor(unId);
+  g_foc_selected_motor_id = FOC_HAL_GetSelectedMotor();
+  return FOC_SUCCESS;
 }
 
 static FocError FOC_AI_MapResult(int result)
@@ -864,9 +878,9 @@ static void FOC_ExtApiTest_Service(void)
     break;
 
   case 11U:
-    result = Foc_GetMotorNum(0U, 0U, 0U, &motor_num);
+    result = Foc_GetMotorNum(0U, 0U, motor_id, &motor_num);
     FOC_ExtApiTest_Record(FOC_EXT_API_ID_GET_MOTOR_NUM, result,
-                          0.0f, 0.0f, 0.0f,
+                          (float)motor_id, 0.0f, 0.0f,
                           (float)motor_num, 0.0f, 0.0f);
     break;
 
@@ -1028,7 +1042,7 @@ void Foc_Init_AI(void)
 FocError Foc_EnableFocControl_AI(uint8_t unId)
 {
   const FOC_Context_t *ctx;
-  FocError err = FOC_AI_CheckMotorId(unId);
+  FocError err = FOC_AI_SelectMotor(unId);
 
   if (err != FOC_SUCCESS) {
     return err;
@@ -1063,7 +1077,7 @@ FocError Foc_EnableFocControl_AI(uint8_t unId)
 
 FocError Foc_DisableFocControl_AI(uint8_t unId)
 {
-  FocError err = FOC_AI_CheckMotorId(unId);
+  FocError err = FOC_AI_SelectMotor(unId);
 
   if (err != FOC_SUCCESS) {
     return err;
@@ -1093,7 +1107,7 @@ FocError Foc_DisableFocControl_AI(uint8_t unId)
 
 FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq)
 {
-  FocError err = FOC_AI_CheckMotorId(unId);
+  FocError err = FOC_AI_SelectMotor(unId);
 
   if (err != FOC_SUCCESS) {
     return err;
@@ -1122,7 +1136,7 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
   (void)unParam2;
   (void)unParam3;
 
-  err = FOC_AI_CheckMotorId(unId);
+  err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
     return err;
   }
@@ -1166,7 +1180,7 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
 
 FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed)
 {
-  FocError err = FOC_AI_CheckMotorId(unId);
+  FocError err = FOC_AI_SelectMotor(unId);
 
   if (err != FOC_SUCCESS) {
     return err;
@@ -1203,7 +1217,7 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
     return FOC_POINTER_NULL;
   }
 
-  err = FOC_AI_CheckMotorId(unId);
+  err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
     return err;
   }
@@ -1262,13 +1276,15 @@ FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unM
 {
   (void)unCarConfigID;
   (void)unSeatID;
-  (void)unMotorID;
-
   if (punMotorNum == NULL) {
     return FOC_POINTER_NULL;
   }
 
-  *punMotorNum = FOC_APP_MOTOR_ID;
+  if (unMotorID >= FOC_APP_MOTOR_COUNT) {
+    return FOC_MOTOR_ID_INVALID;
+  }
+
+  *punMotorNum = unMotorID;
   return FOC_SUCCESS;
 }
 
@@ -1338,7 +1354,7 @@ FocError Foc_GetAngleAndSpeed_AI(uint8_t unId, float *pfThetaElec, float *pfSpee
     return FOC_POINTER_NULL;
   }
 
-  err = FOC_AI_CheckMotorId(unId);
+  err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
     return err;
   }

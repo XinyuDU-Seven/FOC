@@ -91,6 +91,12 @@ int FOC_Core_Start(void);
 
 int FOC_Core_Stop(void);
 
+void FOC_Core_SelectMotor(uint8_t motor_id);
+
+uint8_t FOC_Core_GetSelectedMotor(void);
+
+const FOC_Context_t *FOC_Core_GetContextByMotor(uint8_t motor_id);
+
  
 
 /**

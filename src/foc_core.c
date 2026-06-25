@@ -43,17 +43,28 @@
 
  /** FOC 运行上下文实例 */
 
-FOC_Context_t s_ctx;
+#define FOC_CORE_MOTOR_COUNT 2U
+
+FOC_Context_t g_foc_ctx[FOC_CORE_MOTOR_COUNT];
 
  
 
  /** 模块配置缓存 */
 
-FOC_Config_t  s_config;
+FOC_Config_t  g_foc_config[FOC_CORE_MOTOR_COUNT];
+
+static volatile uint8_t s_foc_core_active_motor = 0U;
+
+#define s_ctx    (g_foc_ctx[s_foc_core_active_motor])
+#define s_config (g_foc_config[s_foc_core_active_motor])
 
 #define FOC_CTRL_SOURCE_SPEED   0U
 #define FOC_CTRL_SOURCE_CURRENT 1U
-static uint8_t s_foc_ctrl_source = FOC_CTRL_SOURCE_SPEED;
+static uint8_t s_foc_ctrl_source_store[FOC_CORE_MOTOR_COUNT] = {
+    FOC_CTRL_SOURCE_SPEED,
+    FOC_CTRL_SOURCE_SPEED
+};
+#define s_foc_ctrl_source (s_foc_ctrl_source_store[s_foc_core_active_motor])
 
 /** 保护阈值实例 */
 
@@ -311,20 +322,41 @@ extern volatile int16_t  g_foc_bidir_speed_ref_rpm;
 extern volatile uint8_t  g_foc_observer_no_edge_active;
 
 static uint16_t s_foc_log_decim = 0U;
-static uint16_t s_hall_illegal_transition_count = 0U;
-static uint32_t s_foc_prof_last_enter_us = 0U;
-static uint32_t s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
-static uint16_t s_hall_recovery_accept_cycles = 0U;
-static uint16_t s_post_recovery_duty_slew_cycles = 0U;
-static uint16_t s_recovery_zero_vector_cycles = 0U;
-static uint16_t s_recovery_zero_vector_min_cycles = 0U;
-static uint32_t s_speed_loop_accum_us = 0U;
-static uint16_t s_speed_drop_prev_abs_ref_rpm = 0U;
-static float s_speed_ref_ctrl = 0.0f;
-static FOC_Dir_e s_speed_ref_ctrl_direction = FOC_DIR_CW;
-static float s_speed_error_boost_prev_ref = 0.0f;
-static float s_current_angle_trim_rad = 0.0f;
-static uint32_t s_hall_event_seq_seen = 0U;
+static uint16_t s_hall_illegal_transition_count_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint32_t s_foc_prof_last_enter_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint32_t s_foc_control_period_us_store[FOC_CORE_MOTOR_COUNT] = {
+    FOC_CONTROL_PERIOD_US,
+    FOC_CONTROL_PERIOD_US
+};
+static uint16_t s_hall_recovery_accept_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint16_t s_post_recovery_duty_slew_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint16_t s_recovery_zero_vector_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint16_t s_recovery_zero_vector_min_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint32_t s_speed_loop_accum_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint16_t s_speed_drop_prev_abs_ref_rpm_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static float s_speed_ref_ctrl_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+static FOC_Dir_e s_speed_ref_ctrl_direction_store[FOC_CORE_MOTOR_COUNT] = {
+    FOC_DIR_CW,
+    FOC_DIR_CW
+};
+static float s_speed_error_boost_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+static float s_current_angle_trim_rad_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+
+#define s_hall_illegal_transition_count  (s_hall_illegal_transition_count_store[s_foc_core_active_motor])
+#define s_foc_prof_last_enter_us         (s_foc_prof_last_enter_us_store[s_foc_core_active_motor])
+#define s_foc_control_period_us          (s_foc_control_period_us_store[s_foc_core_active_motor])
+#define s_hall_recovery_accept_cycles    (s_hall_recovery_accept_cycles_store[s_foc_core_active_motor])
+#define s_post_recovery_duty_slew_cycles (s_post_recovery_duty_slew_cycles_store[s_foc_core_active_motor])
+#define s_recovery_zero_vector_cycles    (s_recovery_zero_vector_cycles_store[s_foc_core_active_motor])
+#define s_recovery_zero_vector_min_cycles (s_recovery_zero_vector_min_cycles_store[s_foc_core_active_motor])
+#define s_speed_loop_accum_us            (s_speed_loop_accum_us_store[s_foc_core_active_motor])
+#define s_speed_drop_prev_abs_ref_rpm    (s_speed_drop_prev_abs_ref_rpm_store[s_foc_core_active_motor])
+#define s_speed_ref_ctrl                 (s_speed_ref_ctrl_store[s_foc_core_active_motor])
+#define s_speed_ref_ctrl_direction       (s_speed_ref_ctrl_direction_store[s_foc_core_active_motor])
+#define s_speed_error_boost_prev_ref     (s_speed_error_boost_prev_ref_store[s_foc_core_active_motor])
+#define s_current_angle_trim_rad         (s_current_angle_trim_rad_store[s_foc_core_active_motor])
+#define s_hall_event_seq_seen            (s_hall_event_seq_seen_store[s_foc_core_active_motor])
 static uint8_t s_dyn_speed_prev_enable = 0U;
 static uint32_t s_dyn_speed_start_us = 0U;
 static uint32_t s_dyn_log_last_us = 0U;
@@ -342,6 +374,7 @@ static uint32_t s_bidir_speed_start_us = 0U;
 
  
 
+ static void FOC_Core_MainLoopOne(void);
  static void FOC_StateMachine(void);
  static uint32_t FOC_Prof_Enter(void);
  static void FOC_Prof_RecordSegment(uint32_t start_us, uint32_t end_us, uint8_t seg_id);
@@ -422,6 +455,32 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
          angle += FOC_2PI;
      }
      return (uint16_t)(angle * (65535.0f / FOC_2PI));
+ }
+
+ void FOC_Core_SelectMotor(uint8_t motor_id)
+ {
+     if (motor_id >= FOC_CORE_MOTOR_COUNT) {
+         motor_id = 0U;
+     }
+
+     s_foc_core_active_motor = motor_id;
+     FOC_HAL_SelectMotor(motor_id);
+ }
+
+ uint8_t FOC_Core_GetSelectedMotor(void)
+ {
+     uint8_t motor = s_foc_core_active_motor;
+
+     return (motor < FOC_CORE_MOTOR_COUNT) ? motor : 0U;
+ }
+
+ const FOC_Context_t *FOC_Core_GetContextByMotor(uint8_t motor_id)
+ {
+     if (motor_id >= FOC_CORE_MOTOR_COUNT) {
+         motor_id = 0U;
+     }
+
+     return &g_foc_ctx[motor_id];
  }
 
  static float FOC_ControlIqRef(void)
@@ -1826,6 +1885,7 @@ static void FOC_Prof_Reset(void)
  int FOC_Core_Init(const FOC_Config_t *config)
 
  {
+     uint8_t motor;
 
      if (config == NULL) {
 
@@ -1848,6 +1908,8 @@ static void FOC_Prof_Reset(void)
      /* 初始化 sin/cos 查找表 */
 
      FOC_Math_InitTable();
+
+     FOC_Core_SelectMotor(0U);
 
  
 
@@ -1921,6 +1983,34 @@ static void FOC_Prof_Reset(void)
 
      s_ctx.fault = FOC_FAULT_NONE;
 
+     for (motor = 1U; motor < FOC_CORE_MOTOR_COUNT; motor++) {
+         FOC_Core_SelectMotor(motor);
+
+         memcpy(&s_config, config, sizeof(FOC_Config_t));
+         FOC_HAL_GetCurrentOffset(&s_config.current_calib);
+         s_config.current_calib.i_scale = FOC_HAL_GetCurrentScale();
+         s_config.current_calib.v_scale = FOC_HAL_GetVoltageScale();
+
+         memset(&s_ctx, 0, sizeof(FOC_Context_t));
+
+         FOC_PID_Init(&s_ctx.pid_speed, &config->speed_pid);
+         FOC_PID_Init(&s_ctx.pid_id,    &config->current_d_pid);
+         FOC_PID_Init(&s_ctx.pid_iq,    &config->current_q_pid);
+
+         FOC_Observer_Init(&s_ctx);
+         FOC_Log_Reset();
+         FOC_ResetCurrentAngleTrim();
+
+         s_ctx.id_ref = 0.0f;
+         s_ctx.iq_ref = 0.0f;
+         s_foc_ctrl_source = FOC_CTRL_SOURCE_SPEED;
+         s_ctx.direction = FOC_DIR_CW;
+         s_ctx.state = FOC_STATE_IDLE;
+         s_ctx.fault = FOC_FAULT_NONE;
+     }
+
+     FOC_Core_SelectMotor(0U);
+
  
 
      return FOC_OK;
@@ -1932,24 +2022,21 @@ static void FOC_Prof_Reset(void)
  int FOC_Core_DeInit(void)
 
  {
+     uint8_t motor;
 
-     /* 确保已停止 */
+     for (motor = 0U; motor < FOC_CORE_MOTOR_COUNT; motor++) {
+         FOC_Core_SelectMotor(motor);
 
-     if (s_ctx.state == FOC_STATE_RUNNING) {
+         if (s_ctx.state == FOC_STATE_RUNNING) {
+             FOC_Core_Stop();
+         }
 
-         FOC_Core_Stop();
-
+         FOC_HAL_DisablePWM();
+         memset(&s_ctx, 0, sizeof(FOC_Context_t));
+         s_ctx.state = FOC_STATE_INIT;
      }
 
- 
-
-     FOC_HAL_DisablePWM();
-
-     memset(&s_ctx, 0, sizeof(FOC_Context_t));
-
-     s_ctx.state = FOC_STATE_INIT;
-
- 
+     FOC_Core_SelectMotor(0U);
 
      return FOC_OK;
 
@@ -2107,7 +2194,7 @@ static void FOC_Prof_Reset(void)
 
  
 
- void FOC_Core_MainLoop(void)
+ static void FOC_Core_MainLoopOne(void)
 
  {
      uint32_t prof_enter_us;
@@ -2125,6 +2212,7 @@ static void FOC_Prof_Reset(void)
      prof_enter_us = FOC_Prof_Enter();
      control_period_us = FOC_ControlPeriodUs();
      control_period_late = FOC_ControlPeriodIsLate(control_period_us);
+     (void)control_period_late;
      control_period_recovery = FOC_ControlPeriodNeedsRecovery(control_period_us);
      FOC_StateMachine();
      prof_mark_us = FOC_HAL_GetTimestampUs();
@@ -2581,6 +2669,19 @@ static void FOC_Prof_Reset(void)
   * =================================================================== */
 
  
+
+ void FOC_Core_MainLoop(void)
+ {
+     uint8_t previous_motor = FOC_Core_GetSelectedMotor();
+     uint8_t motor;
+
+     for (motor = 0U; motor < FOC_CORE_MOTOR_COUNT; motor++) {
+         FOC_Core_SelectMotor(motor);
+         FOC_Core_MainLoopOne();
+     }
+
+     FOC_Core_SelectMotor(previous_motor);
+ }
 
  const FOC_Context_t *FOC_Core_GetContext(void)
 

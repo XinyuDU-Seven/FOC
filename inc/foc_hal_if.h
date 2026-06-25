@@ -79,6 +79,10 @@ extern "C" {
 
 int  FOC_HAL_Init(void);
 
+void FOC_HAL_SelectMotor(uint8_t motor_id);
+
+uint8_t FOC_HAL_GetSelectedMotor(void);
+
  
 
 /* ===================================================================
