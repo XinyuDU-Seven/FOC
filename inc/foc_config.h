@@ -219,6 +219,11 @@ extern "C" {
 
 /** 堵转判定：连续N个控制周期速度误差超过阈值则判定堵转 */
 
+/* Stall protection is disabled by default during low-speed loaded tuning. */
+#ifndef FOC_STALL_PROTECTION_ENABLE
+#define FOC_STALL_PROTECTION_ENABLE     0
+#endif
+
 #ifndef FOC_STALL_COUNT_THRESHOLD
 
 #define FOC_STALL_COUNT_THRESHOLD       5000U
