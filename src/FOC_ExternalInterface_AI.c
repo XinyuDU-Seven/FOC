@@ -76,6 +76,13 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_elapsed_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_phase_u16 = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_raw_ref_rpm = 0;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_ref_rpm = 0;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_cross_enable = 1U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_speed_rpm = 120U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_hold_ms = 80U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_timeout_ms = 600U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_cross_state = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_zero_cross_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_cross_elapsed_ms = 0U;
 
 /* LiveWatch: 0 stop, 1 fixed, 2 +1000..+4000 sine,
  * 3 -2000..+2000 sine, 4 -1000..-4000 sine.

@@ -372,6 +372,13 @@ extern volatile uint32_t g_foc_bidir_speed_elapsed_ms;
 extern volatile uint16_t g_foc_bidir_speed_phase_u16;
 extern volatile int16_t  g_foc_bidir_speed_raw_ref_rpm;
 extern volatile int16_t  g_foc_bidir_speed_ref_rpm;
+extern volatile uint8_t  g_foc_bidir_zero_cross_enable;
+extern volatile uint16_t g_foc_bidir_zero_speed_rpm;
+extern volatile uint16_t g_foc_bidir_zero_hold_ms;
+extern volatile uint16_t g_foc_bidir_zero_timeout_ms;
+extern volatile uint8_t  g_foc_bidir_zero_cross_state;
+extern volatile uint32_t g_foc_bidir_zero_cross_count;
+extern volatile uint16_t g_foc_bidir_zero_cross_elapsed_ms;
 extern volatile uint8_t  g_foc_observer_no_edge_active;
 
 static uint16_t s_foc_log_decim = 0U;
@@ -422,6 +429,16 @@ static uint8_t s_bidir_speed_prev_enable = 0U;
 static uint32_t s_bidir_speed_start_us = 0U;
 static uint32_t s_bidir_speed_last_us = 0U;
 static float s_bidir_speed_limited_ref_rpm = 0.0f;
+static uint8_t s_bidir_zero_state = 0U;
+static uint32_t s_bidir_zero_start_us = 0U;
+static uint32_t s_bidir_zero_hold_start_us = 0U;
+static int16_t s_bidir_zero_command_sign = 0;
+static int16_t s_bidir_zero_pending_sign = 0;
+static FOC_Dir_e s_bidir_zero_hold_dir = FOC_DIR_CW;
+
+#define FOC_BIDIR_ZERO_STATE_IDLE       0U
+#define FOC_BIDIR_ZERO_STATE_DECEL      1U
+#define FOC_BIDIR_ZERO_STATE_HOLD       2U
 
  
 
@@ -871,23 +888,34 @@ static float FOC_DynSpeed_CalcRef(uint32_t now_us)
     return target;
 }
 
-static void FOC_DynSpeed_WriteCoreRef(float rpm)
+static void FOC_DynSpeed_WriteCoreRefWithZeroDir(float rpm, FOC_Dir_e zero_dir)
 {
     if (rpm > s_config.motor.max_speed_rpm) {
         rpm = s_config.motor.max_speed_rpm;
     } else if (rpm < -s_config.motor.max_speed_rpm) {
         rpm = -s_config.motor.max_speed_rpm;
     }
+    if (zero_dir > FOC_DIR_CCW) {
+        zero_dir = FOC_DIR_CW;
+    }
 
     FOC_HAL_EnterCritical();
-    s_ctx.speed_ref = rpm;
-    if (rpm >= 0.0f) {
+    if (rpm > 0.0f) {
+        s_ctx.speed_ref = rpm;
         s_ctx.direction = FOC_DIR_CW;
-    } else {
+    } else if (rpm < 0.0f) {
         s_ctx.direction = FOC_DIR_CCW;
         s_ctx.speed_ref = -rpm;
+    } else {
+        s_ctx.speed_ref = 0.0f;
+        s_ctx.direction = zero_dir;
     }
     FOC_HAL_ExitCritical();
+}
+
+static void FOC_DynSpeed_WriteCoreRef(float rpm)
+{
+    FOC_DynSpeed_WriteCoreRefWithZeroDir(rpm, s_ctx.direction);
 }
 
 static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
@@ -1014,6 +1042,127 @@ static void FOC_DynSpeed_ServiceRef(void)
     FOC_DynSpeed_WriteCoreRef(FOC_DynSpeed_CalcRef(now_us));
 }
 
+static int16_t FOC_BidirSpeed_TargetSign(float rpm)
+{
+    if (rpm > 0.5f) {
+        return 1;
+    }
+    if (rpm < -0.5f) {
+        return -1;
+    }
+    return 0;
+}
+
+static FOC_Dir_e FOC_BidirSpeed_DirFromSign(int16_t sign)
+{
+    return (sign < 0) ? FOC_DIR_CCW : FOC_DIR_CW;
+}
+
+static void FOC_BidirSpeed_ResetZeroCross(void)
+{
+    s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_IDLE;
+    s_bidir_zero_start_us = 0U;
+    s_bidir_zero_hold_start_us = 0U;
+    s_bidir_zero_command_sign = 0;
+    s_bidir_zero_pending_sign = 0;
+    s_bidir_zero_hold_dir = s_ctx.direction;
+    g_foc_bidir_zero_cross_state = FOC_BIDIR_ZERO_STATE_IDLE;
+    g_foc_bidir_zero_cross_elapsed_ms = 0U;
+}
+
+static float FOC_BidirSpeed_ApplyZeroCross(float target,
+                                           float raw_target,
+                                           uint32_t now_us,
+                                           FOC_Dir_e *zero_dir)
+{
+    int16_t raw_sign = FOC_BidirSpeed_TargetSign(raw_target);
+    uint32_t elapsed_us = 0U;
+    uint32_t hold_us;
+    uint32_t timeout_us;
+    uint16_t zero_speed = g_foc_bidir_zero_speed_rpm;
+
+    if (zero_dir == NULL) {
+        return target;
+    }
+    *zero_dir = s_ctx.direction;
+
+    if ((g_foc_bidir_zero_cross_enable == 0U) ||
+        (g_foc_bidir_speed_step_enable != 0U)) {
+        FOC_BidirSpeed_ResetZeroCross();
+        if (raw_sign != 0) {
+            s_bidir_zero_command_sign = raw_sign;
+        }
+        return target;
+    }
+
+    if (s_bidir_zero_command_sign == 0) {
+        if (raw_sign != 0) {
+            s_bidir_zero_command_sign = raw_sign;
+        }
+        g_foc_bidir_zero_cross_state = s_bidir_zero_state;
+        return target;
+    }
+
+    if ((s_bidir_zero_state == FOC_BIDIR_ZERO_STATE_IDLE) &&
+        (raw_sign != 0) &&
+        (raw_sign != s_bidir_zero_command_sign)) {
+        s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_DECEL;
+        s_bidir_zero_start_us = now_us;
+        s_bidir_zero_hold_start_us = 0U;
+        s_bidir_zero_pending_sign = raw_sign;
+        s_bidir_zero_hold_dir =
+            FOC_BidirSpeed_DirFromSign(s_bidir_zero_command_sign);
+        s_bidir_speed_limited_ref_rpm = 0.0f;
+        if (g_foc_bidir_zero_cross_count < 0xFFFFFFFFU) {
+            g_foc_bidir_zero_cross_count++;
+        }
+    }
+
+    if (s_bidir_zero_state == FOC_BIDIR_ZERO_STATE_DECEL) {
+        if (raw_sign != 0) {
+            s_bidir_zero_pending_sign = raw_sign;
+        }
+        timeout_us = (uint32_t)g_foc_bidir_zero_timeout_ms * 1000U;
+        elapsed_us = now_us - s_bidir_zero_start_us;
+        *zero_dir = s_bidir_zero_hold_dir;
+        target = 0.0f;
+        s_bidir_speed_limited_ref_rpm = 0.0f;
+
+        if ((FOC_FABS(s_ctx.speed_fdb) <= (float)zero_speed) ||
+            ((timeout_us > 0U) && (elapsed_us >= timeout_us))) {
+            s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_HOLD;
+            s_bidir_zero_hold_start_us = now_us;
+        }
+    }
+
+    if (s_bidir_zero_state == FOC_BIDIR_ZERO_STATE_HOLD) {
+        hold_us = (uint32_t)g_foc_bidir_zero_hold_ms * 1000U;
+        elapsed_us = now_us - s_bidir_zero_start_us;
+        *zero_dir = s_bidir_zero_hold_dir;
+        target = 0.0f;
+        s_bidir_speed_limited_ref_rpm = 0.0f;
+
+        if ((now_us - s_bidir_zero_hold_start_us) >= hold_us) {
+            if (s_bidir_zero_pending_sign != 0) {
+                s_bidir_zero_command_sign = s_bidir_zero_pending_sign;
+            }
+            s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_IDLE;
+            *zero_dir = FOC_BidirSpeed_DirFromSign(s_bidir_zero_command_sign);
+        }
+    }
+
+    if (s_bidir_zero_state == FOC_BIDIR_ZERO_STATE_IDLE) {
+        elapsed_us = 0U;
+    }
+    g_foc_bidir_zero_cross_state = s_bidir_zero_state;
+    g_foc_bidir_zero_cross_elapsed_ms =
+        (uint16_t)((elapsed_us / 1000U) > 65535U
+                 ? 65535U
+                 : (elapsed_us / 1000U));
+
+    return target;
+}
+
 static void FOC_BidirSpeed_ServiceRef(void)
 {
     uint32_t now_us = FOC_HAL_GetTimestampUs();
@@ -1024,14 +1173,17 @@ static void FOC_BidirSpeed_ServiceRef(void)
     float phase;
     float raw_target;
     float target;
+    FOC_Dir_e zero_dir = s_ctx.direction;
 
     if (g_foc_bidir_speed_reset_stats != 0U) {
         g_foc_bidir_speed_reset_stats = 0U;
         s_bidir_speed_prev_enable = 0U;
+        FOC_BidirSpeed_ResetZeroCross();
     }
 
     if (g_foc_bidir_speed_enable == 0U) {
         s_bidir_speed_prev_enable = 0U;
+        FOC_BidirSpeed_ResetZeroCross();
         return;
     }
 
@@ -1040,6 +1192,7 @@ static void FOC_BidirSpeed_ServiceRef(void)
         s_bidir_speed_start_us = now_us;
         s_bidir_speed_last_us = now_us;
         s_bidir_speed_limited_ref_rpm = 0.0f;
+        FOC_BidirSpeed_ResetZeroCross();
         FOC_DynSpeed_ResetStats(now_us);
     }
 
@@ -1092,6 +1245,8 @@ static void FOC_BidirSpeed_ServiceRef(void)
         s_bidir_speed_limited_ref_rpm = target;
     }
     s_bidir_speed_last_us = now_us;
+    target = FOC_BidirSpeed_ApplyZeroCross(target, raw_target, now_us,
+                                           &zero_dir);
 
     g_foc_bidir_speed_elapsed_ms = elapsed_us / 1000U;
     g_foc_bidir_speed_phase_u16 = FOC_Log_ToU16(phase, 65535.0f / FOC_2PI);
@@ -1103,7 +1258,7 @@ static void FOC_BidirSpeed_ServiceRef(void)
     g_foc_dyn_speed_ref_rpm = g_foc_bidir_speed_ref_rpm;
     g_foc_dyn_speed_last_ext_ref_rpm = g_foc_bidir_speed_ref_rpm;
 
-    FOC_DynSpeed_WriteCoreRef(target);
+    FOC_DynSpeed_WriteCoreRefWithZeroDir(target, zero_dir);
 }
 
 static void FOC_DynSpeed_RecordLog(uint32_t now_us, int16_t err_rpm)
