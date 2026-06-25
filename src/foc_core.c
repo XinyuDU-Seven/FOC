@@ -254,7 +254,8 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_ctrl_alpha_milli =
     (uint16_t)(FOC_LOW_SPEED_CTRL_FILTER_ALPHA * 1000.0f);
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_overspeed_deadband_rpm =
     (uint16_t)FOC_LOW_SPEED_OVERSPEED_DEADBAND_RPM;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ctrl_fdb_no_edge_decay_rpm_per_s = 2500U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ctrl_fdb_no_edge_decay_rpm_per_s =
+    FOC_SPEED_CTRL_FDB_NO_EDGE_DECAY_RPM_PER_S;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_ctrl_fdb_no_edge_decay_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ctrl_fdb_max_lead_rpm = 300U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_torque_enable =
@@ -280,6 +281,20 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s =
     FOC_LOW_SPEED_IQ_SLEW_DOWN_MA_PER_S;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_iq_slew_limited_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_low_speed_iq_slew_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_decel_hold_enable =
+    FOC_BIDIR_DECEL_HOLD_ENABLE;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_decel_hold_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_decel_hold_max_rpm =
+    FOC_BIDIR_DECEL_HOLD_MAX_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_decel_hold_min_iq_mA =
+    FOC_BIDIR_DECEL_HOLD_MIN_IQ_MA;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_decel_hold_full_rpm =
+    FOC_BIDIR_DECEL_HOLD_FULL_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_decel_hold_err_rpm =
+    FOC_BIDIR_DECEL_HOLD_ERR_RPM;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_bidir_decel_hold_raw_err_rpm = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_bidir_decel_hold_applied_mA = 0;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_bidir_decel_hold_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_current_ff_enable =
     FOC_LOW_SPEED_CURRENT_FF_ENABLE;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_current_ff_max_rpm =
@@ -436,6 +451,7 @@ static FOC_Dir_e s_speed_ref_ctrl_direction_store[FOC_CORE_MOTOR_COUNT] = {
     FOC_DIR_CW
 };
 static float s_speed_error_boost_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+static float s_bidir_decel_hold_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static float s_current_angle_trim_rad_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 
@@ -453,6 +469,7 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_speed_ref_ctrl                 (s_speed_ref_ctrl_store[s_foc_core_active_motor])
 #define s_speed_ref_ctrl_direction       (s_speed_ref_ctrl_direction_store[s_foc_core_active_motor])
 #define s_speed_error_boost_prev_ref     (s_speed_error_boost_prev_ref_store[s_foc_core_active_motor])
+#define s_bidir_decel_hold_prev_ref      (s_bidir_decel_hold_prev_ref_store[s_foc_core_active_motor])
 #define s_current_angle_trim_rad         (s_current_angle_trim_rad_store[s_foc_core_active_motor])
 #define s_hall_event_seq_seen            (s_hall_event_seq_seen_store[s_foc_core_active_motor])
 static uint8_t s_dyn_speed_prev_enable = 0U;
@@ -632,12 +649,16 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      g_foc_current_q_ff_mV = 0;
      g_foc_low_speed_iq_slew_active = 0U;
      g_foc_low_speed_iq_slew_limited_mA = 0;
+     g_foc_bidir_decel_hold_active = 0U;
+     g_foc_bidir_decel_hold_applied_mA = 0;
+     g_foc_bidir_decel_hold_raw_err_rpm = 0;
+     s_bidir_decel_hold_prev_ref = 0.0f;
  }
 
- static float FOC_ApplyBidirTailDriveAssist(float iq_ref,
-                                            float speed_ref_ctrl,
-                                            float speed_error)
- {
+static float FOC_ApplyBidirTailDriveAssist(float iq_ref,
+                                           float speed_ref_ctrl,
+                                           float speed_error)
+{
      float min_drive =
          (float)g_foc_bidir_zero_tail_min_drive_mA * 0.001f;
      float deadband =
@@ -672,7 +693,66 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      }
 
      return iq_ref;
- }
+}
+
+static float FOC_ApplyBidirDecelHoldAssist(float iq_ref,
+                                           float speed_ref_ctrl)
+{
+     float prev_ref = s_bidir_decel_hold_prev_ref;
+     float raw_speed_error = speed_ref_ctrl - s_ctx.speed_fdb;
+     float min_iq =
+         (float)g_foc_bidir_decel_hold_min_iq_mA * 0.001f;
+     float max_rpm = (float)g_foc_bidir_decel_hold_max_rpm;
+     float full_rpm = (float)g_foc_bidir_decel_hold_full_rpm;
+     float err_rpm = (float)g_foc_bidir_decel_hold_err_rpm;
+     float speed_scale;
+     float err_scale;
+     uint8_t ref_decreasing =
+         ((prev_ref - speed_ref_ctrl) > 0.5f) ? 1U : 0U;
+
+     g_foc_bidir_decel_hold_active = 0U;
+     g_foc_bidir_decel_hold_applied_mA = 0;
+     g_foc_bidir_decel_hold_raw_err_rpm =
+         FOC_Log_ToI16(raw_speed_error, 1.0f);
+     s_bidir_decel_hold_prev_ref = speed_ref_ctrl;
+
+     if ((g_foc_bidir_decel_hold_enable == 0U) ||
+         (g_foc_bidir_speed_enable == 0U) ||
+         (ref_decreasing == 0U) ||
+         (min_iq <= 0.0f) ||
+         (max_rpm < 1.0f) ||
+         (speed_ref_ctrl < 1.0f) ||
+         (speed_ref_ctrl > max_rpm) ||
+         (raw_speed_error <= err_rpm) ||
+         (iq_ref < 0.0f)) {
+         return iq_ref;
+     }
+
+     if (full_rpm < 1.0f) {
+         full_rpm = max_rpm;
+     }
+     if (err_rpm < 1.0f) {
+         err_rpm = 1.0f;
+     }
+
+     speed_scale = FOC_CLAMP(speed_ref_ctrl / full_rpm, 0.0f, 1.0f);
+     err_scale =
+         FOC_CLAMP((raw_speed_error - err_rpm) / err_rpm, 0.0f, 1.0f);
+     min_iq *= speed_scale * err_scale;
+
+     if (iq_ref < min_iq) {
+         g_foc_bidir_decel_hold_active = 1U;
+         g_foc_bidir_decel_hold_applied_mA =
+             FOC_Log_ToI16(min_iq - iq_ref, 1000.0f);
+         if (g_foc_bidir_decel_hold_count < 0xFFFFFFFFU) {
+             g_foc_bidir_decel_hold_count++;
+         }
+         return min_iq;
+     }
+
+     return iq_ref;
+}
+
  static void FOC_NormalizeSignedSpeedRef(void)
  {
      uint8_t reset_loop = 0U;
@@ -975,6 +1055,11 @@ static void FOC_DynSpeed_ResetStats(uint32_t now_us)
     g_foc_dyn_speed_sample_count = 0U;
     g_foc_bidir_speed_raw_ref_rpm = 0;
     g_foc_bidir_speed_ref_rpm = 0;
+    g_foc_bidir_decel_hold_active = 0U;
+    g_foc_bidir_decel_hold_applied_mA = 0;
+    g_foc_bidir_decel_hold_raw_err_rpm = 0;
+    g_foc_bidir_decel_hold_count = 0U;
+    s_bidir_decel_hold_prev_ref = 0.0f;
     s_dyn_abs_err_avg_rpm = 0.0f;
     s_dyn_speed_start_us = now_us;
     FOC_DynSpeed_ResetLog();
@@ -2901,6 +2986,10 @@ static void FOC_Prof_Reset(void)
      s_speed_loop_accum_us = 0U;
      FOC_ResetSpeedRefRamp();
      s_speed_error_boost_prev_ref = 0.0f;
+     s_bidir_decel_hold_prev_ref = 0.0f;
+     g_foc_bidir_decel_hold_active = 0U;
+     g_foc_bidir_decel_hold_applied_mA = 0;
+     g_foc_bidir_decel_hold_raw_err_rpm = 0;
 
 
 
@@ -2989,6 +3078,10 @@ static void FOC_Prof_Reset(void)
      s_ctx.speed_loop_counter = 0U;
      s_speed_loop_accum_us = 0U;
      s_speed_error_boost_prev_ref = 0.0f;
+     s_bidir_decel_hold_prev_ref = 0.0f;
+     g_foc_bidir_decel_hold_active = 0U;
+     g_foc_bidir_decel_hold_applied_mA = 0;
+     g_foc_bidir_decel_hold_raw_err_rpm = 0;
 
 
 
@@ -3375,6 +3468,8 @@ static void FOC_Prof_Reset(void)
              speed_iq_ref = FOC_ApplyBidirTailDriveAssist(speed_iq_ref,
                                                           speed_ref_ctrl,
                                                           speed_error);
+             speed_iq_ref = FOC_ApplyBidirDecelHoldAssist(speed_iq_ref,
+                                                          speed_ref_ctrl);
              speed_iq_ref = FOC_ApplyLowSpeedIqSlew(speed_iq_ref,
                                                     speed_ref_ctrl,
                                                     speed_dt);
@@ -3405,6 +3500,9 @@ static void FOC_Prof_Reset(void)
          g_foc_low_speed_torque_applied_mA = 0;
          g_foc_low_speed_iq_slew_active = 0U;
          g_foc_low_speed_iq_slew_limited_mA = 0;
+         g_foc_bidir_decel_hold_active = 0U;
+         g_foc_bidir_decel_hold_applied_mA = 0;
+         g_foc_bidir_decel_hold_raw_err_rpm = 0;
          g_foc_current_q_ff_mV = 0;
      }
 
@@ -3658,6 +3756,10 @@ static void FOC_Prof_Reset(void)
      g_foc_speed_ctrl_fdb_rpm = 0;
      g_foc_speed_error_boost_mA = 0;
      s_speed_error_boost_prev_ref = 0.0f;
+     s_bidir_decel_hold_prev_ref = 0.0f;
+     g_foc_bidir_decel_hold_active = 0U;
+     g_foc_bidir_decel_hold_applied_mA = 0;
+     g_foc_bidir_decel_hold_raw_err_rpm = 0;
 
      s_ctx.id_ref = id;
      if (iq < 0.0f) {
