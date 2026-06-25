@@ -288,6 +288,8 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_drop_fault_edge_elapsed_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_direction = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_bidir_no_edge_skip = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_drop_fault_bidir_no_edge_skip_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_bidir_no_edge_holdoff_cycles = 300U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_bidir_no_edge_holdoff_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_fdb_drop_fault_enable = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_min_ref_rpm = 1000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_min_peak_rpm = 1000U;
@@ -384,6 +386,7 @@ static uint16_t s_recovery_zero_vector_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U,
 static uint16_t s_recovery_zero_vector_min_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_speed_loop_accum_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint16_t s_speed_drop_prev_abs_ref_rpm_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint16_t s_speed_drop_bidir_no_edge_holdoff_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint16_t s_speed_fdb_drop_peak_rpm_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static float s_speed_ref_ctrl_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static FOC_Dir_e s_speed_ref_ctrl_direction_store[FOC_CORE_MOTOR_COUNT] = {
@@ -403,6 +406,7 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_recovery_zero_vector_min_cycles (s_recovery_zero_vector_min_cycles_store[s_foc_core_active_motor])
 #define s_speed_loop_accum_us            (s_speed_loop_accum_us_store[s_foc_core_active_motor])
 #define s_speed_drop_prev_abs_ref_rpm    (s_speed_drop_prev_abs_ref_rpm_store[s_foc_core_active_motor])
+#define s_speed_drop_bidir_no_edge_holdoff (s_speed_drop_bidir_no_edge_holdoff_store[s_foc_core_active_motor])
 #define s_speed_fdb_drop_peak_rpm        (s_speed_fdb_drop_peak_rpm_store[s_foc_core_active_motor])
 #define s_speed_ref_ctrl                 (s_speed_ref_ctrl_store[s_foc_core_active_motor])
 #define s_speed_ref_ctrl_direction       (s_speed_ref_ctrl_direction_store[s_foc_core_active_motor])
@@ -1270,6 +1274,8 @@ static void FOC_ResetSpeedDropFaultMonitor(void)
     g_foc_speed_drop_fault_edge_elapsed_us = 0U;
     g_foc_speed_drop_fault_direction = 0U;
     g_foc_speed_drop_fault_bidir_no_edge_skip = 0U;
+    g_foc_speed_drop_fault_bidir_no_edge_holdoff_count = 0U;
+    s_speed_drop_bidir_no_edge_holdoff = 0U;
     s_speed_drop_prev_abs_ref_rpm = 0U;
 }
 
@@ -1287,6 +1293,7 @@ static void FOC_CheckSpeedDropFault(void)
     uint8_t ref_decreasing;
     uint8_t low_torque_no_edge;
     uint8_t bidir_no_edge_stop;
+    uint8_t bidir_no_edge_guard;
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
 
@@ -1324,15 +1331,28 @@ static void FOC_CheckSpeedDropFault(void)
          (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD))
         ? 1U
         : 0U;
-    g_foc_speed_drop_fault_bidir_no_edge_skip = bidir_no_edge_stop;
-    if ((bidir_no_edge_stop != 0U) &&
+    if (bidir_no_edge_stop != 0U) {
+        s_speed_drop_bidir_no_edge_holdoff =
+            g_foc_speed_drop_fault_bidir_no_edge_holdoff_cycles;
+    } else if (s_speed_drop_bidir_no_edge_holdoff > 0U) {
+        s_speed_drop_bidir_no_edge_holdoff--;
+    }
+    bidir_no_edge_guard =
+        ((bidir_no_edge_stop != 0U) ||
+         (s_speed_drop_bidir_no_edge_holdoff > 0U))
+        ? 1U
+        : 0U;
+    g_foc_speed_drop_fault_bidir_no_edge_skip = bidir_no_edge_guard;
+    g_foc_speed_drop_fault_bidir_no_edge_holdoff_count =
+        s_speed_drop_bidir_no_edge_holdoff;
+    if ((bidir_no_edge_guard != 0U) &&
         (g_foc_speed_drop_fault_bidir_no_edge_skip_count < 0xFFFFFFFFU)) {
         g_foc_speed_drop_fault_bidir_no_edge_skip_count++;
     }
 
     if ((ref_decreasing != 0U) &&
         (low_torque_no_edge == 0U) &&
-        (bidir_no_edge_stop == 0U) &&
+        (bidir_no_edge_guard == 0U) &&
         (abs_ref >= g_foc_speed_drop_fault_ref_min_rpm) &&
         (abs_ref <= g_foc_speed_drop_fault_ref_max_rpm) &&
         (abs_ref > abs_fdb) &&
