@@ -776,6 +776,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          float diff = FOC_Observer_NormalizeAngleDiff(ctx->theta_e_predicted -
                                                       ctx->hall_sector.theta_e);
          float step_max = FOC_HALL_NO_EDGE_ANGLE_CLAMP_STEP_RAD;
+         float hard_step_max = FOC_HALL_NO_EDGE_ANGLE_CLAMP_STEP_MAX_RAD;
          float target = ctx->theta_e_predicted;
          float step;
 
@@ -788,6 +789,12 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          if (step_max < 0.0f) {
              step_max = -step_max;
          }
+         if (hard_step_max < 0.0f) {
+             hard_step_max = -hard_step_max;
+         }
+         if ((hard_step_max > 0.0f) && (step_max > hard_step_max)) {
+             step_max = hard_step_max;
+         }
 
          g_foc_observer_no_edge_angle_diff_mrad =
              (int16_t)(diff * 1000.0f);
@@ -796,8 +803,15 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
          if (diff > limit) {
              target = FOC_NormalizeAngle(ctx->hall_sector.theta_e + limit);
+             step_max += (diff - limit) *
+                         FOC_HALL_NO_EDGE_ANGLE_CLAMP_EXTRA_FACTOR;
          } else if (diff < -limit) {
              target = FOC_NormalizeAngle(ctx->hall_sector.theta_e - limit);
+             step_max += (-limit - diff) *
+                         FOC_HALL_NO_EDGE_ANGLE_CLAMP_EXTRA_FACTOR;
+         }
+         if ((hard_step_max > 0.0f) && (step_max > hard_step_max)) {
+             step_max = hard_step_max;
          }
 
          step = FOC_Observer_NormalizeAngleDiff(target -
