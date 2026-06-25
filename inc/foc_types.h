@@ -109,6 +109,7 @@
 
      FOC_FAULT_HALL        = 0x10,  /**< 霍尔传感器异常 */
      FOC_FAULT_SPEED_DROP  = 0x20,  /**< Speed feedback drop diagnostic */
+     FOC_FAULT_SPEED_FDB_DROP = 0x40, /**< Speed feedback collapsed while reference remains high */
 
  } FOC_Fault_e;
 

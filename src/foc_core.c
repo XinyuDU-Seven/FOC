@@ -284,6 +284,21 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_drop_fault_err_last_rpm = 0;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_sector_no_change_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_drop_fault_edge_elapsed_us = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_direction = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_fdb_drop_fault_enable = 1U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_min_ref_rpm = 1000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_min_peak_rpm = 1000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_delta_rpm = 800U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_ratio_percent = 55U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_count_limit = 1U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_count = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_fdb_drop_fault_ref_rpm = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_fdb_drop_fault_fdb_rpm = 0;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_peak_rpm = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_drop_rpm = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_err_rpm = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_fdb_drop_fault_sector_no_change_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_fdb_drop_fault_edge_elapsed_us = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_fdb_drop_fault_direction = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_signed_speed_ref_normalize_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_vbus_mV = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_last_fault_vbus_mV = 0U;
@@ -362,6 +377,7 @@ static uint16_t s_recovery_zero_vector_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U,
 static uint16_t s_recovery_zero_vector_min_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_speed_loop_accum_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint16_t s_speed_drop_prev_abs_ref_rpm_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint16_t s_speed_fdb_drop_peak_rpm_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static float s_speed_ref_ctrl_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static FOC_Dir_e s_speed_ref_ctrl_direction_store[FOC_CORE_MOTOR_COUNT] = {
     FOC_DIR_CW,
@@ -380,6 +396,7 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_recovery_zero_vector_min_cycles (s_recovery_zero_vector_min_cycles_store[s_foc_core_active_motor])
 #define s_speed_loop_accum_us            (s_speed_loop_accum_us_store[s_foc_core_active_motor])
 #define s_speed_drop_prev_abs_ref_rpm    (s_speed_drop_prev_abs_ref_rpm_store[s_foc_core_active_motor])
+#define s_speed_fdb_drop_peak_rpm        (s_speed_fdb_drop_peak_rpm_store[s_foc_core_active_motor])
 #define s_speed_ref_ctrl                 (s_speed_ref_ctrl_store[s_foc_core_active_motor])
 #define s_speed_ref_ctrl_direction       (s_speed_ref_ctrl_direction_store[s_foc_core_active_motor])
 #define s_speed_error_boost_prev_ref     (s_speed_error_boost_prev_ref_store[s_foc_core_active_motor])
@@ -421,6 +438,8 @@ static void FOC_UpdateCurrentAngleTrim(float dt);
 static void FOC_UpdateSpeedControlFeedback(void);
 static void FOC_ResetSpeedDropFaultMonitor(void);
 static void FOC_CheckSpeedDropFault(void);
+static void FOC_ResetSpeedFdbDropFaultMonitor(void);
+static void FOC_CheckSpeedFdbDropFault(void);
 static uint8_t FOC_DynSpeed_HandleSetRef(float rpm);
 static void FOC_DynSpeed_ServiceRef(void);
 static void FOC_BidirSpeed_ServiceRef(void);
@@ -1278,6 +1297,104 @@ static void FOC_CheckSpeedDropFault(void)
     s_speed_drop_prev_abs_ref_rpm = abs_ref;
 }
 
+static void FOC_ResetSpeedFdbDropFaultMonitor(void)
+{
+    g_foc_speed_fdb_drop_fault_count = 0U;
+    g_foc_speed_fdb_drop_fault_ref_rpm = 0;
+    g_foc_speed_fdb_drop_fault_fdb_rpm = 0;
+    g_foc_speed_fdb_drop_fault_peak_rpm = 0U;
+    g_foc_speed_fdb_drop_fault_drop_rpm = 0U;
+    g_foc_speed_fdb_drop_fault_err_rpm = 0U;
+    g_foc_speed_fdb_drop_fault_sector_no_change_count = 0U;
+    g_foc_speed_fdb_drop_fault_edge_elapsed_us = 0U;
+    g_foc_speed_fdb_drop_fault_direction = 0U;
+    s_speed_fdb_drop_peak_rpm = 0U;
+}
+
+static void FOC_CheckSpeedFdbDropFault(void)
+{
+    uint16_t abs_ref;
+    uint16_t abs_fdb;
+    uint16_t drop_rpm;
+    uint16_t err_rpm;
+    uint16_t count_limit;
+    uint32_t cur_ratio_scaled;
+    uint32_t peak_ratio_scaled;
+    float signed_ref = s_speed_ref_ctrl;
+
+    if ((g_foc_speed_fdb_drop_fault_enable == 0U) ||
+        (s_ctx.fault != FOC_FAULT_NONE) ||
+        (s_ctx.state != FOC_STATE_RUNNING) ||
+        (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED)) {
+        FOC_ResetSpeedFdbDropFaultMonitor();
+        return;
+    }
+
+    if (s_ctx.direction == FOC_DIR_CCW) {
+        signed_ref = -signed_ref;
+    }
+
+    abs_ref = FOC_Log_ToU16(FOC_FABS(s_speed_ref_ctrl), 1.0f);
+    abs_fdb = FOC_Log_ToU16(FOC_FABS(s_ctx.speed_fdb), 1.0f);
+
+    g_foc_speed_fdb_drop_fault_ref_rpm =
+        FOC_Log_ToI16(signed_ref, 1.0f);
+    g_foc_speed_fdb_drop_fault_fdb_rpm =
+        FOC_Log_ToI16(s_ctx.speed_fdb, 1.0f);
+
+    if (abs_ref < g_foc_speed_fdb_drop_fault_min_ref_rpm) {
+        g_foc_speed_fdb_drop_fault_count = 0U;
+        g_foc_speed_fdb_drop_fault_drop_rpm = 0U;
+        g_foc_speed_fdb_drop_fault_err_rpm = 0U;
+        s_speed_fdb_drop_peak_rpm = abs_fdb;
+        g_foc_speed_fdb_drop_fault_peak_rpm = s_speed_fdb_drop_peak_rpm;
+        return;
+    }
+
+    if (abs_fdb > s_speed_fdb_drop_peak_rpm) {
+        s_speed_fdb_drop_peak_rpm = abs_fdb;
+    }
+
+    drop_rpm = (s_speed_fdb_drop_peak_rpm > abs_fdb)
+             ? (uint16_t)(s_speed_fdb_drop_peak_rpm - abs_fdb)
+             : 0U;
+    err_rpm = (abs_ref > abs_fdb) ? (uint16_t)(abs_ref - abs_fdb) : 0U;
+
+    cur_ratio_scaled = (uint32_t)abs_fdb * 100U;
+    peak_ratio_scaled =
+        (uint32_t)s_speed_fdb_drop_peak_rpm *
+        (uint32_t)g_foc_speed_fdb_drop_fault_ratio_percent;
+
+    if ((s_speed_fdb_drop_peak_rpm >=
+         g_foc_speed_fdb_drop_fault_min_peak_rpm) &&
+        (drop_rpm >= g_foc_speed_fdb_drop_fault_delta_rpm) &&
+        (err_rpm >= g_foc_speed_fdb_drop_fault_delta_rpm) &&
+        (cur_ratio_scaled <= peak_ratio_scaled)) {
+        if (g_foc_speed_fdb_drop_fault_count < 65535U) {
+            g_foc_speed_fdb_drop_fault_count++;
+        }
+    } else {
+        g_foc_speed_fdb_drop_fault_count = 0U;
+    }
+
+    g_foc_speed_fdb_drop_fault_peak_rpm = s_speed_fdb_drop_peak_rpm;
+    g_foc_speed_fdb_drop_fault_drop_rpm = drop_rpm;
+    g_foc_speed_fdb_drop_fault_err_rpm = err_rpm;
+    g_foc_speed_fdb_drop_fault_sector_no_change_count =
+        FOC_Log_U32ToU16((uint32_t)s_ctx.sector_no_change_count);
+    g_foc_speed_fdb_drop_fault_edge_elapsed_us =
+        FOC_HAL_GetTimestampUs() - s_ctx.timestamp_prev;
+    g_foc_speed_fdb_drop_fault_direction = (uint8_t)s_ctx.direction;
+
+    count_limit = g_foc_speed_fdb_drop_fault_count_limit;
+    if (count_limit == 0U) {
+        count_limit = 1U;
+    }
+    if (g_foc_speed_fdb_drop_fault_count >= count_limit) {
+        s_ctx.fault |= FOC_FAULT_SPEED_FDB_DROP;
+    }
+}
+
 static void FOC_UpdateSpeedControlFeedback(void)
 {
     float alpha = FOC_SPEED_CTRL_FILTER_ALPHA;
@@ -1374,6 +1491,7 @@ static void FOC_Prof_Reset(void)
      g_foc_speed_ctrl_fdb_rpm = 0;
      g_foc_speed_error_boost_mA = 0;
      FOC_ResetSpeedDropFaultMonitor();
+     FOC_ResetSpeedFdbDropFaultMonitor();
      g_foc_signed_speed_ref_normalize_count = 0U;
      g_foc_vbus_brake_limit_mA = 0;
      g_foc_vbus_brake_active = 0U;
@@ -2541,6 +2659,7 @@ static void FOC_Prof_Reset(void)
 
      FOC_Park(&s_ctx.i_ab, theta_e_ctrl, &s_ctx.i_dq);
      FOC_UpdateCurrentAngleTrim(pid_dt);
+     FOC_CheckSpeedFdbDropFault();
      FOC_CheckSpeedDropFault();
 
      /* ---- 5. 保护检测：必须早于 PID / SVPWM / PWM 输出 ---- */
@@ -2983,6 +3102,7 @@ static void FOC_Prof_Reset(void)
 
      FOC_Protection_ClearFault(&s_ctx);
      FOC_ResetSpeedDropFaultMonitor();
+     FOC_ResetSpeedFdbDropFaultMonitor();
      s_hall_illegal_transition_count = 0U;
 
      s_ctx.state = FOC_STATE_IDLE;

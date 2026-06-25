@@ -530,6 +530,9 @@ static FocError FOC_AI_MapFault(FOC_Fault_e fault)
   if ((fault & FOC_FAULT_SPEED_DROP) != 0U) {
     return FOC_MOTOR_STUCKED;
   }
+  if ((fault & FOC_FAULT_SPEED_FDB_DROP) != 0U) {
+    return FOC_ABNORMAL_INTERVAL_TIME;
+  }
   return FOC_INPUT_PARAMETER_INVALID;
 }
 
@@ -1562,7 +1565,6 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_dyn_speed_reverse = 0U;
     g_foc_dyn_speed_reset_stats = 0U;
 
-    g_foc_bidir_speed_max_rpm = 4000U;
     g_foc_bidir_speed_step_enable = 0U;
     g_foc_bidir_speed_enable = 1U;
 
