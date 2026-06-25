@@ -628,6 +628,9 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      float deadband =
          (float)g_foc_bidir_zero_tail_drive_deadband_rpm;
      float zero_speed = (float)g_foc_bidir_zero_speed_rpm;
+     float tail_start = (float)g_foc_bidir_zero_tail_start_rpm;
+     float tail_range;
+     float drive_scale;
 
      if ((g_foc_bidir_speed_enable == 0U) ||
          (g_foc_bidir_zero_tail_active == 0U) ||
@@ -637,6 +640,14 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
          (speed_error < -deadband)) {
          return iq_ref;
      }
+
+     if (tail_start <= zero_speed) {
+         tail_start = zero_speed + 1.0f;
+     }
+     tail_range = tail_start - zero_speed;
+     drive_scale = (speed_ref_ctrl - zero_speed) / tail_range;
+     drive_scale = FOC_CLAMP(drive_scale, 0.0f, 1.0f);
+     min_drive *= drive_scale;
 
      if (iq_ref < min_drive) {
          if (g_foc_bidir_zero_tail_drive_assist_count < 0xFFFFFFFFU) {
