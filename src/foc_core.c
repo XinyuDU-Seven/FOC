@@ -363,8 +363,11 @@ extern volatile uint8_t  g_foc_bidir_speed_step_enable;
 extern volatile uint8_t  g_foc_bidir_speed_reset_stats;
 extern volatile uint32_t g_foc_bidir_speed_period_ms;
 extern volatile uint16_t g_foc_bidir_speed_max_rpm;
+extern volatile uint8_t  g_foc_bidir_speed_slew_enable;
+extern volatile uint16_t g_foc_bidir_speed_slew_rpm_per_s;
 extern volatile uint32_t g_foc_bidir_speed_elapsed_ms;
 extern volatile uint16_t g_foc_bidir_speed_phase_u16;
+extern volatile int16_t  g_foc_bidir_speed_raw_ref_rpm;
 extern volatile int16_t  g_foc_bidir_speed_ref_rpm;
 extern volatile uint8_t  g_foc_observer_no_edge_active;
 
@@ -412,6 +415,8 @@ static uint32_t s_dyn_log_last_us = 0U;
 static float s_dyn_abs_err_avg_rpm = 0.0f;
 static uint8_t s_bidir_speed_prev_enable = 0U;
 static uint32_t s_bidir_speed_start_us = 0U;
+static uint32_t s_bidir_speed_last_us = 0U;
+static float s_bidir_speed_limited_ref_rpm = 0.0f;
 
  
 
@@ -796,6 +801,8 @@ static void FOC_DynSpeed_ResetStats(uint32_t now_us)
     g_foc_dyn_speed_iq_mA = 0;
     g_foc_dyn_speed_current_peak_mA = 0U;
     g_foc_dyn_speed_sample_count = 0U;
+    g_foc_bidir_speed_raw_ref_rpm = 0;
+    g_foc_bidir_speed_ref_rpm = 0;
     s_dyn_abs_err_avg_rpm = 0.0f;
     s_dyn_speed_start_us = now_us;
     FOC_DynSpeed_ResetLog();
@@ -1010,6 +1017,7 @@ static void FOC_BidirSpeed_ServiceRef(void)
     uint32_t elapsed_us;
     uint32_t phase_us;
     float phase;
+    float raw_target;
     float target;
 
     if (g_foc_bidir_speed_reset_stats != 0U) {
@@ -1025,6 +1033,8 @@ static void FOC_BidirSpeed_ServiceRef(void)
     if (s_bidir_speed_prev_enable == 0U) {
         s_bidir_speed_prev_enable = 1U;
         s_bidir_speed_start_us = now_us;
+        s_bidir_speed_last_us = now_us;
+        s_bidir_speed_limited_ref_rpm = 0.0f;
         FOC_DynSpeed_ResetStats(now_us);
     }
 
@@ -1038,21 +1048,49 @@ static void FOC_BidirSpeed_ServiceRef(void)
     phase_us = (period_us > 0U) ? (elapsed_us % period_us) : 0U;
     phase = ((float)phase_us / (float)period_us) * FOC_2PI;
     if (g_foc_bidir_speed_step_enable != 0U) {
-        target = (phase_us < (period_us / 2U))
-               ? (float)g_foc_bidir_speed_max_rpm
-               : -(float)g_foc_bidir_speed_max_rpm;
+        raw_target = (phase_us < (period_us / 2U))
+                   ? (float)g_foc_bidir_speed_max_rpm
+                   : -(float)g_foc_bidir_speed_max_rpm;
     } else {
-        target = (float)g_foc_bidir_speed_max_rpm * FOC_FastSin(phase);
+        raw_target = (float)g_foc_bidir_speed_max_rpm * FOC_FastSin(phase);
     }
 
-    if (target > s_config.motor.max_speed_rpm) {
-        target = s_config.motor.max_speed_rpm;
-    } else if (target < -s_config.motor.max_speed_rpm) {
-        target = -s_config.motor.max_speed_rpm;
+    if (raw_target > s_config.motor.max_speed_rpm) {
+        raw_target = s_config.motor.max_speed_rpm;
+    } else if (raw_target < -s_config.motor.max_speed_rpm) {
+        raw_target = -s_config.motor.max_speed_rpm;
     }
+
+    target = raw_target;
+    if ((g_foc_bidir_speed_slew_enable != 0U) &&
+        (g_foc_bidir_speed_step_enable == 0U)) {
+        float slew = (float)g_foc_bidir_speed_slew_rpm_per_s;
+        uint32_t dt_us = now_us - s_bidir_speed_last_us;
+        float max_delta;
+        float delta;
+
+        if (slew < 1.0f) {
+            slew = 1.0f;
+        }
+        if (dt_us > FOC_CONTROL_PID_DT_MAX_US) {
+            dt_us = FOC_CONTROL_PID_DT_MAX_US;
+        }
+        max_delta = slew * ((float)dt_us * 1.0e-6f);
+        delta = raw_target - s_bidir_speed_limited_ref_rpm;
+        if (delta > max_delta) {
+            target = s_bidir_speed_limited_ref_rpm + max_delta;
+        } else if (delta < -max_delta) {
+            target = s_bidir_speed_limited_ref_rpm - max_delta;
+        }
+        s_bidir_speed_limited_ref_rpm = target;
+    } else {
+        s_bidir_speed_limited_ref_rpm = target;
+    }
+    s_bidir_speed_last_us = now_us;
 
     g_foc_bidir_speed_elapsed_ms = elapsed_us / 1000U;
     g_foc_bidir_speed_phase_u16 = FOC_Log_ToU16(phase, 65535.0f / FOC_2PI);
+    g_foc_bidir_speed_raw_ref_rpm = FOC_Log_ToI16(raw_target, 1.0f);
     g_foc_bidir_speed_ref_rpm = FOC_Log_ToI16(target, 1.0f);
 
     g_foc_dyn_speed_elapsed_ms = g_foc_bidir_speed_elapsed_ms;
