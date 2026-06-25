@@ -19,7 +19,7 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_selected_motor_id = 0U;
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 extern volatile float speed_ref;
 
-#define FOC_DYN_SPEED_LOG_SIZE 128U
+#define FOC_DYN_SPEED_LOG_SIZE 512U
 
 #define FOC_TEST_CASE_STOP              0U
 #define FOC_TEST_CASE_FIXED_SPEED       1U

@@ -327,7 +327,7 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_dyn_core_seen_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_core_state = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_core_trigger_source = 0U;
 
-#define FOC_DYN_SPEED_LOG_SIZE 128U
+#define FOC_DYN_SPEED_LOG_SIZE 512U
 
 extern volatile uint8_t  g_foc_dyn_speed_enable;
 extern volatile uint8_t  g_foc_dyn_speed_reverse;
