@@ -387,6 +387,9 @@ extern volatile uint16_t g_foc_bidir_zero_tail_start_rpm;
 extern volatile uint16_t g_foc_bidir_zero_tail_slew_rpm_per_s;
 extern volatile int16_t  g_foc_bidir_zero_tail_brake_limit_mA;
 extern volatile uint8_t  g_foc_bidir_zero_tail_active;
+extern volatile uint16_t g_foc_bidir_zero_tail_fdb_drop_rpm;
+extern volatile uint16_t g_foc_bidir_zero_tail_fdb_lead_rpm;
+extern volatile uint32_t g_foc_bidir_zero_tail_fdb_catch_count;
 extern volatile uint8_t  g_foc_bidir_zero_cross_state;
 extern volatile uint32_t g_foc_bidir_zero_cross_count;
 extern volatile uint16_t g_foc_bidir_zero_cross_elapsed_ms;
@@ -1135,6 +1138,7 @@ static void FOC_BidirSpeed_ResetZeroCross(void)
     g_foc_bidir_zero_below_elapsed_ms = 0U;
     g_foc_bidir_zero_approach_active = 0U;
     g_foc_bidir_zero_tail_active = 0U;
+    g_foc_bidir_zero_tail_fdb_catch_count = 0U;
     g_foc_bidir_zero_ref_rpm = 0;
 }
 
@@ -1830,6 +1834,8 @@ static void FOC_UpdateSpeedControlFeedback(void)
     float ref_abs = FOC_FABS(s_speed_ref_ctrl);
     float smooth_max = (float)g_foc_low_speed_smooth_max_rpm;
     float overspeed_deadband = 0.0f;
+    float tail_drop = (float)g_foc_bidir_zero_tail_fdb_drop_rpm;
+    float tail_lead = (float)g_foc_bidir_zero_tail_fdb_lead_rpm;
 
     g_foc_low_speed_smooth_active = 0U;
     if ((g_foc_low_speed_smooth_enable != 0U) &&
@@ -1857,7 +1863,22 @@ static void FOC_UpdateSpeedControlFeedback(void)
     } else if (s_ctx.speed_fdb > (s_speed_ref_ctrl + overspeed_deadband)) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (s_ctx.speed_fdb < s_ctx.speed_ctrl_fdb) {
-        FOC_DecaySpeedControlFeedback(s_ctx.speed_fdb);
+        if ((g_foc_bidir_zero_tail_active != 0U) &&
+            (tail_drop > 0.0f) &&
+            ((s_ctx.speed_ctrl_fdb - s_ctx.speed_fdb) >= tail_drop)) {
+            if (tail_lead < 0.0f) {
+                tail_lead = 0.0f;
+            }
+            s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb + tail_lead;
+            if (s_ctx.speed_ctrl_fdb < s_ctx.speed_fdb) {
+                s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
+            }
+            if (g_foc_bidir_zero_tail_fdb_catch_count < 0xFFFFFFFFU) {
+                g_foc_bidir_zero_tail_fdb_catch_count++;
+            }
+        } else {
+            FOC_DecaySpeedControlFeedback(s_ctx.speed_fdb);
+        }
     } else if (alpha >= 1.0f) {
         s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     } else if (alpha > 0.0f) {
