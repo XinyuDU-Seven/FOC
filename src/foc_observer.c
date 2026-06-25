@@ -119,6 +119,8 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_ref_active = 0U
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_predict_speed_rpm = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_release_rpm =
     (uint16_t)FOC_STARTUP_PREDICT_RELEASE_RPM;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_sync_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_sync_step_mrad = 0;
 
 static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
 {
@@ -663,6 +665,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
           (FOC_FABS(ctx->speed_filtered) < startup_release_rpm))
          ? 1U : 0U;
      g_foc_observer_startup_ref_active = 0U;
+     g_foc_observer_startup_sync_active = 0U;
+     g_foc_observer_sync_step_mrad = 0;
 
      if (s_predict_direction != hall_dir) {
          s_predict_direction = hall_dir;
@@ -772,7 +776,11 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
              sync_step_max = FOC_LATE_PERIOD_ANGLE_SYNC_STEP_MAX_RAD;
          }
 
-         if ((speed_err > FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM) ||
+         if (g_foc_observer_startup_ref_active != 0U) {
+             sync_factor = FOC_STARTUP_EDGE_SYNC_FACTOR;
+             sync_step_max = FOC_STARTUP_EDGE_SYNC_STEP_MAX_RAD;
+             g_foc_observer_startup_sync_active = 1U;
+         } else if ((speed_err > FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM) ||
              (diff_abs > FOC_ANGLE_SYNC_RECOVERY_DIFF_RAD)) {
              if (sync_factor < FOC_ANGLE_SYNC_RECOVERY_FACTOR) {
                  sync_factor = FOC_ANGLE_SYNC_RECOVERY_FACTOR;
@@ -808,6 +816,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          }
 
          ctx->theta_e_predicted += sync_step;
+         g_foc_observer_sync_step_mrad = (int16_t)(sync_step * 1000.0f);
 
          }
 
