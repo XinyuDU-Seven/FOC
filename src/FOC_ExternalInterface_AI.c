@@ -642,6 +642,22 @@ static FocError FOC_AI_MapFault(FOC_Fault_e fault)
   return FOC_INPUT_PARAMETER_INVALID;
 }
 
+static FocError FOC_AI_EnsureRunningForTarget(float target)
+{
+  const FOC_Context_t *ctx = FOC_Core_GetContext();
+
+  if (FOC_FABS(target) < 0.0001f) {
+    return FOC_SUCCESS;
+  }
+  if (ctx->state == FOC_STATE_RUNNING) {
+    return FOC_SUCCESS;
+  }
+  if (ctx->state == FOC_STATE_FAULT) {
+    return FOC_AI_MapFault(ctx->fault);
+  }
+  return FOC_AI_MapResult(FOC_Start());
+}
+
 static uint8_t FOC_AI_HallRawToU8(const FOC_HallRaw_t *hall_raw)
 {
   return (uint8_t)((hall_raw->h1 << 2) | (hall_raw->h2 << 1) | hall_raw->h3);
@@ -1317,6 +1333,11 @@ FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq)
     return err;
   }
 
+  err = FOC_AI_EnsureRunningForTarget((FOC_FABS(fId) > FOC_FABS(fIq)) ? fId : fIq);
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
   FOC_AI_ClearAutoModes();
   return FOC_AI_MapResult(FOC_SetCurrentRef(fId, fIq));
 }
@@ -1386,6 +1407,11 @@ FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed)
 {
   FocError err = FOC_AI_SelectMotor(unId);
 
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  err = FOC_AI_EnsureRunningForTarget(fSpeed);
   if (err != FOC_SUCCESS) {
     return err;
   }
