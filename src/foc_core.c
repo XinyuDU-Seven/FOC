@@ -2019,6 +2019,7 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
                                          : 0xFFFFFFFFU;
         uint32_t edge_max_us = g_foc_zero_relaunch_edge_max_us;
         uint8_t edge_recent = 1U;
+        uint8_t relaunch_ready = 0U;
 
         if (relaunch_us == 0U) {
             relaunch_us = 1U;
@@ -2027,13 +2028,19 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
             edge_recent = (edge_elapsed_us <= edge_max_us) ? 1U : 0U;
         }
         *zero_dir = FOC_BidirSpeed_DirFromSign(s_zero_transfer_new_sign);
-        target = raw_target;
+        target = (raw_sign == s_zero_transfer_new_sign) ? raw_target : 0.0f;
 
         if ((raw_sign == s_zero_transfer_new_sign) &&
-            (relaunch_elapsed_us >= relaunch_us) &&
-            (edge_recent != 0U) &&
-            (FOC_FABS(s_ctx.speed_fdb) >= exit_rpm)) {
-            FOC_BidirZeroTransfer_Reset();
+            (relaunch_elapsed_us >= relaunch_us)) {
+            if (raw_abs >= exit_rpm) {
+                relaunch_ready = 1U;
+            } else if ((edge_recent != 0U) &&
+                       (FOC_FABS(s_ctx.speed_fdb) >= exit_rpm)) {
+                relaunch_ready = 1U;
+            }
+            if (relaunch_ready != 0U) {
+                FOC_BidirZeroTransfer_Reset();
+            }
         }
     }
 
