@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "foc_api.h"
+#include "foc_config.h"
 #include "foc_core.h"
 #include "foc_hal_if.h"
 #include "foc_math.h"
@@ -72,9 +73,14 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_armed = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_active = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_stop = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_idx = 0U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_decim_ms = 1U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_trigger_rpm = 650U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_decim_ms = 2U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_trigger_rpm = 300U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_trigger_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_zero_window_enable = 1U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_zero_post_ms = 300U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_zero_event_idx = 0xFFFFU;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_zero_event_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_zero_window_done = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_t_ms[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_raw_ref_rpm[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_ref_rpm[FOC_DETAIL_LOG_SIZE];
@@ -96,7 +102,12 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_duty_c[FOC_DETAIL_LOG_SIZE]
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_zero_soft_scale_percent[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_zero_soft_limited_mA[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_zero_soft_active[FOC_DETAIL_LOG_SIZE];
-FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_min_drive_active[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_zero_transfer_state[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_zero_signed_iq_cmd_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_zero_iq_ff_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_zero_ctrl_iq_raw_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_zero_pid_freeze_active[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int8_t   g_foc_detail_log_zero_direction_pending[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_decel_hold_mA[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_edge_elapsed_us[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_fault[FOC_DETAIL_LOG_SIZE];
@@ -112,11 +123,25 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_speed_elapsed_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_phase_u16 = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_raw_ref_rpm = 0;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_ref_rpm = 0;
-FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_min_drive_enable = 1U;
-FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_min_drive_active = 0U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_min_drive_rpm = 150U;
-FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_zero_min_drive_count = 0U;
-FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_cross_enable = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_zero_transfer_enable = FOC_BIDIR_ZERO_TRANSFER_ENABLE;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_zero_transfer_state = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_transfer_enter_rpm = FOC_BIDIR_ZERO_TRANSFER_ENTER_RPM;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_transfer_exit_rpm = FOC_BIDIR_ZERO_TRANSFER_EXIT_RPM;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_transfer_ms = FOC_BIDIR_ZERO_TRANSFER_MS;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_relaunch_ms = FOC_BIDIR_ZERO_RELAUNCH_MS;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_zero_relaunch_edge_max_us = FOC_BIDIR_ZERO_RELAUNCH_EDGE_MAX_US;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_zero_hold_iq_mA = FOC_BIDIR_ZERO_HOLD_IQ_MA;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_zero_breakaway_iq_mA = FOC_BIDIR_ZERO_BREAKAWAY_IQ_MA;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_iq_slew_mA_per_s = FOC_BIDIR_ZERO_IQ_SLEW_MA_PER_S;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_zero_signed_iq_cmd_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_zero_iq_ff_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_zero_ctrl_iq_raw_mA = 0;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_zero_pid_freeze_active = 0U;
+FOC_AI_DEBUG_ROOT volatile int8_t   g_foc_zero_direction_pending = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_transfer_elapsed_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_zero_edge_elapsed_us = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_zero_transfer_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_zero_cross_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_speed_rpm = 120U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_confirm_ms = 50U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_hold_ms = 80U;
@@ -1653,10 +1678,32 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_bidir_speed_step_enable = 2U;
     g_foc_bidir_speed_slew_enable = 0U;
     g_foc_bidir_speed_slew_rpm_per_s = 1500U;
-    g_foc_bidir_zero_min_drive_enable = 1U;
-    g_foc_bidir_zero_min_drive_rpm = 150U;
-    g_foc_bidir_zero_min_drive_active = 0U;
-    g_foc_bidir_zero_min_drive_count = 0U;
+    g_foc_zero_transfer_enable = 1U;
+    g_foc_zero_transfer_enter_rpm = 250U;
+    g_foc_zero_transfer_exit_rpm = 180U;
+    g_foc_zero_transfer_ms = 120U;
+    g_foc_zero_relaunch_ms = 100U;
+    g_foc_zero_relaunch_edge_max_us = 80000U;
+    g_foc_zero_hold_iq_mA = 450;
+    g_foc_zero_breakaway_iq_mA = 1000;
+    g_foc_zero_iq_slew_mA_per_s = 12000U;
+    g_foc_zero_transfer_state = 0U;
+    g_foc_zero_signed_iq_cmd_mA = 0;
+    g_foc_zero_iq_ff_mA = 0;
+    g_foc_zero_ctrl_iq_raw_mA = 0;
+    g_foc_zero_pid_freeze_active = 0U;
+    g_foc_zero_direction_pending = 0;
+    g_foc_zero_transfer_elapsed_ms = 0U;
+    g_foc_zero_transfer_count = 0U;
+    g_foc_detail_log_enable = 1U;
+    g_foc_detail_log_decim_ms = 2U;
+    g_foc_detail_log_trigger_rpm = 300U;
+    g_foc_detail_log_zero_window_enable = 1U;
+    g_foc_detail_log_zero_post_ms = 300U;
+    g_foc_detail_log_zero_event_idx = 0xFFFFU;
+    g_foc_detail_log_zero_event_count = 0U;
+    g_foc_detail_log_zero_window_done = 0U;
+    g_foc_detail_log_reset = 1U;
     g_foc_bidir_zero_cross_enable = 0U;
     g_foc_bidir_zero_speed_rpm = 120U;
     g_foc_bidir_zero_confirm_ms = 50U;
