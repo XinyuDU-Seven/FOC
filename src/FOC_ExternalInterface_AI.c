@@ -246,7 +246,8 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_step = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_idx = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_overflow = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_call_disable = 0U;
-FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_use_hybrid = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_use_hybrid = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_direction = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_stop_on_fault = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_speed_api_test_motor_id = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_test_decim = 100U;
@@ -257,6 +258,7 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_log_phase[FOC_SPEED_API_TEST
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_log_result[FOC_SPEED_API_TEST_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_log_state[FOC_SPEED_API_TEST_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_log_fault[FOC_SPEED_API_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_speed_api_log_direction[FOC_SPEED_API_TEST_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_target_rpm[FOC_SPEED_API_TEST_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_ref_rpm[FOC_SPEED_API_TEST_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile float    g_foc_speed_api_log_ctrl_ref_rpm[FOC_SPEED_API_TEST_LOG_SIZE];
@@ -704,6 +706,7 @@ static void FOC_SpeedApiTest_ClearLog(void)
     g_foc_speed_api_log_result[i] = 0U;
     g_foc_speed_api_log_state[i] = 0U;
     g_foc_speed_api_log_fault[i] = 0U;
+    g_foc_speed_api_log_direction[i] = 0U;
     g_foc_speed_api_log_target_rpm[i] = 0.0f;
     g_foc_speed_api_log_ref_rpm[i] = 0.0f;
     g_foc_speed_api_log_ctrl_ref_rpm[i] = 0.0f;
@@ -730,6 +733,7 @@ static void FOC_SpeedApiTest_Record(uint16_t phase, FocError result)
   g_foc_speed_api_log_result[idx] = (uint16_t)result;
   g_foc_speed_api_log_state[idx] = (uint16_t)ctx->state;
   g_foc_speed_api_log_fault[idx] = (uint16_t)ctx->fault;
+  g_foc_speed_api_log_direction[idx] = (uint16_t)ctx->direction;
   g_foc_speed_api_log_target_rpm[idx] = g_foc_speed_api_test_target_rpm;
   g_foc_speed_api_log_ref_rpm[idx] = ctx->speed_ref;
   g_foc_speed_api_log_ctrl_ref_rpm[idx] = ctx->speed_ref_ctrl;
@@ -762,6 +766,8 @@ static void FOC_SpeedApiTest_Service(void)
   FocError result;
   uint16_t decim;
   uint16_t target_rpm_u16;
+  uint16_t direction;
+  float target_abs;
 
   if (g_foc_speed_api_test_enable == 0U) {
     s_foc_speed_api_test_prev_enable = 0U;
@@ -787,12 +793,23 @@ static void FOC_SpeedApiTest_Service(void)
 
   if (g_foc_speed_api_test_step == 1U) {
     if (g_foc_speed_api_test_use_hybrid != 0U) {
-      target_rpm_u16 = (g_foc_speed_api_test_target_rpm > 0.0f)
-          ? (uint16_t)g_foc_speed_api_test_target_rpm
-          : 0U;
+      target_abs = g_foc_speed_api_test_target_rpm;
+      direction = (uint16_t)g_foc_speed_api_test_direction;
+      if (target_abs < 0.0f) {
+        target_abs = -target_abs;
+      }
+      if ((direction != FOC_APP_DIR_FORWARD) &&
+          (direction != FOC_APP_DIR_REVERSE)) {
+        direction = (g_foc_speed_api_test_target_rpm < 0.0f)
+                  ? FOC_APP_DIR_REVERSE
+                  : FOC_APP_DIR_FORWARD;
+      }
+      target_rpm_u16 = (target_abs > 65535.0f)
+          ? 65535U
+          : (uint16_t)target_abs;
       result = Foc_SetHybridControlReference(g_foc_speed_api_test_motor_id,
                                              FOC_APP_MODE_SPEED,
-                                             FOC_APP_DIR_FORWARD,
+                                             direction,
                                              0U,
                                              0U,
                                              target_rpm_u16,
