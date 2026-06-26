@@ -245,6 +245,10 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_ctrl_rpm = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_ref_ramp_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_up_rpm_per_s =
+    (uint16_t)FOC_SPEED_REF_RAMP_UP_RPM_PER_S;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_down_rpm_per_s =
+    (uint16_t)FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_app_direction_invert_enable = 1U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_smooth_enable =
     FOC_LOW_SPEED_SMOOTH_ENABLE;
@@ -1002,10 +1006,10 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
      }
 
      if (target > s_speed_ref_ctrl) {
-         rate = FOC_SPEED_REF_RAMP_UP_RPM_PER_S;
+         rate = (float)g_foc_speed_ref_ramp_up_rpm_per_s;
          delta = target - s_speed_ref_ctrl;
      } else {
-         rate = FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S;
+         rate = (float)g_foc_speed_ref_ramp_down_rpm_per_s;
          delta = s_speed_ref_ctrl - target;
      }
 
@@ -1561,7 +1565,6 @@ static void FOC_DynSpeed_WriteCoreRefWithZeroDir(float rpm, FOC_Dir_e zero_dir)
     if (zero_dir > FOC_DIR_CCW) {
         zero_dir = FOC_DIR_CW;
     }
-    zero_dir = FOC_ApplyAppDirectionInvertToDir(zero_dir);
 
     FOC_HAL_EnterCritical();
     if (rpm > 0.0f) {
@@ -1725,6 +1728,11 @@ static int16_t FOC_BidirSpeed_TargetSign(float rpm)
 static FOC_Dir_e FOC_BidirSpeed_DirFromSign(int16_t sign)
 {
     return (sign < 0) ? FOC_DIR_CCW : FOC_DIR_CW;
+}
+
+static FOC_Dir_e FOC_BidirSpeed_CoreDirFromSign(int16_t sign)
+{
+    return FOC_ApplyAppDirectionInvertToDir(FOC_BidirSpeed_DirFromSign(sign));
 }
 
 static int16_t FOC_BidirZeroTransfer_SignedIqSign(float signed_iq)
@@ -1975,7 +1983,7 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
     }
 
     if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_APPROACH) {
-        *zero_dir = FOC_BidirSpeed_DirFromSign(s_zero_transfer_old_sign);
+        *zero_dir = FOC_BidirSpeed_CoreDirFromSign(s_zero_transfer_old_sign);
         target = (s_zero_transfer_old_sign < 0) ? -raw_abs : raw_abs;
 
         if ((raw_sign == s_zero_transfer_new_sign) ||
@@ -2018,8 +2026,8 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
 
         *zero_dir =
             (s_zero_transfer_direction_switched != 0U)
-          ? FOC_BidirSpeed_DirFromSign(s_zero_transfer_new_sign)
-          : FOC_BidirSpeed_DirFromSign(s_zero_transfer_old_sign);
+          ? FOC_BidirSpeed_CoreDirFromSign(s_zero_transfer_new_sign)
+          : FOC_BidirSpeed_CoreDirFromSign(s_zero_transfer_old_sign);
         target = 0.0f;
 
         if ((progress >= 1.0f) &&
@@ -2047,7 +2055,7 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
         if (edge_max_us != 0U) {
             edge_recent = (edge_elapsed_us <= edge_max_us) ? 1U : 0U;
         }
-        *zero_dir = FOC_BidirSpeed_DirFromSign(s_zero_transfer_new_sign);
+        *zero_dir = FOC_BidirSpeed_CoreDirFromSign(s_zero_transfer_new_sign);
         if (relaunch_abs < exit_rpm) {
             relaunch_abs = exit_rpm;
         }
@@ -2236,7 +2244,7 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
         s_bidir_zero_ref_rpm = decel_start_ref;
         s_bidir_zero_pending_sign = raw_sign;
         s_bidir_zero_hold_dir =
-            FOC_BidirSpeed_DirFromSign(s_bidir_zero_command_sign);
+            FOC_BidirSpeed_CoreDirFromSign(s_bidir_zero_command_sign);
         if (g_foc_bidir_zero_cross_count < 0xFFFFFFFFU) {
             g_foc_bidir_zero_cross_count++;
         }
@@ -2324,7 +2332,7 @@ static float FOC_BidirSpeed_ApplyZeroCross(float target,
             }
             s_bidir_zero_state = FOC_BIDIR_ZERO_STATE_IDLE;
             s_bidir_zero_last_us = 0U;
-            *zero_dir = FOC_BidirSpeed_DirFromSign(s_bidir_zero_command_sign);
+            *zero_dir = FOC_BidirSpeed_CoreDirFromSign(s_bidir_zero_command_sign);
         }
     }
 
@@ -4590,17 +4598,21 @@ int FOC_Core_SetSpeedRef(float rpm)
 
  
 
-     /* 根据转速正负自动判断方向 */
+     /* 非零速度更新方向；0rpm 保持当前方向，仅让速度环斜坡降到 0 */
 
-     if (rpm >= 0.0f) {
+     if (rpm > 0.0f) {
 
          s_ctx.direction = FOC_DIR_CW;
 
-     } else {
+     } else if (rpm < 0.0f) {
 
          s_ctx.direction = FOC_DIR_CCW;
 
          s_ctx.speed_ref = -rpm; /* 速度绝对值用于PID，方向由电角度处理 */
+
+     } else {
+
+         s_ctx.speed_ref = 0.0f;
 
      }
 

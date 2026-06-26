@@ -331,7 +331,7 @@ extern "C" {
 #endif
 
 #ifndef FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S
-#define FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S   6000.0f
+#define FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S   1500.0f
 #endif
 
 /* Regenerative braking guard. Negative speed-loop iq is reduced before OV trips. */
