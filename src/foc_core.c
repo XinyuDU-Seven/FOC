@@ -474,6 +474,13 @@ extern volatile int8_t   g_foc_zero_direction_pending;
 extern volatile uint16_t g_foc_zero_transfer_elapsed_ms;
 extern volatile uint32_t g_foc_zero_edge_elapsed_us;
 extern volatile uint32_t g_foc_zero_transfer_count;
+extern volatile uint8_t  g_foc_zero_transfer_start_reason;
+extern volatile int8_t   g_foc_zero_transfer_raw_sign;
+extern volatile int8_t   g_foc_zero_transfer_prev_sign;
+extern volatile uint8_t  g_foc_zero_transfer_raw_decreasing;
+extern volatile uint8_t  g_foc_zero_transfer_cmd_decreasing;
+extern volatile uint16_t g_foc_zero_transfer_raw_abs_rpm;
+extern volatile uint16_t g_foc_zero_transfer_prev_cmd_abs_rpm;
 extern volatile uint8_t  g_foc_bidir_zero_cross_enable;
 extern volatile uint16_t g_foc_bidir_zero_speed_rpm;
 extern volatile uint16_t g_foc_bidir_zero_confirm_ms;
@@ -1810,6 +1817,13 @@ static void FOC_BidirZeroTransfer_Reset(void)
     g_foc_zero_direction_pending = 0;
     g_foc_zero_transfer_elapsed_ms = 0U;
     g_foc_zero_edge_elapsed_us = 0U;
+    g_foc_zero_transfer_start_reason = 0U;
+    g_foc_zero_transfer_raw_sign = 0;
+    g_foc_zero_transfer_prev_sign = 0;
+    g_foc_zero_transfer_raw_decreasing = 0U;
+    g_foc_zero_transfer_cmd_decreasing = 0U;
+    g_foc_zero_transfer_raw_abs_rpm = 0U;
+    g_foc_zero_transfer_prev_cmd_abs_rpm = 0U;
 }
 
 static void FOC_BidirZeroTransfer_Start(uint32_t now_us, int16_t old_sign)
@@ -1845,9 +1859,14 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
     float prev_abs = FOC_FABS(s_zero_transfer_prev_raw);
     float enter_rpm = (float)g_foc_zero_transfer_enter_rpm;
     float exit_rpm = (float)g_foc_zero_transfer_exit_rpm;
+    float prev_cmd_abs = FOC_FABS(s_ctx.speed_ref);
     int16_t raw_sign = FOC_BidirSpeed_TargetSign(raw_target);
     int16_t prev_sign = FOC_BidirSpeed_TargetSign(s_zero_transfer_prev_raw);
     uint8_t decreasing = ((prev_abs - raw_abs) > 0.5f) ? 1U : 0U;
+    uint8_t cmd_decreasing =
+        ((prev_cmd_abs - raw_abs) > 0.5f) ? 1U : 0U;
+    int16_t start_sign = raw_sign;
+    uint8_t start_reason = 0U;
 
     if (zero_dir == NULL) {
         return target;
@@ -1870,12 +1889,35 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
         exit_rpm = enter_rpm;
     }
 
-    if ((s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_IDLE) &&
-        (raw_sign != 0) &&
-        (prev_sign == raw_sign) &&
+    if (start_sign == 0) {
+        start_sign = (s_ctx.direction == FOC_DIR_CCW) ? -1 : 1;
+    }
+    g_foc_zero_transfer_raw_sign = (int8_t)raw_sign;
+    g_foc_zero_transfer_prev_sign = (int8_t)prev_sign;
+    g_foc_zero_transfer_raw_decreasing = decreasing;
+    g_foc_zero_transfer_cmd_decreasing = cmd_decreasing;
+    g_foc_zero_transfer_raw_abs_rpm = FOC_Log_ToU16(raw_abs, 1.0f);
+    g_foc_zero_transfer_prev_cmd_abs_rpm =
+        FOC_Log_ToU16(prev_cmd_abs, 1.0f);
+
+    if ((raw_sign != 0) &&
         (decreasing != 0U) &&
+        ((prev_sign == raw_sign) || (prev_sign == 0))) {
+        start_reason = 1U;
+    } else if ((raw_sign != 0) &&
+               (cmd_decreasing != 0U)) {
+        start_reason = 2U;
+    } else if ((raw_sign == 0) &&
+               (cmd_decreasing != 0U)) {
+        start_reason = 3U;
+    }
+
+    if ((s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_IDLE) &&
+        (start_reason != 0U) &&
+        (start_sign != 0) &&
         (raw_abs <= enter_rpm)) {
-        FOC_BidirZeroTransfer_Start(now_us, raw_sign);
+        FOC_BidirZeroTransfer_Start(now_us, start_sign);
+        g_foc_zero_transfer_start_reason = start_reason;
     }
 
     if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_APPROACH) {
