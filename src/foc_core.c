@@ -2020,6 +2020,7 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
         uint32_t edge_max_us = g_foc_zero_relaunch_edge_max_us;
         uint8_t edge_recent = 1U;
         uint8_t relaunch_ready = 0U;
+        float relaunch_abs = raw_abs;
 
         if (relaunch_us == 0U) {
             relaunch_us = 1U;
@@ -2028,7 +2029,10 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
             edge_recent = (edge_elapsed_us <= edge_max_us) ? 1U : 0U;
         }
         *zero_dir = FOC_BidirSpeed_DirFromSign(s_zero_transfer_new_sign);
-        target = (raw_sign == s_zero_transfer_new_sign) ? raw_target : 0.0f;
+        if (relaunch_abs < exit_rpm) {
+            relaunch_abs = exit_rpm;
+        }
+        target = (s_zero_transfer_new_sign < 0) ? -relaunch_abs : relaunch_abs;
 
         if ((raw_sign == s_zero_transfer_new_sign) &&
             (relaunch_elapsed_us >= relaunch_us)) {
