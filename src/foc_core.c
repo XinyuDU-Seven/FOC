@@ -245,6 +245,7 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_ctrl_rpm = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_ref_ramp_active = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_app_direction_invert_enable = 1U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_smooth_enable =
     FOC_LOW_SPEED_SMOOTH_ENABLE;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_smooth_active = 0U;
@@ -739,12 +740,27 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      return &g_foc_ctx[motor_id];
  }
 
- static float FOC_ControlIqRef(void)
- {
+static float FOC_ControlIqRef(void)
+{
      return (s_ctx.direction == FOC_DIR_CCW) ? -s_ctx.iq_ref : s_ctx.iq_ref;
- }
- static float FOC_SignedSpeedRef(void)
- {
+}
+
+static float FOC_ApplyAppDirectionInvertToRef(float ref)
+{
+     return (g_foc_app_direction_invert_enable != 0U) ? -ref : ref;
+}
+
+static FOC_Dir_e FOC_ApplyAppDirectionInvertToDir(FOC_Dir_e dir)
+{
+     if (g_foc_app_direction_invert_enable == 0U) {
+         return dir;
+     }
+
+     return (dir == FOC_DIR_CCW) ? FOC_DIR_CW : FOC_DIR_CCW;
+}
+
+static float FOC_SignedSpeedRef(void)
+{
      float ref = FOC_FABS(s_ctx.speed_ref);
 
      return (s_ctx.direction == FOC_DIR_CCW) ? -ref : ref;
@@ -1535,6 +1551,8 @@ static float FOC_DynSpeed_CalcRef(uint32_t now_us)
 
 static void FOC_DynSpeed_WriteCoreRefWithZeroDir(float rpm, FOC_Dir_e zero_dir)
 {
+    rpm = FOC_ApplyAppDirectionInvertToRef(rpm);
+
     if (rpm > s_config.motor.max_speed_rpm) {
         rpm = s_config.motor.max_speed_rpm;
     } else if (rpm < -s_config.motor.max_speed_rpm) {
@@ -1543,6 +1561,7 @@ static void FOC_DynSpeed_WriteCoreRefWithZeroDir(float rpm, FOC_Dir_e zero_dir)
     if (zero_dir > FOC_DIR_CCW) {
         zero_dir = FOC_DIR_CW;
     }
+    zero_dir = FOC_ApplyAppDirectionInvertToDir(zero_dir);
 
     FOC_HAL_EnterCritical();
     if (rpm > 0.0f) {
@@ -4534,7 +4553,7 @@ static void FOC_Prof_Reset(void)
 
  
 
- int FOC_Core_SetSpeedRef(float rpm)
+int FOC_Core_SetSpeedRef(float rpm)
 
  {
 
@@ -4548,6 +4567,8 @@ static void FOC_Prof_Reset(void)
      if (FOC_DynSpeed_HandleSetRef(rpm) != 0U) {
          return FOC_OK;
      }
+
+     rpm = FOC_ApplyAppDirectionInvertToRef(rpm);
 
      if (rpm > s_config.motor.max_speed_rpm) {
 
@@ -4603,6 +4624,8 @@ static void FOC_Prof_Reset(void)
          return FOC_ERR;
      }
 
+     iq = FOC_ApplyAppDirectionInvertToRef(iq);
+
      id = FOC_CLAMP(id, -max_current, max_current);
      iq = FOC_CLAMP(iq, -max_current, max_current);
 
@@ -4655,11 +4678,13 @@ static void FOC_Prof_Reset(void)
      return FOC_OK;
 
 }
- int FOC_Core_SetDirection(FOC_Dir_e dir)
+int FOC_Core_SetDirection(FOC_Dir_e dir)
 
  {
 
      FOC_HAL_EnterCritical();
+
+     dir = FOC_ApplyAppDirectionInvertToDir(dir);
 
      s_ctx.direction = dir;
 
