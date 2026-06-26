@@ -415,6 +415,7 @@ extern volatile uint16_t g_foc_detail_log_zero_post_ms;
 extern volatile uint16_t g_foc_detail_log_zero_event_idx;
 extern volatile uint32_t g_foc_detail_log_zero_event_count;
 extern volatile uint8_t  g_foc_detail_log_zero_window_done;
+extern volatile uint8_t  g_foc_test_motor_id_applied;
 extern volatile uint32_t g_foc_detail_log_t_ms[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_raw_ref_rpm[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_ref_rpm[FOC_DETAIL_LOG_SIZE];
@@ -479,6 +480,7 @@ extern volatile int8_t   g_foc_zero_transfer_raw_sign;
 extern volatile int8_t   g_foc_zero_transfer_prev_sign;
 extern volatile uint8_t  g_foc_zero_transfer_raw_decreasing;
 extern volatile uint8_t  g_foc_zero_transfer_cmd_decreasing;
+extern volatile uint8_t  g_foc_zero_transfer_decel_to_zero;
 extern volatile uint16_t g_foc_zero_transfer_raw_abs_rpm;
 extern volatile uint16_t g_foc_zero_transfer_prev_cmd_abs_rpm;
 extern volatile uint8_t  g_foc_bidir_zero_cross_enable;
@@ -644,10 +646,12 @@ static void FOC_BidirZeroTransfer_Reset(void);
 static float FOC_BidirZeroTransfer_ServiceRef(float target,
                                               float raw_target,
                                               uint32_t now_us,
+                                              uint8_t raw_decel_to_zero,
                                               FOC_Dir_e *zero_dir);
 static uint8_t FOC_BidirZeroTransfer_PidFrozen(void);
 static float FOC_BidirZeroTransfer_ApplyIq(float iq_ref,
                                            float speed_dt);
+static uint8_t FOC_IsAutoTestMotor(void);
 static void FOC_DynSpeed_ServiceMetrics(void);
 static void FOC_BeginRecoveryZeroVectorHold(void);
  static void FOC_ServiceRecoveryZeroVectorHold(void);
@@ -1360,6 +1364,10 @@ static void FOC_DetailLog_Service(float theta_ctrl, uint32_t now_us)
         FOC_BidirSpeed_TargetSign((float)g_foc_bidir_speed_raw_ref_rpm);
     uint8_t zero_event = 0U;
 
+    if (FOC_IsAutoTestMotor() == 0U) {
+        return;
+    }
+
     if (g_foc_detail_log_reset != 0U) {
         FOC_DetailLog_Reset();
     }
@@ -1763,6 +1771,10 @@ static float FOC_BidirZeroTransfer_LimitSignedIq(float current,
 
 static void FOC_BidirZeroTransfer_UpdateDebug(uint32_t now_us)
 {
+    if (FOC_IsAutoTestMotor() == 0U) {
+        return;
+    }
+
     g_foc_zero_transfer_state = s_zero_transfer_state;
     g_foc_zero_signed_iq_cmd_mA =
         FOC_Log_ToI16(s_zero_transfer_signed_iq, 1000.0f);
@@ -1797,6 +1809,11 @@ static uint8_t FOC_BidirZeroTransfer_Active(void)
     return 1U;
 }
 
+static uint8_t FOC_IsAutoTestMotor(void)
+{
+    return (s_foc_core_active_motor == g_foc_test_motor_id_applied) ? 1U : 0U;
+}
+
 static void FOC_BidirZeroTransfer_Reset(void)
 {
     s_zero_transfer_state = FOC_ZERO_TRANSFER_STATE_IDLE;
@@ -1808,6 +1825,10 @@ static void FOC_BidirZeroTransfer_Reset(void)
     s_zero_transfer_old_sign = 0;
     s_zero_transfer_new_sign = 0;
     s_zero_transfer_direction_switched = 0U;
+
+    if (FOC_IsAutoTestMotor() == 0U) {
+        return;
+    }
 
     g_foc_zero_transfer_state = FOC_ZERO_TRANSFER_STATE_IDLE;
     g_foc_zero_signed_iq_cmd_mA = 0;
@@ -1822,6 +1843,7 @@ static void FOC_BidirZeroTransfer_Reset(void)
     g_foc_zero_transfer_prev_sign = 0;
     g_foc_zero_transfer_raw_decreasing = 0U;
     g_foc_zero_transfer_cmd_decreasing = 0U;
+    g_foc_zero_transfer_decel_to_zero = 0U;
     g_foc_zero_transfer_raw_abs_rpm = 0U;
     g_foc_zero_transfer_prev_cmd_abs_rpm = 0U;
 }
@@ -1845,7 +1867,8 @@ static void FOC_BidirZeroTransfer_Start(uint32_t now_us, int16_t old_sign)
     s_zero_transfer_signed_iq = signed_iq;
     s_zero_transfer_target_iq = signed_iq;
 
-    if (g_foc_zero_transfer_count < 0xFFFFFFFFU) {
+    if ((FOC_IsAutoTestMotor() != 0U) &&
+        (g_foc_zero_transfer_count < 0xFFFFFFFFU)) {
         g_foc_zero_transfer_count++;
     }
 }
@@ -1853,6 +1876,7 @@ static void FOC_BidirZeroTransfer_Start(uint32_t now_us, int16_t old_sign)
 static float FOC_BidirZeroTransfer_ServiceRef(float target,
                                               float raw_target,
                                               uint32_t now_us,
+                                              uint8_t raw_decel_to_zero,
                                               FOC_Dir_e *zero_dir)
 {
     float raw_abs = FOC_FABS(raw_target);
@@ -1892,15 +1916,24 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
     if (start_sign == 0) {
         start_sign = (s_ctx.direction == FOC_DIR_CCW) ? -1 : 1;
     }
-    g_foc_zero_transfer_raw_sign = (int8_t)raw_sign;
-    g_foc_zero_transfer_prev_sign = (int8_t)prev_sign;
-    g_foc_zero_transfer_raw_decreasing = decreasing;
-    g_foc_zero_transfer_cmd_decreasing = cmd_decreasing;
-    g_foc_zero_transfer_raw_abs_rpm = FOC_Log_ToU16(raw_abs, 1.0f);
-    g_foc_zero_transfer_prev_cmd_abs_rpm =
-        FOC_Log_ToU16(prev_cmd_abs, 1.0f);
+    if (FOC_IsAutoTestMotor() != 0U) {
+        g_foc_zero_transfer_raw_sign = (int8_t)raw_sign;
+        g_foc_zero_transfer_prev_sign = (int8_t)prev_sign;
+        g_foc_zero_transfer_raw_decreasing = decreasing;
+        g_foc_zero_transfer_cmd_decreasing = cmd_decreasing;
+        g_foc_zero_transfer_decel_to_zero = raw_decel_to_zero;
+        g_foc_zero_transfer_raw_abs_rpm = FOC_Log_ToU16(raw_abs, 1.0f);
+        g_foc_zero_transfer_prev_cmd_abs_rpm =
+            FOC_Log_ToU16(prev_cmd_abs, 1.0f);
+    }
 
-    if ((raw_sign != 0) &&
+    if ((raw_decel_to_zero != 0U) &&
+        (raw_sign != 0)) {
+        start_reason = 4U;
+    } else if ((raw_decel_to_zero != 0U) &&
+               (raw_sign == 0)) {
+        start_reason = 5U;
+    } else if ((raw_sign != 0) &&
         (decreasing != 0U) &&
         ((prev_sign == raw_sign) || (prev_sign == 0))) {
         start_reason = 1U;
@@ -1917,7 +1950,9 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
         (start_sign != 0) &&
         (raw_abs <= enter_rpm)) {
         FOC_BidirZeroTransfer_Start(now_us, start_sign);
-        g_foc_zero_transfer_start_reason = start_reason;
+        if (FOC_IsAutoTestMotor() != 0U) {
+            g_foc_zero_transfer_start_reason = start_reason;
+        }
     }
 
     if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_APPROACH) {
@@ -2293,6 +2328,7 @@ static void FOC_BidirSpeed_ServiceRef(void)
     float target;
     FOC_Dir_e zero_dir = s_ctx.direction;
     uint8_t old_zero_cross_enabled;
+    uint8_t raw_decel_to_zero = 0U;
 
     if (g_foc_bidir_speed_reset_stats != 0U) {
         g_foc_bidir_speed_reset_stats = 0U;
@@ -2344,6 +2380,9 @@ static void FOC_BidirSpeed_ServiceRef(void)
         segment = phase_us / quarter_us;
         if (segment > 3U) {
             segment = 3U;
+        }
+        if ((segment == 1U) || (segment == 3U)) {
+            raw_decel_to_zero = 1U;
         }
         segment_us = phase_us - (segment * quarter_us);
         u = (float)segment_us / (float)quarter_us;
@@ -2405,6 +2444,7 @@ static void FOC_BidirSpeed_ServiceRef(void)
     }
     s_bidir_speed_last_us = now_us;
     target = FOC_BidirZeroTransfer_ServiceRef(target, raw_target, now_us,
+                                              raw_decel_to_zero,
                                               &zero_dir);
     s_bidir_speed_limited_ref_rpm = target;
     if (old_zero_cross_enabled != 0U) {
@@ -3947,10 +3987,12 @@ static void FOC_Prof_Reset(void)
 
      /* 预计算时间常量，避免热路径中的除法 */
 
-     if ((g_foc_bidir_speed_enable != 0U) && (speed_ref < -0.5f)) {
-         FOC_BidirSpeed_ServiceRef();
-     } else {
-         FOC_DynSpeed_ServiceRef();
+     if (FOC_IsAutoTestMotor() != 0U) {
+         if ((g_foc_bidir_speed_enable != 0U) && (speed_ref < -0.5f)) {
+             FOC_BidirSpeed_ServiceRef();
+         } else {
+             FOC_DynSpeed_ServiceRef();
+         }
      }
 
      FOC_NormalizeSignedSpeedRef();
