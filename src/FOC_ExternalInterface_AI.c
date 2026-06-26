@@ -581,6 +581,7 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 #define FOC_APP_DIR_NONE       0U
 #define FOC_APP_DIR_FORWARD    1U
 #define FOC_APP_DIR_REVERSE    2U
+#define FOC_APP_MODE_NONE      0U
 #define FOC_APP_MODE_SPEED     1U
 #define FOC_APP_MODE_CURRENT   3U
 
@@ -1364,6 +1365,11 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
   err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
     return err;
+  }
+
+  if (unMode == FOC_APP_MODE_NONE) {
+    FOC_AI_ClearAutoModes();
+    return FOC_AI_MapResult(FOC_Stop());
   }
 
   if (unMode == FOC_APP_MODE_SPEED) {

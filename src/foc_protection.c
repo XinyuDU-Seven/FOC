@@ -87,13 +87,9 @@ FOC_Fault_e FOC_Protection_Check(FOC_Context_t *ctx, float v_bus)
 
  
 
-    if (i_peak > s_threshold.overcurrent_a) {
+    /* Overcurrent is logged through ctx->current_peak but no longer latches a fault. */
 
-        fault |= FOC_FAULT_OVERCURRENT;
 
-    }
-
- 
 
     /* ---- 过压检测 ---- */
 

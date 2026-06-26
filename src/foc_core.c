@@ -2707,7 +2707,6 @@ static void FOC_CheckSpeedDropFault(void)
     uint16_t abs_ref;
     uint16_t abs_fdb;
     uint16_t abs_iq_ref;
-    uint16_t count_limit;
     uint8_t ref_decreasing;
     uint8_t low_torque_no_edge;
     uint8_t bidir_no_edge_stop;
@@ -2794,13 +2793,7 @@ static void FOC_CheckSpeedDropFault(void)
         FOC_HAL_GetTimestampUs() - s_ctx.timestamp_prev;
     g_foc_speed_drop_fault_direction = (uint8_t)s_ctx.direction;
 
-    count_limit = g_foc_speed_drop_fault_count_limit;
-    if (count_limit == 0U) {
-        count_limit = 1U;
-    }
-    if (g_foc_speed_drop_fault_count >= count_limit) {
-        s_ctx.fault |= FOC_FAULT_SPEED_DROP;
-    }
+    /* Keep the diagnostic counter visible, but do not latch a speed-drop fault. */
 
     s_speed_drop_prev_abs_ref_rpm = abs_ref;
 }
@@ -2825,7 +2818,6 @@ static void FOC_CheckSpeedFdbDropFault(void)
     uint16_t abs_fdb;
     uint16_t drop_rpm;
     uint16_t err_rpm;
-    uint16_t count_limit;
     uint32_t cur_ratio_scaled;
     uint32_t peak_ratio_scaled;
     float signed_ref = s_speed_ref_ctrl;
@@ -2894,13 +2886,7 @@ static void FOC_CheckSpeedFdbDropFault(void)
         FOC_HAL_GetTimestampUs() - s_ctx.timestamp_prev;
     g_foc_speed_fdb_drop_fault_direction = (uint8_t)s_ctx.direction;
 
-    count_limit = g_foc_speed_fdb_drop_fault_count_limit;
-    if (count_limit == 0U) {
-        count_limit = 1U;
-    }
-    if (g_foc_speed_fdb_drop_fault_count >= count_limit) {
-        s_ctx.fault |= FOC_FAULT_SPEED_FDB_DROP;
-    }
+    /* Keep the diagnostic counter visible, but do not latch a speed-feedback-drop fault. */
 }
 
 static void FOC_UpdateSpeedControlFeedback(void)
