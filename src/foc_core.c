@@ -279,7 +279,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_count[FOC_CORE_MOTOR_COUNT] = {0, 0};
-FOC_DEBUG_ROOT volatile int16_t  g_foc_hall_travel_offset[FOC_CORE_MOTOR_COUNT] = {0, 0};
+FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_offset[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
@@ -4915,26 +4915,23 @@ static void FOC_Prof_Reset(void)
      return FOC_OK;
  }
 
- int FOC_Core_WriteHallTravelOffset(uint8_t motor_id,
-                                    int16_t *hall_states_offset,
-                                    int16_t hall_distance_offset)
- {
-     int32_t travel;
-
+int FOC_Core_WriteHallTravelOffset(uint8_t motor_id,
+                                   int16_t *hall_states_offset,
+                                   int16_t hall_position)
+{
      if ((motor_id >= FOC_CORE_MOTOR_COUNT) ||
          (hall_states_offset == NULL)) {
          return FOC_ERR;
      }
 
      FOC_HAL_EnterCritical();
-     g_foc_hall_travel_offset[motor_id] = hall_distance_offset;
-     travel = g_foc_hall_travel_count[motor_id] +
-              (int32_t)g_foc_hall_travel_offset[motor_id];
-     *hall_states_offset = FOC_ClampI32ToI16(travel);
+     g_foc_hall_travel_offset[motor_id] =
+         (int32_t)hall_position - g_foc_hall_travel_count[motor_id];
+     *hall_states_offset = hall_position;
      FOC_HAL_ExitCritical();
 
      return FOC_OK;
- }
+}
 
  
 
