@@ -1160,7 +1160,6 @@ FocError Foc_SetVFReference_AI(uint8_t unId, float fVq, float fSpeed);
 FocError Foc_GetAngleAndSpeed_AI(uint8_t unId, float *pfThetaElec, float *pfSpeed);
 FocError Foc_ReadMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset);
 FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset, int16_t nHallDistanceOffset);
-static void FOC_TestCase_Service(void);
 
 /*******************************************************************************************
 
@@ -1180,17 +1179,7 @@ void Foc_AlgorithmControlCallback_AI(void){
 
   g_foc_ai_callback_count++;
 
-  FOC_TestCase_Service();
-
-  FOC_CurrentCmd_Service();
-
   FOC_MainLoop();
-
-  FOC_CurrentCmd_UpdateMonitor();
-
-  FOC_SpeedApiTest_Service();
-
-  FOC_ExtApiTest_Service();
 
 }
 
