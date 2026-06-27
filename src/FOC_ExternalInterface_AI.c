@@ -24,6 +24,8 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_bidet_foc_motor_id = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_app_id = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_foc_id = 0xFFU;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_last_get_motor_num_err = FOC_SUCCESS;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_full_params_foc_id = 0xFFU;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_full_params_app_id = 0xFFU;
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 extern volatile float speed_ref;
 
@@ -633,6 +635,19 @@ static FocError FOC_AI_MapAppMotorNum(uint8_t unMotorID, uint8_t *punMotorNum)
 
   *punMotorNum = mapped_motor;
   return FOC_SUCCESS;
+}
+
+static uint8_t FOC_AI_MapPhysicalMotorToAppId(uint8_t motor_id)
+{
+  if (motor_id == g_foc_app_level_foc_motor_id) {
+    return g_foc_app_level_motor_id;
+  }
+
+  if (motor_id == g_foc_app_bidet_foc_motor_id) {
+    return g_foc_app_bidet_motor_id;
+  }
+
+  return motor_id;
 }
 
 static FocError FOC_AI_SelectMotor(uint8_t unId)
@@ -1486,6 +1501,8 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
 {
   const FOC_Context_t *ctx;
   FocError err;
+  uint8_t physical_id;
+  uint8_t app_id;
 
   if (pstMotorFullStates == NULL) {
     return FOC_POINTER_NULL;
@@ -1497,9 +1514,14 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
   }
 
   ctx = FOC_Core_GetContext();
+  physical_id = FOC_HAL_GetSelectedMotor();
+  app_id = FOC_AI_MapPhysicalMotorToAppId(physical_id);
+  g_foc_last_full_params_foc_id = physical_id;
+  g_foc_last_full_params_app_id = app_id;
+
   memset(pstMotorFullStates, 0, sizeof(*pstMotorFullStates));
 
-  pstMotorFullStates->unId = unId;
+  pstMotorFullStates->unId = app_id;
   pstMotorFullStates->unHallState = FOC_AI_HallRawToU8(&ctx->hall_raw);
   pstMotorFullStates->fSpeedMechEstimate =
       FOC_AI_SignedMechSpeed(ctx, ctx->speed_fdb);
