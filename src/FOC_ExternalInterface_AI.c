@@ -17,6 +17,13 @@
 
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_selected_motor_id = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_level_motor_id = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_bidet_motor_id = 5U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_level_foc_motor_id = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_bidet_foc_motor_id = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_app_id = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_foc_id = 0xFFU;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_last_get_motor_num_err = FOC_SUCCESS;
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 extern volatile float speed_ref;
 
@@ -577,6 +584,7 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 #endif
 
 #define FOC_APP_MOTOR_COUNT    200U
+#define FOC_PHY_MOTOR_COUNT    2U
 #define FOC_APP_POLE_PAIRS     4U
 #define FOC_APP_DIR_NONE       0U
 #define FOC_APP_DIR_FORWARD    1U
@@ -590,6 +598,41 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 static FocError FOC_AI_CheckMotorId(uint8_t unId)
 {
   return (unId < FOC_APP_MOTOR_COUNT) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
+}
+
+static FocError FOC_AI_CheckPhysicalMotorId(uint8_t unId)
+{
+  return (unId < FOC_PHY_MOTOR_COUNT) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
+}
+
+static FocError FOC_AI_MapAppMotorNum(uint8_t unMotorID, uint8_t *punMotorNum)
+{
+  uint8_t mapped_motor;
+
+  if (punMotorNum == NULL) {
+    return FOC_POINTER_NULL;
+  }
+
+  if (unMotorID >= FOC_APP_MOTOR_COUNT) {
+    return FOC_MOTOR_ID_INVALID;
+  }
+
+  if (unMotorID == g_foc_app_level_motor_id) {
+    mapped_motor = g_foc_app_level_foc_motor_id;
+  } else if (unMotorID == g_foc_app_bidet_motor_id) {
+    mapped_motor = g_foc_app_bidet_foc_motor_id;
+  } else if (unMotorID < FOC_PHY_MOTOR_COUNT) {
+    mapped_motor = unMotorID;
+  } else {
+    return FOC_MOTOR_ID_INVALID;
+  }
+
+  if (FOC_AI_CheckPhysicalMotorId(mapped_motor) != FOC_SUCCESS) {
+    return FOC_MOTOR_ID_INVALID;
+  }
+
+  *punMotorNum = mapped_motor;
+  return FOC_SUCCESS;
 }
 
 static FocError FOC_AI_SelectMotor(uint8_t unId)
@@ -1507,17 +1550,25 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
 
 FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum)
 {
+  FocError err;
   (void)unCarConfigID;
   (void)unSeatID;
+
+  g_foc_last_get_motor_num_app_id = unMotorID;
+  g_foc_last_get_motor_num_foc_id = 0xFFU;
+
   if (punMotorNum == NULL) {
+    g_foc_last_get_motor_num_err = FOC_POINTER_NULL;
     return FOC_POINTER_NULL;
   }
 
-  if (unMotorID >= FOC_APP_MOTOR_COUNT) {
-    return FOC_MOTOR_ID_INVALID;
+  err = FOC_AI_MapAppMotorNum(unMotorID, punMotorNum);
+  g_foc_last_get_motor_num_err = (uint16_t)err;
+  if (err != FOC_SUCCESS) {
+    return err;
   }
 
-  *punMotorNum = unMotorID;
+  g_foc_last_get_motor_num_foc_id = *punMotorNum;
   return FOC_SUCCESS;
 }
 
