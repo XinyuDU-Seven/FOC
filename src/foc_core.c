@@ -286,6 +286,14 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s =
     FOC_LOW_SPEED_IQ_SLEW_DOWN_MA_PER_S;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_iq_slew_limited_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_low_speed_iq_slew_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_current_limit_enable = 1U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_current_limit_dir = FOC_DIR_CW;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_current_limit_base_mA = 5000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_current_limit_boost_mA = 7000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_current_limit_max_rpm = 600U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_current_limit_err_rpm = 500U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_current_limit_active = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_lift_current_limit_extra_mA = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_decel_hold_enable =
     FOC_BIDIR_DECEL_HOLD_ENABLE;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_decel_hold_active = 0U;
@@ -793,6 +801,8 @@ static float FOC_SignedSpeedRef(void)
      g_foc_current_q_ff_mV = 0;
      g_foc_low_speed_iq_slew_active = 0U;
      g_foc_low_speed_iq_slew_limited_mA = 0;
+     g_foc_lift_current_limit_active = 0U;
+     g_foc_lift_current_limit_extra_mA = 0;
      g_foc_bidir_decel_hold_active = 0U;
      g_foc_bidir_decel_hold_applied_mA = 0;
      g_foc_bidir_decel_hold_raw_err_rpm = 0;
@@ -1120,6 +1130,49 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
      }
 
      return iq_ref;
+ }
+
+ static float FOC_GetSpeedIqPositiveLimit(float speed_ref_ctrl,
+                                          float speed_error)
+ {
+     float base_limit =
+         (float)g_foc_lift_current_limit_base_mA * 0.001f;
+     float boost_limit =
+         (float)g_foc_lift_current_limit_boost_mA * 0.001f;
+     float max_rpm = (float)g_foc_lift_current_limit_max_rpm;
+     float err_rpm = (float)g_foc_lift_current_limit_err_rpm;
+     FOC_Dir_e lift_dir =
+         (g_foc_lift_current_limit_dir > FOC_DIR_CCW) ?
+         FOC_DIR_CW : (FOC_Dir_e)g_foc_lift_current_limit_dir;
+
+     g_foc_lift_current_limit_active = 0U;
+     g_foc_lift_current_limit_extra_mA = 0;
+
+     if (base_limit <= 0.0f) {
+         base_limit = s_ctx.pid_speed.out_max;
+     }
+     if (boost_limit < base_limit) {
+         boost_limit = base_limit;
+     }
+     if (max_rpm < 1.0f) {
+         max_rpm = 1.0f;
+     }
+     if (err_rpm < 1.0f) {
+         err_rpm = 1.0f;
+     }
+
+     if ((g_foc_lift_current_limit_enable != 0U) &&
+         (s_ctx.direction == lift_dir) &&
+         (speed_ref_ctrl >= 1.0f) &&
+         (s_ctx.speed_fdb <= max_rpm) &&
+         (speed_error >= err_rpm)) {
+         g_foc_lift_current_limit_active = 1U;
+         g_foc_lift_current_limit_extra_mA =
+             FOC_Log_ToI16(boost_limit - base_limit, 1000.0f);
+         return boost_limit;
+     }
+
+     return base_limit;
  }
 
  static float FOC_ApplyLowSpeedIqSlew(float iq_ref,
@@ -4275,6 +4328,9 @@ static void FOC_Prof_Reset(void)
              float speed_inv_dt = 1000000.0f / (float)s_speed_loop_accum_us;
              float speed_ref_ctrl = s_speed_ref_ctrl;
              float speed_error = speed_ref_ctrl - s_ctx.speed_ctrl_fdb;
+             float speed_iq_ref_max =
+                 FOC_GetSpeedIqPositiveLimit(speed_ref_ctrl, speed_error);
+             float speed_iq_ref_max_saved = s_ctx.pid_speed.out_max;
              float speed_iq_ref;
              uint8_t zero_pid_frozen = FOC_BidirZeroTransfer_PidFrozen();
 
@@ -4286,9 +4342,11 @@ static void FOC_Prof_Reset(void)
                  FOC_PID_Reset(&s_ctx.pid_speed);
                  g_foc_speed_error_boost_mA = 0;
              } else {
+                 s_ctx.pid_speed.out_max = speed_iq_ref_max;
                  speed_iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
                                                 speed_error,
                                                 speed_dt, speed_inv_dt);
+                 s_ctx.pid_speed.out_max = speed_iq_ref_max_saved;
 
 #if FOC_SPEED_ERROR_BOOST_ENABLE
                  if ((speed_ref_ctrl >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
@@ -4360,6 +4418,8 @@ static void FOC_Prof_Reset(void)
                  g_foc_bidir_zero_soft_active = 0U;
                  g_foc_bidir_zero_soft_scale_percent = 100U;
                  g_foc_bidir_zero_soft_limited_mA = 0;
+                 g_foc_lift_current_limit_active = 0U;
+                 g_foc_lift_current_limit_extra_mA = 0;
              }
              speed_iq_ref = FOC_BidirZeroTransfer_ApplyIq(speed_iq_ref,
                                                           speed_dt);
@@ -4374,7 +4434,7 @@ static void FOC_Prof_Reset(void)
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
                                       s_ctx.pid_speed.out_min,
-                                      s_ctx.pid_speed.out_max);
+                                      speed_iq_ref_max);
 
          }
      }
@@ -4398,6 +4458,8 @@ static void FOC_Prof_Reset(void)
          g_foc_low_speed_torque_applied_mA = 0;
          g_foc_low_speed_iq_slew_active = 0U;
          g_foc_low_speed_iq_slew_limited_mA = 0;
+         g_foc_lift_current_limit_active = 0U;
+         g_foc_lift_current_limit_extra_mA = 0;
          g_foc_bidir_decel_hold_active = 0U;
          g_foc_bidir_decel_hold_applied_mA = 0;
          g_foc_bidir_decel_hold_raw_err_rpm = 0;
@@ -4674,6 +4736,8 @@ int FOC_Core_SetSpeedRef(float rpm)
      g_foc_bidir_zero_soft_active = 0U;
      g_foc_bidir_zero_soft_scale_percent = 100U;
      g_foc_bidir_zero_soft_limited_mA = 0;
+     g_foc_lift_current_limit_active = 0U;
+     g_foc_lift_current_limit_extra_mA = 0;
      FOC_BidirZeroTransfer_Reset();
 
      s_ctx.id_ref = id;

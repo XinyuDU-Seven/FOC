@@ -576,7 +576,7 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 }
 #endif
 
-#define FOC_APP_MOTOR_COUNT    2U
+#define FOC_APP_MOTOR_COUNT    200U
 #define FOC_APP_POLE_PAIRS     4U
 #define FOC_APP_DIR_NONE       0U
 #define FOC_APP_DIR_FORWARD    1U
