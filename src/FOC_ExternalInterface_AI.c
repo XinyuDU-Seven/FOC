@@ -1605,36 +1605,30 @@ FocError Foc_GetAngleAndSpeed_AI(uint8_t unId, float *pfThetaElec, float *pfSpee
 
 FocError Foc_ReadMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset)
 {
-  FocError err;
-
   if (pstHallStatesOffset == NULL) {
     return FOC_POINTER_NULL;
   }
 
-  err = FOC_AI_CheckMotorId(unId);
-  if (err != FOC_SUCCESS) {
-    return err;
+  if (FOC_Core_ReadHallTravel(unId, pstHallStatesOffset) != FOC_OK) {
+    return FOC_MOTOR_ID_INVALID;
   }
 
-  return FOC_HALL_GET_STATES_FAILED;
+  return FOC_SUCCESS;
 }
 
 FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset, int16_t nHallDistanceOffset)
 {
-  FocError err;
-
-  (void)nHallDistanceOffset;
-
   if (pstHallStatesOffset == NULL) {
     return FOC_POINTER_NULL;
   }
 
-  err = FOC_AI_CheckMotorId(unId);
-  if (err != FOC_SUCCESS) {
-    return err;
+  if (FOC_Core_WriteHallTravelOffset(unId,
+                                     pstHallStatesOffset,
+                                     nHallDistanceOffset) != FOC_OK) {
+    return FOC_MOTOR_ID_INVALID;
   }
 
-  return FOC_HALL_CALIBRATE_FAILED;
+  return FOC_SUCCESS;
 }
 FOC_AI_DEBUG_ROOT volatile float gfSpeedTarget = 0.0f;
 

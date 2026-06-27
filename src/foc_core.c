@@ -278,6 +278,8 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_used_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
+FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_count[FOC_CORE_MOTOR_COUNT] = {0, 0};
+FOC_DEBUG_ROOT volatile int16_t  g_foc_hall_travel_offset[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
@@ -720,6 +722,8 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
                                            float prev_c);
  static void FOC_EnterFaultState(void);
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
+ static int16_t FOC_ClampI32ToI16(int32_t v);
+ static void FOC_RecordHallTravelStep(uint8_t prev_sector, uint8_t cur_sector);
  static uint32_t FOC_HallMinSectorTimeUs(void);
  static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
                                     uint32_t timestamp_us,
@@ -3810,6 +3814,48 @@ static void FOC_Prof_Reset(void)
      return (uint8_t)((to == next) || (to == prev));
  }
 
+ static int16_t FOC_ClampI32ToI16(int32_t v)
+ {
+     if (v > 32767) {
+         return 32767;
+     }
+     if (v < -32768) {
+         return -32768;
+     }
+     return (int16_t)v;
+ }
+
+ static void FOC_RecordHallTravelStep(uint8_t prev_sector, uint8_t cur_sector)
+ {
+     uint8_t inc_steps;
+     uint8_t dec_steps;
+     int32_t delta;
+
+     if ((prev_sector < 1U) || (prev_sector > 6U) ||
+         (cur_sector < 1U) || (cur_sector > 6U) ||
+         (prev_sector == cur_sector)) {
+         return;
+     }
+
+     inc_steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
+     dec_steps = (uint8_t)((prev_sector + 6U - cur_sector) % 6U);
+
+     if (inc_steps == 0U) {
+         inc_steps = 6U;
+     }
+     if (dec_steps == 0U) {
+         dec_steps = 6U;
+     }
+
+     /* External travel convention: CCW is positive, CW is negative. */
+#if FOC_FORWARD_HALL_DIR
+     delta = (inc_steps <= dec_steps) ? (int32_t)inc_steps : -(int32_t)dec_steps;
+#else
+     delta = (inc_steps <= dec_steps) ? -(int32_t)inc_steps : (int32_t)dec_steps;
+#endif
+     g_foc_hall_travel_count[s_foc_core_active_motor] += delta;
+ }
+
  static uint32_t FOC_HallMinSectorTimeUs(void)
  {
      float max_rpm = FOC_HALL_MIN_SECTOR_TIME_MAX_RPM;
@@ -3865,6 +3911,7 @@ static void FOC_Prof_Reset(void)
      }
 
      if (allow_missed_transition != 0U) {
+         FOC_RecordHallTravelStep(prev_sector, cur_sector);
          s_ctx.hall_sector = *candidate;
          s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
          s_hall_illegal_transition_count = 0U;
@@ -3888,6 +3935,7 @@ static void FOC_Prof_Reset(void)
      }
 
      if (recovery_accept != 0U) {
+         FOC_RecordHallTravelStep(prev_sector, cur_sector);
          s_ctx.hall_sector = *candidate;
          s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
          s_ctx.theta_e_predicted = candidate->theta_e;
@@ -3912,6 +3960,7 @@ static void FOC_Prof_Reset(void)
          }
      }
 
+     FOC_RecordHallTravelStep(prev_sector, cur_sector);
      s_ctx.hall_sector = *candidate;
      s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
      s_hall_illegal_transition_count = 0U;
@@ -3954,6 +4003,11 @@ static void FOC_Prof_Reset(void)
      /* 初始化 sin/cos 查找表 */
 
      FOC_Math_InitTable();
+
+     for (motor = 0U; motor < FOC_CORE_MOTOR_COUNT; motor++) {
+         g_foc_hall_travel_count[motor] = 0;
+         g_foc_hall_travel_offset[motor] = 0;
+     }
 
      FOC_Core_SelectMotor(0U);
 
@@ -4841,6 +4895,45 @@ static void FOC_Prof_Reset(void)
 
      return &s_ctx;
 
+ }
+
+ int FOC_Core_ReadHallTravel(uint8_t motor_id, int16_t *hall_states_offset)
+ {
+     int32_t travel;
+
+     if ((motor_id >= FOC_CORE_MOTOR_COUNT) ||
+         (hall_states_offset == NULL)) {
+         return FOC_ERR;
+     }
+
+     FOC_HAL_EnterCritical();
+     travel = g_foc_hall_travel_count[motor_id] +
+              (int32_t)g_foc_hall_travel_offset[motor_id];
+     *hall_states_offset = FOC_ClampI32ToI16(travel);
+     FOC_HAL_ExitCritical();
+
+     return FOC_OK;
+ }
+
+ int FOC_Core_WriteHallTravelOffset(uint8_t motor_id,
+                                    int16_t *hall_states_offset,
+                                    int16_t hall_distance_offset)
+ {
+     int32_t travel;
+
+     if ((motor_id >= FOC_CORE_MOTOR_COUNT) ||
+         (hall_states_offset == NULL)) {
+         return FOC_ERR;
+     }
+
+     FOC_HAL_EnterCritical();
+     g_foc_hall_travel_offset[motor_id] = hall_distance_offset;
+     travel = g_foc_hall_travel_count[motor_id] +
+              (int32_t)g_foc_hall_travel_offset[motor_id];
+     *hall_states_offset = FOC_ClampI32ToI16(travel);
+     FOC_HAL_ExitCritical();
+
+     return FOC_OK;
  }
 
  

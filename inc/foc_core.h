@@ -135,6 +135,12 @@ void FOC_Core_MainLoop(void);
 
 const FOC_Context_t *FOC_Core_GetContext(void);
 
+int FOC_Core_ReadHallTravel(uint8_t motor_id, int16_t *hall_states_offset);
+
+int FOC_Core_WriteHallTravelOffset(uint8_t motor_id,
+                                   int16_t *hall_states_offset,
+                                   int16_t hall_distance_offset);
+
  
 
 /**
