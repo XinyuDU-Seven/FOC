@@ -1336,7 +1336,10 @@ FocError Foc_EnableFocControl_AI(uint8_t unId)
     return FOC_SUCCESS;
   }
   if (ctx->state == FOC_STATE_FAULT) {
-    return FOC_AI_MapFault(ctx->fault);
+    err = FOC_AI_MapResult(FOC_ClearFault());
+    if (err != FOC_SUCCESS) {
+      return err;
+    }
   }
 
   return FOC_AI_MapResult(FOC_Start());

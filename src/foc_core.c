@@ -294,10 +294,8 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_ctrl_rpm = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_ref_ramp_active = 0U;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_up_rpm_per_s =
-    (uint16_t)FOC_SPEED_REF_RAMP_UP_RPM_PER_S;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_down_rpm_per_s =
-    (uint16_t)FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_up_rpm_per_s = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_down_rpm_per_s = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_app_direction_invert_enable = 1U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_smooth_enable =
     FOC_LOW_SPEED_SMOOTH_ENABLE;
@@ -324,15 +322,11 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_full_rpm =
 FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_torque_err_rpm =
     FOC_LOW_SPEED_TORQUE_ERR_RPM;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_torque_applied_mA = 0;
-FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_iq_slew_enable =
-    FOC_LOW_SPEED_IQ_SLEW_ENABLE;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_iq_slew_enable = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_iq_slew_active = 0U;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_max_rpm =
-    FOC_LOW_SPEED_IQ_SLEW_MAX_RPM;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_up_mA_per_s =
-    FOC_LOW_SPEED_IQ_SLEW_UP_MA_PER_S;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s =
-    FOC_LOW_SPEED_IQ_SLEW_DOWN_MA_PER_S;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_max_rpm = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_up_mA_per_s = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_iq_slew_limited_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_low_speed_iq_slew_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_current_limit_enable = 1U;
@@ -1224,62 +1218,27 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
      }
  }
 
- static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
- {
+static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
+{
      float target = FOC_FABS(s_ctx.speed_ref);
-     float rate;
-     float step;
-     float delta;
-     uint8_t zero_transfer_active = FOC_BidirZeroTransfer_Active();
+     (void)dt_us;
 
      if (target > s_config.motor.max_speed_rpm) {
          target = s_config.motor.max_speed_rpm;
      }
 
      if (s_speed_ref_ctrl_direction != s_ctx.direction) {
-         s_speed_ref_ctrl = 0.0f;
          s_speed_ref_ctrl_direction = s_ctx.direction;
          FOC_PID_Reset(&s_ctx.pid_speed);
-         if (zero_transfer_active == 0U) {
-             FOC_PID_Reset(&s_ctx.pid_iq);
-             s_ctx.iq_ref = 0.0f;
-             s_speed_loop_accum_us = 0U;
-         }
          s_speed_error_boost_prev_ref = 0.0f;
      }
 
-     if (dt_us == 0U) {
-         dt_us = FOC_CONTROL_PERIOD_US;
-     } else if (dt_us > FOC_CONTROL_PID_DT_MAX_US) {
-         dt_us = FOC_CONTROL_PID_DT_MAX_US;
-     }
-
-     if (target > s_speed_ref_ctrl) {
-         rate = (float)g_foc_speed_ref_ramp_up_rpm_per_s;
-         delta = target - s_speed_ref_ctrl;
-     } else {
-         rate = (float)g_foc_speed_ref_ramp_down_rpm_per_s;
-         delta = s_speed_ref_ctrl - target;
-     }
-
-     if (rate <= 0.0f) {
-         s_speed_ref_ctrl = target;
-     } else if (delta > 0.0f) {
-         step = rate * ((float)dt_us * 1.0e-6f);
-         if (step >= delta) {
-             s_speed_ref_ctrl = target;
-         } else if (target > s_speed_ref_ctrl) {
-             s_speed_ref_ctrl += step;
-         } else {
-             s_speed_ref_ctrl -= step;
-         }
-     }
+     s_speed_ref_ctrl = target;
 
      s_ctx.speed_ref_ctrl = s_speed_ref_ctrl;
      g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(target, 1.0f);
      g_foc_speed_ref_ctrl_rpm = FOC_Log_ToI16(s_speed_ref_ctrl, 1.0f);
-     g_foc_speed_ref_ramp_active =
-         (FOC_FABS(target - s_speed_ref_ctrl) > 0.5f) ? 1U : 0U;
+     g_foc_speed_ref_ramp_active = 0U;
 
      return s_speed_ref_ctrl;
  }
@@ -1414,49 +1373,18 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
      return base_limit;
  }
 
- static float FOC_ApplyLowSpeedIqSlew(float iq_ref,
-                                      float speed_ref_ctrl,
-                                      float speed_dt)
- {
-     float max_rpm = (float)g_foc_low_speed_iq_slew_max_rpm;
-     float up_rate =
-         (float)g_foc_low_speed_iq_slew_up_mA_per_s * 0.001f;
-     float down_rate =
-         (float)g_foc_low_speed_iq_slew_down_mA_per_s * 0.001f;
-     float prev = s_ctx.iq_ref;
-     float delta = iq_ref - prev;
-     float rate;
-     float max_step;
+static float FOC_ApplyLowSpeedIqSlew(float iq_ref,
+                                     float speed_ref_ctrl,
+                                     float speed_dt)
+{
+     (void)speed_ref_ctrl;
+     (void)speed_dt;
 
      g_foc_low_speed_iq_slew_active = 0U;
      g_foc_low_speed_iq_slew_limited_mA = 0;
 
-     if ((g_foc_low_speed_iq_slew_enable == 0U) ||
-         (max_rpm < 1.0f) ||
-         (FOC_FABS(speed_ref_ctrl) > max_rpm) ||
-         (speed_dt <= 0.0f)) {
-         return iq_ref;
-     }
-
-     rate = (FOC_FABS(iq_ref) > FOC_FABS(prev)) ? up_rate : down_rate;
-     if (rate <= 0.0f) {
-         return iq_ref;
-     }
-
-     max_step = rate * speed_dt;
-     if (FOC_FABS(delta) <= max_step) {
-         return iq_ref;
-     }
-
-     g_foc_low_speed_iq_slew_active = 1U;
-     g_foc_low_speed_iq_slew_limited_mA =
-         FOC_Log_ToI16(FOC_FABS(delta) - max_step, 1000.0f);
-     if (g_foc_low_speed_iq_slew_count < 0xFFFFFFFFU) {
-         g_foc_low_speed_iq_slew_count++;
-     }
-
-     return (delta > 0.0f) ? (prev + max_step) : (prev - max_step);
- }
+     return iq_ref;
+}
 
  static float FOC_ApplyLowSpeedCurrentFeedForward(float vq)
  {
@@ -5120,7 +5048,7 @@ int FOC_Core_SetSpeedRef(float rpm)
 
  
 
-     /* 非零速度更新方向；0rpm 保持当前方向，仅让速度环斜坡降到 0 */
+    /* 非零速度更新方向；0rpm 保持当前方向并直接给 0rpm 控制目标 */
 
      if (rpm > 0.0f) {
 
