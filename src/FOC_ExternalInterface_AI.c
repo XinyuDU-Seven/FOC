@@ -1212,6 +1212,8 @@ static void FOC_ExtApiTest_Service(void)
   }
 }
 
+static void FOC_TestCase_Service(void);
+
 void Foc_AlgorithmControlCallback_AI(void);
 void Foc_Init_AI(void);
 FocError Foc_EnableFocControl_AI(uint8_t unId);
@@ -1247,6 +1249,8 @@ FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset,
 void Foc_AlgorithmControlCallback_AI(void){
 
   g_foc_ai_callback_count++;
+
+  FOC_TestCase_Service();
 
   FOC_MainLoop();
 
