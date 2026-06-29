@@ -15,16 +15,27 @@
 #define FOC_AI_DEBUG_ROOT
 #endif
 
+/* External接口调试计数：每进入一次FOC周期回调自增一次，用于Watch确认主循环是否在跑。 */
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
+/* 最近一次通过External接口选中的FOC物理电机号，底层只支持0/1。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_selected_motor_id = 0U;
+/* 应用层“水平电机”的子电机ID，Foc_GetMotorNum用它匹配应用层传入的unMotorID。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_level_motor_id = 1U;
+/* 应用层“坐盆电机”的子电机ID，当前应用层坐盆默认是5。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_bidet_motor_id = 5U;
+/* 应用层水平电机映射到的FOC物理电机号，默认0。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_level_foc_motor_id = 0U;
+/* 应用层坐盆电机映射到的FOC物理电机号，默认1。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_bidet_foc_motor_id = 1U;
+/* 最近一次Foc_GetMotorNum收到的应用层电机ID，便于定位映射输入。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_app_id = 0U;
+/* 最近一次Foc_GetMotorNum输出的FOC物理电机号；0xFF表示本次未成功输出。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_foc_id = 0xFFU;
+/* 最近一次Foc_GetMotorNum返回的错误码，Watch中用于确认映射是否成功。 */
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_last_get_motor_num_err = FOC_SUCCESS;
+/* 动态速度测试使用的外部标志，External接口清自动模式时会间接影响相关测试模式。 */
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
+/* 旧测试入口的速度给定，External正式控制前会置为-1以退出旧测试给定。 */
 extern volatile float speed_ref;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
@@ -583,16 +594,27 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 }
 #endif
 
+/* External接口允许的应用层ID上限；注意FOC核心物理电机仍只有0/1。 */
 #define FOC_APP_MOTOR_COUNT    200U
+/* FOC核心当前支持的物理电机数量。 */
 #define FOC_PHY_MOTOR_COUNT    2U
+/* 当前FOC初始化使用的电机极对数。 */
 #define FOC_APP_POLE_PAIRS     4U
+/* 应用层方向编码：无方向，仅目标为0时允许。 */
 #define FOC_APP_DIR_NONE       0U
+/* 应用层方向编码：正方向，转换后目标值为正。 */
 #define FOC_APP_DIR_FORWARD    1U
+/* 应用层方向编码：反方向，转换后目标值为负。 */
 #define FOC_APP_DIR_REVERSE    2U
+/* Hybrid模式0：头文件语义为Vq比例+速度，当前实现等同速度闭环。 */
 #define FOC_APP_MODE_VQ_RATIO_SPEED    0U
+/* Hybrid模式1：速度闭环，使用unParam4作为rpm目标。 */
 #define FOC_APP_MODE_SPEED             1U
+/* Hybrid模式2：头文件语义为Vq比例+电流，当前实现等同电流闭环。 */
 #define FOC_APP_MODE_VQ_RATIO_CURRENT  2U
+/* Hybrid模式3：电流闭环，使用unParam5作为mA目标。 */
 #define FOC_APP_MODE_CURRENT           3U
+/* Hybrid模式4：Vq目标，当前会进入未完整实现的电压接口。 */
 #define FOC_APP_MODE_VQ                4U
 
 static FocError FOC_AI_CheckMotorId(uint8_t unId)
@@ -607,6 +629,7 @@ static FocError FOC_AI_CheckPhysicalMotorId(uint8_t unId)
 
 static FocError FOC_AI_MapAppMotorNum(uint8_t unMotorID, uint8_t *punMotorNum)
 {
+  /* 应用层电机ID映射后的FOC物理电机号，成功时只能是0或1。 */
   uint8_t mapped_motor;
 
   if (punMotorNum == NULL) {
@@ -637,6 +660,7 @@ static FocError FOC_AI_MapAppMotorNum(uint8_t unMotorID, uint8_t *punMotorNum)
 
 static FocError FOC_AI_SelectMotor(uint8_t unId)
 {
+  /* 保存电机号检查结果；成功后才允许切换FOC核心当前电机。 */
   FocError err = FOC_AI_CheckMotorId(unId);
 
   if (err != FOC_SUCCESS) {
@@ -690,6 +714,7 @@ static FocError FOC_AI_MapFault(FOC_Fault_e fault)
 
 static FocError FOC_AI_CheckReferenceState(void)
 {
+  /* 当前已选中电机的FOC上下文，用于判断fault状态并映射错误码。 */
   const FOC_Context_t *ctx = FOC_Core_GetContext();
 
   if (ctx->state == FOC_STATE_FAULT) {
@@ -722,6 +747,7 @@ static FocError FOC_AI_MakeSignedTarget(uint16_t direction,
                                         float magnitude,
                                         float *target)
 {
+  /* direction来自应用层unParam1，magnitude是速度rpm/电流A/电压V的无符号幅值。 */
   if (target == NULL) {
     return FOC_POINTER_NULL;
   }
@@ -1244,6 +1270,7 @@ void Foc_AlgorithmControlCallback_AI(void){
 
 void Foc_Init_AI(void)
 {
+  /* FOC核心初始化配置，当前两个物理电机共用同一套默认参数初始化。 */
   FOC_Config_t config;
 
   memset(&config, 0, sizeof(FOC_Config_t));
@@ -1295,7 +1322,9 @@ void Foc_Init_AI(void)
 
 FocError Foc_EnableFocControl_AI(uint8_t unId)
 {
+  /* ctx指向选中电机的运行上下文，用于判断当前是否running/fault。 */
   const FOC_Context_t *ctx;
+  /* err保存电机选择或底层启动结果映射后的External错误码。 */
   FocError err = FOC_AI_SelectMotor(unId);
 
   if (err != FOC_SUCCESS) {
@@ -1331,6 +1360,7 @@ FocError Foc_EnableFocControl_AI(uint8_t unId)
 
 FocError Foc_DisableFocControl_AI(uint8_t unId)
 {
+  /* err保存电机选择结果，选择失败时不再调用FOC_Stop。 */
   FocError err = FOC_AI_SelectMotor(unId);
 
   if (err != FOC_SUCCESS) {
@@ -1361,6 +1391,7 @@ FocError Foc_DisableFocControl_AI(uint8_t unId)
 
 FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq)
 {
+  /* err保存电机选择、fault状态检查和底层设置结果。 */
   FocError err = FOC_AI_SelectMotor(unId);
 
   if (err != FOC_SUCCESS) {
@@ -1389,9 +1420,12 @@ FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq)
 FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t unParam1, uint16_t unParam2,
                                        uint16_t unParam3, uint16_t unParam4, uint16_t unParam5)
 {
+  /* target是由方向参数和幅值参数合成后的带符号目标值。 */
   float target;
+  /* err保存电机选择、方向转换和下游set接口返回值。 */
   FocError err;
 
+  /* unParam2当前没有参与实际控制，保留是为了匹配外部接口定义。 */
   (void)unParam2;
 
   err = FOC_AI_SelectMotor(unId);
@@ -1448,6 +1482,7 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
 
 FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed)
 {
+  /* err保存电机选择、fault状态检查和速度目标设置结果。 */
   FocError err;
 
   err = FOC_AI_SelectMotor(unId);
@@ -1484,7 +1519,9 @@ FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed)
 
 FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFullStates)
 {
+  /* ctx指向选中电机的实时状态，后续字段都从该上下文拷贝或换算得到。 */
   const FOC_Context_t *ctx;
+  /* err保存电机选择结果。 */
   FocError err;
 
   if (pstMotorFullStates == NULL) {
@@ -1499,6 +1536,7 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
   ctx = FOC_Core_GetContext();
   memset(pstMotorFullStates, 0, sizeof(*pstMotorFullStates));
 
+  /* 以下字段是对应用层返回的电机快照，unId保持调用者传入的FOC物理电机号。 */
   pstMotorFullStates->unId = unId;
   pstMotorFullStates->unHallState = FOC_AI_HallRawToU8(&ctx->hall_raw);
   pstMotorFullStates->fSpeedMechEstimate =
@@ -1550,6 +1588,7 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
 
 FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum)
 {
+  /* err保存应用层电机ID到FOC物理电机号的映射结果。 */
   FocError err;
   (void)unCarConfigID;
   (void)unSeatID;
@@ -1576,6 +1615,7 @@ FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unM
 
 FocError Foc_SetVoltageReference_AI(uint8_t unId, float fVd, float fVq)
 {
+  /* err保存电机号合法性检查结果；该接口当前只做参数检查，未下发电压目标。 */
   FocError err = FOC_AI_CheckMotorId(unId);
 
   if (err != FOC_SUCCESS) {
@@ -1591,6 +1631,7 @@ FocError Foc_SetVoltageReference_AI(uint8_t unId, float fVd, float fVq)
 
 FocError Foc_SetTorqueReference_AI(uint8_t unId, float fTorque)
 {
+  /* err保存电机号合法性检查结果；扭矩闭环当前未实现。 */
   FocError err = FOC_AI_CheckMotorId(unId);
 
   (void)fTorque;
@@ -1604,6 +1645,7 @@ FocError Foc_SetTorqueReference_AI(uint8_t unId, float fTorque)
 
 FocError Foc_SetIFReference_AI(uint8_t unId, float fIq, float fSpeed)
 {
+  /* err保存电机号合法性检查结果；I/F控制当前未实现。 */
   FocError err = FOC_AI_CheckMotorId(unId);
 
   (void)fIq;
@@ -1618,6 +1660,7 @@ FocError Foc_SetIFReference_AI(uint8_t unId, float fIq, float fSpeed)
 
 FocError Foc_SetVFReference_AI(uint8_t unId, float fVq, float fSpeed)
 {
+  /* err保存电机号合法性检查结果；V/F控制当前未实现。 */
   FocError err = FOC_AI_CheckMotorId(unId);
 
   (void)fSpeed;
@@ -1635,7 +1678,9 @@ FocError Foc_SetVFReference_AI(uint8_t unId, float fVq, float fSpeed)
 
 FocError Foc_GetAngleAndSpeed_AI(uint8_t unId, float *pfThetaElec, float *pfSpeed)
 {
+  /* ctx指向选中电机上下文，用于读取电角度和机械速度反馈。 */
   const FOC_Context_t *ctx;
+  /* err保存电机选择结果。 */
   FocError err;
 
   if ((pfThetaElec == NULL) || (pfSpeed == NULL)) {
@@ -1656,6 +1701,7 @@ FocError Foc_GetAngleAndSpeed_AI(uint8_t unId, float *pfThetaElec, float *pfSpee
 
 FocError Foc_ReadMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset)
 {
+  /* pstHallStatesOffset输出FOC累计Hall行程加应用层写入offset后的当前位置。 */
   if (pstHallStatesOffset == NULL) {
     return FOC_POINTER_NULL;
   }
@@ -1669,6 +1715,10 @@ FocError Foc_ReadMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset)
 
 FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset, int16_t nHallDistanceOffset)
 {
+  /*
+   * nHallDistanceOffset当前按应用层绝对Hall位置使用。
+   * FOC核心会计算offset，使后续Read返回值对齐该位置。
+   */
   if (pstHallStatesOffset == NULL) {
     return FOC_POINTER_NULL;
   }
