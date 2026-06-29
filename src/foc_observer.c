@@ -106,8 +106,28 @@
 
  };
 
-static float s_startup_predict_speed_rpm = 0.0f;
-static FOC_Dir_e s_predict_direction = FOC_DIR_CW;
+#define FOC_OBSERVER_MOTOR_COUNT 2U
+
+static float s_startup_predict_speed_rpm_store[FOC_OBSERVER_MOTOR_COUNT] = {
+    0.0f,
+    0.0f
+};
+static FOC_Dir_e s_predict_direction_store[FOC_OBSERVER_MOTOR_COUNT] = {
+    FOC_DIR_CW,
+    FOC_DIR_CW
+};
+
+static uint8_t FOC_Observer_GetMotorIndex(void)
+{
+    uint8_t motor = FOC_HAL_GetSelectedMotor();
+
+    return (motor < FOC_OBSERVER_MOTOR_COUNT) ? motor : 0U;
+}
+
+#define s_startup_predict_speed_rpm \
+    (s_startup_predict_speed_rpm_store[FOC_Observer_GetMotorIndex()])
+#define s_predict_direction \
+    (s_predict_direction_store[FOC_Observer_GetMotorIndex()])
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_direction_reset_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_decay_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_elapsed_us = 0U;
