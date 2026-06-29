@@ -4363,6 +4363,11 @@ static void FOC_Prof_Reset(void)
 
      /* 预计算时间常量，避免热路径中的除法 */
 
+     if (FOC_IsAutoTestMotor() != 0U) {
+         FOC_DynSpeed_ServiceRef();
+         FOC_BidirSpeed_ServiceRef();
+     }
+
      FOC_NormalizeSignedSpeedRef();
 
      float observer_dt = FOC_ControlDtFromUs(control_period_us,
@@ -4808,6 +4813,10 @@ static void FOC_Prof_Reset(void)
 
  
 
+     if (FOC_IsAutoTestMotor() != 0U) {
+         FOC_DynSpeed_ServiceMetrics();
+     }
+     FOC_DetailLog_Service(theta_e_ctrl, prof_next_us);
      FOC_StartLog_Service(prof_next_us);
      prof_next_us = FOC_HAL_GetTimestampUs();
      FOC_Prof_RecordSegment(prof_mark_us, prof_next_us, 6U);
