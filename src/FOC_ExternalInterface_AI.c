@@ -202,6 +202,8 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_last_error = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_test_case_exec_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_motor_id = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_motor_id_applied = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_bidir_amplitude_rpm = 1000U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_test_case_bidir_period_ms = 4000U;
 
 static uint8_t s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
 static uint8_t s_foc_test_case_last_motor_id = 0U;
@@ -1229,6 +1231,7 @@ FocError Foc_SetVFReference_AI(uint8_t unId, float fVq, float fSpeed);
 FocError Foc_GetAngleAndSpeed_AI(uint8_t unId, float *pfThetaElec, float *pfSpeed);
 FocError Foc_ReadMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset);
 FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset, int16_t nHallDistanceOffset);
+static void FOC_TestCase_Service(void);
 
 /*******************************************************************************************
 
@@ -1247,6 +1250,8 @@ FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset,
 void Foc_AlgorithmControlCallback_AI(void){
 
   g_foc_ai_callback_count++;
+
+  FOC_TestCase_Service();
 
   FOC_MainLoop();
 
@@ -1795,6 +1800,26 @@ static float FOC_TestCase_GetFixedSpeedRef(uint8_t unId)
   return fixed_ref;
 }
 
+static uint16_t FOC_TestCase_GetBidirAmplitudeRpm(void)
+{
+  uint16_t amplitude = g_foc_test_case_bidir_amplitude_rpm;
+
+  return (amplitude == 0U) ? 1000U : amplitude;
+}
+
+static uint32_t FOC_TestCase_GetBidirPeriodMs(void)
+{
+  uint32_t period_ms = g_foc_test_case_bidir_period_ms;
+
+  return (period_ms < 1000U) ? 1000U : period_ms;
+}
+
+static void FOC_TestCase_UpdateBidirParams(void)
+{
+  g_foc_bidir_speed_period_ms = FOC_TestCase_GetBidirPeriodMs();
+  g_foc_bidir_speed_max_rpm = FOC_TestCase_GetBidirAmplitudeRpm();
+}
+
 static void FOC_TestCase_Apply(uint8_t test_case)
 {
   uint8_t unId = FOC_TestCase_GetMotorId();
@@ -1851,8 +1876,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_dyn_speed_reverse = 0U;
     g_foc_dyn_speed_reset_stats = 0U;
 
-    g_foc_bidir_speed_period_ms = 4000U;
-    g_foc_bidir_speed_max_rpm = 1000U;
+    FOC_TestCase_UpdateBidirParams();
     g_foc_bidir_speed_step_enable = 2U;
     g_foc_bidir_speed_slew_enable = 0U;
     g_foc_bidir_speed_slew_rpm_per_s = 1500U;
@@ -1951,6 +1975,8 @@ static void FOC_TestCase_Service(void)
       if (FOC_FABS(fixed_ref - s_foc_test_case_last_fixed_ref) >= 0.5f) {
         FOC_TestCase_Apply(test_case);
       }
+    } else if (test_case == FOC_TEST_CASE_BIDIR_SWITCH) {
+      FOC_TestCase_UpdateBidirParams();
     }
     return;
   }
