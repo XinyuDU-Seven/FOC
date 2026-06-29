@@ -1603,6 +1603,9 @@ static void FOC_DetailLog_Service(float theta_ctrl, uint32_t now_us)
     int16_t raw_sign =
         FOC_BidirSpeed_TargetSign((float)g_foc_bidir_speed_raw_ref_rpm);
     uint8_t zero_event = 0U;
+    uint8_t bidir_zero_window_mode =
+        ((g_foc_bidir_speed_step_enable == 0U) ||
+         (g_foc_bidir_speed_step_enable == 2U)) ? 1U : 0U;
 
     if (FOC_IsAutoTestMotor() == 0U) {
         return;
@@ -1623,7 +1626,7 @@ static void FOC_DetailLog_Service(float theta_ctrl, uint32_t now_us)
         (g_foc_detail_log_active == 0U) &&
         (g_foc_detail_log_stop == 0U) &&
         (g_foc_bidir_speed_enable != 0U) &&
-        (g_foc_bidir_speed_step_enable == 2U) &&
+        (bidir_zero_window_mode != 0U) &&
         (ref_decreasing != 0U) &&
         (ref_abs <= (float)g_foc_detail_log_trigger_rpm) &&
         (ref_abs >= 1.0f)) {

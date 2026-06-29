@@ -1886,7 +1886,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_zero_transfer_prev_cmd_abs_rpm = 0U;
     g_foc_detail_log_enable = 1U;
     g_foc_detail_log_decim_ms = 2U;
-    g_foc_detail_log_trigger_rpm = 300U;
+    g_foc_detail_log_trigger_rpm = 500U;
     g_foc_detail_log_zero_window_enable = 1U;
     g_foc_detail_log_zero_post_ms = 300U;
     g_foc_detail_log_zero_event_idx = 0xFFFFU;
