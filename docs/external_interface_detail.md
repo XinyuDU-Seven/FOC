@@ -31,7 +31,7 @@
 
 `Foc_GetMotorNum()` 还允许应用层直接传 `0` 或 `1`，会原样返回 `0` 或 `1`。除此之外的应用层 ID 会返回 `FOC_MOTOR_ID_INVALID`。
 
-重要：除 `Foc_GetMotorNum()` 外，控制、状态、Hall 相关接口都应该传入 FOC 物理电机号 `0/1`，也就是 `Foc_GetMotorNum()` 的输出值。当前 `Foc_SetSpeedReference()`、`Foc_SetHybridControlReference()` 等接口的入口只检查 `unId < 200`，但底层 `FOC_Core_SelectMotor()` 遇到大于等于 `2` 的物理电机号会回退到 `0`。所以如果应用层误把子电机 ID `5` 直接传给控制接口，实际可能会控制到 FOC 0 号电机。
+重要：除 `Foc_GetMotorNum()` 外，控制、状态、Hall 相关接口都应该传入 FOC 物理电机号 `0/1`，也就是 `Foc_GetMotorNum()` 的输出值。当前 `Foc_SetSpeedReference()`、`Foc_SetHybridControlReference()`、`Foc_GetMotorFullParameters()`、`Foc_ReadMotorHallStates()`、`Foc_WriteMotorHallStates()` 等接口都会拒绝大于等于 `2` 的电机号，避免应用层误把子电机 ID `5` 直接传给控制接口。
 
 建议应用层统一流程：
 
@@ -302,7 +302,7 @@ Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 
 内部处理：
 
-- 检查 `unId < 200`。
+- 检查 `unId < 2`，只接受 FOC 物理电机号 `0/1`。
 - 检查 `|fVd| <= 20V` 且 `|fVq| <= 20V`。
 - 当前没有调用底层电压控制。
 
@@ -321,7 +321,7 @@ Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 
 内部处理：
 
-- 仅检查 `unId < 200`。
+- 仅接受 FOC 物理电机号 `0/1`。
 - 当前未实现扭矩闭环控制。
 
 返回值：
@@ -339,7 +339,7 @@ Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 
 内部处理：
 
-- 仅检查 `unId < 200`。
+- 仅接受 FOC 物理电机号 `0/1`。
 - 当前未实现 I/F 控制。
 
 返回值：
@@ -357,7 +357,7 @@ Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 
 内部处理：
 
-- 检查 `unId < 200`。
+- 检查 `unId < 2`，只接受 FOC 物理电机号 `0/1`。
 - 检查 `|fVq| <= 20V`。
 - 当前未实现 V/F 控制。
 
@@ -422,8 +422,14 @@ Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 | `unNumberPoles` | 当前固定为 `4` 极对数 |
 | `unUpdateTime` | Hall 更新时间；若没有 Hall 时间戳，则用当前时间 |
 | `enFocState` | 当前 fault 映射后的 FOC 状态 |
-| `unHeadIndexHall` | 当前置为 `-1` |
-| `unHeadIndexAppHall` | 当前置为 `-1` |
+| `nHallDistance` | 当前对齐应用层 offset 后的带符号 Hall 行程 |
+| `unTotalHallCounts` | 当前有效 Hall 更新总次数 |
+| `unCurrentDirectionHallCounts` | 当前方向连续有效 Hall 更新次数，换向后重新计数 |
+| `punDeltaTimeUsHall[]` | 最近 100 次有效 Hall 更新的间隔时间，单位 us |
+| `punHistoryHall[]` | 最近 100 次有效 Hall 更新的 raw Hall 合成值，`h1 << 2 | h2 << 1 | h3` |
+| `unHeadIndexHall` | `punDeltaTimeUsHall[]` 和 `punHistoryHall[]` 最新写入索引；无历史时为 `-1` |
+| `punHallCountsHistory[]` | 最近 100 次有效 Hall 更新时的总更新次数计数 |
+| `unHeadIndexAppHall` | `punHallCountsHistory[]` 最新写入索引；当前与 `unHeadIndexHall` 同步 |
 | `unDirection` | 内部方向转应用层方向，CCW 返回 `2`，其他返回 `1` |
 
 返回值：
@@ -581,7 +587,7 @@ Foc_ReadMotorHallStates(foc_motor_id, &foc_pos);
 
 1. `Foc_SetVoltageReference()`、`Foc_SetTorqueReference()`、`Foc_SetIFReference()`、`Foc_SetVFReference()` 当前未实现实际控制，合法参数下也会返回 `FOC_INPUT_PARAMETER_INVALID`。
 2. `Foc_SetHybridControlReference()` 的 mode 0 和 mode 2 当前没有实现 Vq 比例前馈，`unParam2` 当前完全未使用。
-3. 控制接口应传 FOC 物理电机号 `0/1`。不要把应用层子电机 ID 直接传给控制接口，否则可能被底层回退到 0 号电机。
+3. 控制接口应传 FOC 物理电机号 `0/1`。不要把应用层子电机 ID 直接传给控制接口；当前控制接口会直接返回 `FOC_MOTOR_ID_INVALID`。
 4. `Foc_SetSpeedReference()` 和 `Foc_SetCurrentReference()` 当前不会因为 idle 直接报错，但也不会自动启动 PWM。需要应用层调用 `Foc_EnableFocControl()`。
 5. `Foc_DisableFocControl()` 是关闭 FOC 输出，不是舒适性软停。
 6. `Foc_WriteMotorHallStates()` 的第三个参数当前表示应用层绝对 Hall 位置，不是增量 offset。

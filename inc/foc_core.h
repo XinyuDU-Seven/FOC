@@ -137,9 +137,22 @@ const FOC_Context_t *FOC_Core_GetContext(void);
 
 int FOC_Core_ReadHallTravel(uint8_t motor_id, int16_t *hall_states_offset);
 
+int FOC_Core_ReadHallStats(uint8_t motor_id,
+                           int64_t *hall_distance,
+                           uint64_t *total_hall_counts,
+                           uint64_t *current_direction_hall_counts);
+
 int FOC_Core_WriteHallTravelOffset(uint8_t motor_id,
                                    int16_t *hall_states_offset,
                                    int16_t hall_position);
+
+int FOC_Core_CopyHallHistory(uint8_t motor_id,
+                             uint32_t *delta_time_us,
+                             uint8_t *history_hall,
+                             uint64_t *hall_counts_history,
+                             uint16_t history_size,
+                             int16_t *head_index_hall,
+                             int16_t *head_index_app_hall);
 
  
 

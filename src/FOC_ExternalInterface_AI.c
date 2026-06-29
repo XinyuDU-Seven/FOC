@@ -619,7 +619,7 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 
 static FocError FOC_AI_CheckMotorId(uint8_t unId)
 {
-  return (unId < FOC_APP_MOTOR_COUNT) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
+  return (unId < FOC_PHY_MOTOR_COUNT) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
 }
 
 static FocError FOC_AI_CheckPhysicalMotorId(uint8_t unId)
@@ -1521,6 +1521,12 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
 {
   /* ctx指向选中电机的实时状态，后续字段都从该上下文拷贝或换算得到。 */
   const FOC_Context_t *ctx;
+  /* hall_distance保存FOC当前对齐后的带符号Hall行程。 */
+  int64_t hall_distance = 0;
+  /* total_hall_counts保存有效Hall更新总次数。 */
+  uint64_t total_hall_counts = 0U;
+  /* direction_hall_counts保存当前方向连续有效Hall更新次数。 */
+  uint64_t direction_hall_counts = 0U;
   /* err保存电机选择结果。 */
   FocError err;
 
@@ -1535,6 +1541,15 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
 
   ctx = FOC_Core_GetContext();
   memset(pstMotorFullStates, 0, sizeof(*pstMotorFullStates));
+
+  if (FOC_Core_ReadHallStats(unId,
+                             &hall_distance,
+                             &total_hall_counts,
+                             &direction_hall_counts) == FOC_OK) {
+    pstMotorFullStates->nHallDistance = hall_distance;
+    pstMotorFullStates->unTotalHallCounts = total_hall_counts;
+    pstMotorFullStates->unCurrentDirectionHallCounts = direction_hall_counts;
+  }
 
   /* 以下字段是对应用层返回的电机快照，unId保持调用者传入的FOC物理电机号。 */
   pstMotorFullStates->unId = unId;
@@ -1557,8 +1572,18 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
       ? ctx->hall_sector_timestamp_us
       : FOC_HAL_GetTimestampUs();
   pstMotorFullStates->enFocState = FOC_AI_MapFault(ctx->fault);
-  pstMotorFullStates->unHeadIndexHall = -1;
-  pstMotorFullStates->unHeadIndexAppHall = -1;
+  if (FOC_Core_CopyHallHistory(
+          unId,
+          pstMotorFullStates->punDeltaTimeUsHall,
+          pstMotorFullStates->punHistoryHall,
+          pstMotorFullStates->punHallCountsHistory,
+          (uint16_t)(sizeof(pstMotorFullStates->punDeltaTimeUsHall) /
+                     sizeof(pstMotorFullStates->punDeltaTimeUsHall[0])),
+          &pstMotorFullStates->unHeadIndexHall,
+          &pstMotorFullStates->unHeadIndexAppHall) != FOC_OK) {
+    pstMotorFullStates->unHeadIndexHall = -1;
+    pstMotorFullStates->unHeadIndexAppHall = -1;
+  }
   pstMotorFullStates->unDirection = FOC_AI_DirectionToApp(ctx->direction);
 
   return FOC_SUCCESS;
@@ -1739,7 +1764,7 @@ static float s_foc_test_case_last_fixed_ref = 0.0f;
 
 static uint8_t FOC_TestCase_GetMotorId(void)
 {
-  return (g_foc_test_motor_id < FOC_APP_MOTOR_COUNT)
+  return (g_foc_test_motor_id < FOC_PHY_MOTOR_COUNT)
        ? g_foc_test_motor_id
        : 0U;
 }

@@ -84,6 +84,7 @@ FOC_Protection_Threshold_t s_prot_threshold;
 #define FOC_LOG_DECIMATION  1U
 #define FOC_TEXT_LOG_SIZE   128U
 #define FOC_START_LOG_SIZE  512U
+#define FOC_HALL_HISTORY_SIZE 100U
 
 typedef struct {
     uint32_t seq;
@@ -280,6 +281,14 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_count[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_offset[FOC_CORE_MOTOR_COUNT] = {0, 0};
+static uint32_t s_foc_hall_history_delta_us[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
+static uint8_t  s_foc_hall_history_raw[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
+static uint64_t s_foc_hall_history_count[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
+static int16_t  s_foc_hall_history_head[FOC_CORE_MOTOR_COUNT] = {-1, -1};
+static uint16_t s_foc_hall_history_valid_count[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint64_t s_foc_hall_total_update_count[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint64_t s_foc_hall_direction_update_count[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static int32_t  s_foc_hall_last_delta[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
@@ -723,7 +732,7 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
  static void FOC_EnterFaultState(void);
  static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
  static int16_t FOC_ClampI32ToI16(int32_t v);
- static void FOC_RecordHallTravelStep(uint8_t prev_sector, uint8_t cur_sector);
+static int32_t FOC_RecordHallTravelStep(uint8_t prev_sector, uint8_t cur_sector);
  static uint32_t FOC_HallMinSectorTimeUs(void);
  static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
                                     uint32_t timestamp_us,
@@ -3825,7 +3834,62 @@ static void FOC_Prof_Reset(void)
      return (int16_t)v;
  }
 
- static void FOC_RecordHallTravelStep(uint8_t prev_sector, uint8_t cur_sector)
+ static uint8_t FOC_Core_HallRawToU8(const FOC_HallRaw_t *hall_raw)
+ {
+     return (uint8_t)((hall_raw->h1 << 2) |
+                      (hall_raw->h2 << 1) |
+                      hall_raw->h3);
+ }
+
+ static uint32_t FOC_HallEdgeDeltaUs(uint32_t sector_timestamp_us)
+ {
+     return (s_ctx.timestamp_prev != 0U)
+          ? (sector_timestamp_us - s_ctx.timestamp_prev)
+          : 0U;
+ }
+
+ static void FOC_RecordHallHistory(uint32_t delta_time_us, int32_t hall_delta)
+ {
+     uint8_t motor = s_foc_core_active_motor;
+     uint16_t next;
+
+     if (motor >= FOC_CORE_MOTOR_COUNT) {
+         return;
+     }
+
+     next = (s_foc_hall_history_head[motor] < 0)
+          ? 0U
+          : (uint16_t)(s_foc_hall_history_head[motor] + 1);
+     if (next >= FOC_HALL_HISTORY_SIZE) {
+         next = 0U;
+     }
+
+     if (s_foc_hall_total_update_count[motor] < 0xFFFFFFFFFFFFFFFFULL) {
+         s_foc_hall_total_update_count[motor]++;
+     }
+
+     if (hall_delta != 0) {
+         if (((s_foc_hall_last_delta[motor] > 0) && (hall_delta < 0)) ||
+             ((s_foc_hall_last_delta[motor] < 0) && (hall_delta > 0))) {
+             s_foc_hall_direction_update_count[motor] = 0U;
+         }
+         if (s_foc_hall_direction_update_count[motor] < 0xFFFFFFFFFFFFFFFFULL) {
+             s_foc_hall_direction_update_count[motor]++;
+         }
+         s_foc_hall_last_delta[motor] = hall_delta;
+     }
+
+     s_foc_hall_history_delta_us[motor][next] = delta_time_us;
+     s_foc_hall_history_raw[motor][next] = FOC_Core_HallRawToU8(&s_ctx.hall_raw);
+     s_foc_hall_history_count[motor][next] = s_foc_hall_total_update_count[motor];
+     s_foc_hall_history_head[motor] = (int16_t)next;
+
+     if (s_foc_hall_history_valid_count[motor] < FOC_HALL_HISTORY_SIZE) {
+         s_foc_hall_history_valid_count[motor]++;
+     }
+ }
+
+ static int32_t FOC_RecordHallTravelStep(uint8_t prev_sector, uint8_t cur_sector)
  {
      uint8_t inc_steps;
      uint8_t dec_steps;
@@ -3834,7 +3898,7 @@ static void FOC_Prof_Reset(void)
      if ((prev_sector < 1U) || (prev_sector > 6U) ||
          (cur_sector < 1U) || (cur_sector > 6U) ||
          (prev_sector == cur_sector)) {
-         return;
+         return 0;
      }
 
      inc_steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
@@ -3854,6 +3918,7 @@ static void FOC_Prof_Reset(void)
      delta = (inc_steps <= dec_steps) ? -(int32_t)inc_steps : (int32_t)dec_steps;
 #endif
      g_foc_hall_travel_count[s_foc_core_active_motor] += delta;
+     return delta;
  }
 
  static uint32_t FOC_HallMinSectorTimeUs(void)
@@ -3905,15 +3970,17 @@ static void FOC_Prof_Reset(void)
          s_ctx.hall_sector = *candidate;
          if (prev_sector == 0U) {
              s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
+             FOC_RecordHallHistory(0U, 0);
          }
          s_hall_illegal_transition_count = 0U;
          return 1U;
      }
 
      if (allow_missed_transition != 0U) {
-         FOC_RecordHallTravelStep(prev_sector, cur_sector);
+         int32_t hall_delta = FOC_RecordHallTravelStep(prev_sector, cur_sector);
          s_ctx.hall_sector = *candidate;
          s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
+         FOC_RecordHallHistory(FOC_HallEdgeDeltaUs(sector_timestamp_us), hall_delta);
          s_hall_illegal_transition_count = 0U;
          g_foc_hall_resync_count++;
          g_foc_hall_resync_period_us = (s_foc_control_period_us > 65535U)
@@ -3935,9 +4002,10 @@ static void FOC_Prof_Reset(void)
      }
 
      if (recovery_accept != 0U) {
-         FOC_RecordHallTravelStep(prev_sector, cur_sector);
+         int32_t hall_delta = FOC_RecordHallTravelStep(prev_sector, cur_sector);
          s_ctx.hall_sector = *candidate;
          s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
+         FOC_RecordHallHistory(FOC_HallEdgeDeltaUs(sector_timestamp_us), hall_delta);
          s_ctx.theta_e_predicted = candidate->theta_e;
          s_hall_illegal_transition_count = 0U;
          g_foc_hall_recovery_accept_count++;
@@ -3960,9 +4028,12 @@ static void FOC_Prof_Reset(void)
          }
      }
 
-     FOC_RecordHallTravelStep(prev_sector, cur_sector);
-     s_ctx.hall_sector = *candidate;
-     s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
+     {
+         int32_t hall_delta = FOC_RecordHallTravelStep(prev_sector, cur_sector);
+         s_ctx.hall_sector = *candidate;
+         s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
+         FOC_RecordHallHistory(FOC_HallEdgeDeltaUs(sector_timestamp_us), hall_delta);
+     }
      s_hall_illegal_transition_count = 0U;
      return 1U;
  }
@@ -4007,6 +4078,17 @@ static void FOC_Prof_Reset(void)
      for (motor = 0U; motor < FOC_CORE_MOTOR_COUNT; motor++) {
          g_foc_hall_travel_count[motor] = 0;
          g_foc_hall_travel_offset[motor] = 0;
+         memset(s_foc_hall_history_delta_us[motor], 0,
+                sizeof(s_foc_hall_history_delta_us[motor]));
+         memset(s_foc_hall_history_raw[motor], 0,
+                sizeof(s_foc_hall_history_raw[motor]));
+         memset(s_foc_hall_history_count[motor], 0,
+                sizeof(s_foc_hall_history_count[motor]));
+         s_foc_hall_history_head[motor] = -1;
+         s_foc_hall_history_valid_count[motor] = 0U;
+         s_foc_hall_total_update_count[motor] = 0U;
+         s_foc_hall_direction_update_count[motor] = 0U;
+         s_foc_hall_last_delta[motor] = 0;
      }
 
      FOC_Core_SelectMotor(0U);
@@ -4914,6 +4996,76 @@ static void FOC_Prof_Reset(void)
 
      return FOC_OK;
  }
+
+int FOC_Core_ReadHallStats(uint8_t motor_id,
+                           int64_t *hall_distance,
+                           uint64_t *total_hall_counts,
+                           uint64_t *current_direction_hall_counts)
+{
+     if ((motor_id >= FOC_CORE_MOTOR_COUNT) ||
+         (hall_distance == NULL) ||
+         (total_hall_counts == NULL) ||
+         (current_direction_hall_counts == NULL)) {
+         return FOC_ERR;
+     }
+
+     FOC_HAL_EnterCritical();
+     *hall_distance =
+         (int64_t)g_foc_hall_travel_count[motor_id] +
+         (int64_t)g_foc_hall_travel_offset[motor_id];
+     *total_hall_counts = s_foc_hall_total_update_count[motor_id];
+     *current_direction_hall_counts =
+         s_foc_hall_direction_update_count[motor_id];
+     FOC_HAL_ExitCritical();
+
+     return FOC_OK;
+}
+
+int FOC_Core_CopyHallHistory(uint8_t motor_id,
+                             uint32_t *delta_time_us,
+                             uint8_t *history_hall,
+                             uint64_t *hall_counts_history,
+                             uint16_t history_size,
+                             int16_t *head_index_hall,
+                             int16_t *head_index_app_hall)
+{
+     uint16_t i;
+     uint16_t copy_count;
+
+     if ((motor_id >= FOC_CORE_MOTOR_COUNT) ||
+         (delta_time_us == NULL) ||
+         (history_hall == NULL) ||
+         (hall_counts_history == NULL) ||
+         (head_index_hall == NULL) ||
+         (head_index_app_hall == NULL) ||
+         (history_size == 0U)) {
+         return FOC_ERR;
+     }
+
+     copy_count = (history_size < FOC_HALL_HISTORY_SIZE)
+                ? history_size
+                : FOC_HALL_HISTORY_SIZE;
+
+     FOC_HAL_EnterCritical();
+     for (i = 0U; i < copy_count; i++) {
+         delta_time_us[i] = s_foc_hall_history_delta_us[motor_id][i];
+         history_hall[i] = s_foc_hall_history_raw[motor_id][i];
+         hall_counts_history[i] = s_foc_hall_history_count[motor_id][i];
+     }
+     *head_index_hall = (s_foc_hall_history_valid_count[motor_id] == 0U)
+                      ? -1
+                      : s_foc_hall_history_head[motor_id];
+     *head_index_app_hall = *head_index_hall;
+     FOC_HAL_ExitCritical();
+
+     for (i = copy_count; i < history_size; i++) {
+         delta_time_us[i] = 0U;
+         history_hall[i] = 0U;
+         hall_counts_history[i] = 0U;
+     }
+
+     return FOC_OK;
+}
 
 int FOC_Core_WriteHallTravelOffset(uint8_t motor_id,
                                    int16_t *hall_states_offset,
