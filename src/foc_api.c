@@ -73,6 +73,14 @@ int FOC_SetCurrentRef(float id, float iq)
 
 }
 
+int FOC_SetIFRef(float iq, float rpm)
+
+{
+
+    return FOC_Core_SetIFRef(iq, rpm);
+
+}
+
  
 
 int FOC_SetDirection(FOC_Dir_e dir)

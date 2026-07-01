@@ -60,11 +60,17 @@ static volatile uint8_t s_foc_core_active_motor = 0U;
 
 #define FOC_CTRL_SOURCE_SPEED   0U
 #define FOC_CTRL_SOURCE_CURRENT 1U
+#define FOC_CTRL_SOURCE_IF      2U
 static uint8_t s_foc_ctrl_source_store[FOC_CORE_MOTOR_COUNT] = {
     FOC_CTRL_SOURCE_SPEED,
     FOC_CTRL_SOURCE_SPEED
 };
 #define s_foc_ctrl_source (s_foc_ctrl_source_store[s_foc_core_active_motor])
+
+static float s_if_angle_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+static float s_if_speed_rpm_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+#define s_if_angle     (s_if_angle_store[s_foc_core_active_motor])
+#define s_if_speed_rpm (s_if_speed_rpm_store[s_foc_core_active_motor])
 
 /** 保护阈值实例 */
 
@@ -5151,10 +5157,20 @@ static void FOC_Prof_Reset(void)
          theta_e_ctrl = s_ctx.theta_e_predicted;
      }
 
- 
+     if (s_foc_ctrl_source == FOC_CTRL_SOURCE_IF) {
+         float omega_e = s_if_speed_rpm *
+                         (FOC_2PI / 60.0f) *
+                         (float)s_config.motor.pole_pairs;
 
-
- 
+         if (s_ctx.direction == FOC_DIR_CCW) {
+             s_if_angle -= omega_e * observer_dt;
+         } else {
+             s_if_angle += omega_e * observer_dt;
+         }
+         s_if_angle = FOC_NormalizeAngle(s_if_angle);
+         s_ctx.theta_e_predicted = s_if_angle;
+         theta_e_ctrl = s_if_angle;
+     }
 
      theta_e_ctrl = FOC_ApplyCurrentAngleTrim(theta_e_ctrl);
 
@@ -5704,7 +5720,7 @@ int FOC_Core_SetSpeedRef(float rpm)
 
  
 
- int FOC_Core_SetCurrentRef(float id, float iq)
+int FOC_Core_SetCurrentRef(float id, float iq)
 
 {
 
@@ -5770,6 +5786,98 @@ int FOC_Core_SetSpeedRef(float rpm)
      return FOC_OK;
 
 }
+
+int FOC_Core_SetIFRef(float iq, float rpm)
+{
+     float max_current = s_config.motor.max_current_a;
+     float max_speed = s_config.motor.max_speed_rpm;
+     float signed_iq;
+     float signed_rpm;
+     float abs_rpm;
+     FOC_Dir_e dir;
+     uint8_t was_if;
+
+     if ((max_current <= 0.0f) || (max_speed <= 0.0f)) {
+         return FOC_ERR;
+     }
+
+     signed_iq = FOC_ApplyAppDirectionInvertToRef(iq);
+     signed_rpm = FOC_ApplyAppDirectionInvertToRef(rpm);
+     signed_iq = FOC_CLAMP(signed_iq, -max_current, max_current);
+     signed_rpm = FOC_CLAMP(signed_rpm, -max_speed, max_speed);
+
+     if (signed_rpm < 0.0f) {
+         dir = FOC_DIR_CCW;
+         abs_rpm = -signed_rpm;
+     } else if (signed_rpm > 0.0f) {
+         dir = FOC_DIR_CW;
+         abs_rpm = signed_rpm;
+     } else if (signed_iq < 0.0f) {
+         dir = FOC_DIR_CCW;
+         abs_rpm = 0.0f;
+     } else {
+         dir = FOC_DIR_CW;
+         abs_rpm = 0.0f;
+     }
+
+     FOC_HAL_EnterCritical();
+
+     was_if = (s_foc_ctrl_source == FOC_CTRL_SOURCE_IF) ? 1U : 0U;
+     s_foc_ctrl_source = FOC_CTRL_SOURCE_IF;
+     s_ctx.direction = dir;
+     s_ctx.id_ref = 0.0f;
+     s_ctx.speed_ref = abs_rpm;
+     s_ctx.speed_ref_ctrl = abs_rpm;
+     s_speed_ref_ctrl = abs_rpm;
+     s_speed_ref_ctrl_direction = dir;
+     s_if_speed_rpm = abs_rpm;
+     if (was_if == 0U) {
+         s_if_angle = (s_ctx.hall_sector.sector != 0U)
+                    ? s_ctx.hall_sector.theta_e
+                    : s_ctx.theta_e_predicted;
+     }
+
+     g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(abs_rpm, 1.0f);
+     g_foc_speed_ref_ctrl_rpm = FOC_Log_ToI16(abs_rpm, 1.0f);
+     g_foc_speed_ref_ramp_active = 0U;
+
+     g_foc_dyn_speed_enable = 0U;
+     g_foc_bidir_speed_enable = 0U;
+     s_dyn_speed_prev_enable = 0U;
+     s_bidir_speed_prev_enable = 0U;
+     g_foc_dyn_speed_reset_stats = 0U;
+     g_foc_bidir_speed_reset_stats = 0U;
+
+     FOC_PID_Reset(&s_ctx.pid_speed);
+     s_speed_loop_accum_us = 0U;
+     s_ctx.speed_loop_counter = 0U;
+     s_ctx.speed_ctrl_fdb = 0.0f;
+     g_foc_speed_ctrl_fdb_rpm = 0;
+     g_foc_speed_error_boost_mA = 0;
+     s_speed_error_boost_prev_ref = 0.0f;
+     s_bidir_decel_hold_prev_ref = 0.0f;
+     g_foc_bidir_decel_hold_active = 0U;
+     g_foc_bidir_decel_hold_applied_mA = 0;
+     g_foc_bidir_decel_hold_raw_err_rpm = 0;
+     s_bidir_zero_soft_prev_ref = 0.0f;
+     g_foc_bidir_zero_soft_active = 0U;
+     g_foc_bidir_zero_soft_scale_percent = 100U;
+     g_foc_bidir_zero_soft_limited_mA = 0;
+     g_foc_lift_current_limit_active = 0U;
+     g_foc_lift_current_limit_extra_mA = 0;
+     FOC_BidirZeroTransfer_Reset();
+
+     if (signed_iq < 0.0f) {
+         s_ctx.iq_ref = -signed_iq;
+     } else {
+         s_ctx.iq_ref = signed_iq;
+     }
+
+     FOC_HAL_ExitCritical();
+
+     return FOC_OK;
+}
+
 int FOC_Core_SetDirection(FOC_Dir_e dir)
 
  {

@@ -176,6 +176,14 @@ int FOC_Core_SetSpeedRef(float rpm);
  */
 int FOC_Core_SetCurrentRef(float id, float iq);
 
+/**
+ * @brief Set I/F current reference with forced electrical angle advance.
+ * @param iq q-axis current reference (A), positive forward, negative reverse
+ * @param rpm forced mechanical speed reference (rpm), signed like iq
+ * @return FOC_OK on success
+ */
+int FOC_Core_SetIFRef(float iq, float rpm);
+
  
 
 /**

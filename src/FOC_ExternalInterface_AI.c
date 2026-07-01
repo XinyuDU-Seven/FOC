@@ -360,6 +360,7 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_max_mA = 2500U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_step_ms = 120U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_max_hold_ms = 300U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_move_rpm = 5U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_if_speed_rpm = 30U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_success_edge_count = 6U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_direction = 2U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_disable_on_done = 1U;
@@ -948,14 +949,20 @@ static void FOC_IqStartTest_UpdateMonitor(uint8_t motor_id, uint32_t now_us)
 
 static FocError FOC_IqStartTest_Command(uint8_t motor_id, uint16_t abs_mA)
 {
-  float target = 0.0f;
+  float iq_target = 0.0f;
+  float speed_target = 0.0f;
   FocError result;
 
   result = FOC_AI_MakeSignedTarget(g_foc_iq_start_test_direction,
                                    (float)abs_mA * 0.001f,
-                                   &target);
+                                   &iq_target);
   if (result == FOC_SUCCESS) {
-    result = Foc_SetCurrentReference(motor_id, 0.0f, target);
+    result = FOC_AI_MakeSignedTarget(g_foc_iq_start_test_direction,
+                                     (float)g_foc_iq_start_test_if_speed_rpm,
+                                     &speed_target);
+  }
+  if (result == FOC_SUCCESS) {
+    result = Foc_SetIFReference(motor_id, iq_target, speed_target);
   }
 
   s_foc_iq_start_test_abs_cmd_mA = abs_mA;
@@ -2046,17 +2053,18 @@ FocError Foc_SetTorqueReference_AI(uint8_t unId, float fTorque)
 
 FocError Foc_SetIFReference_AI(uint8_t unId, float fIq, float fSpeed)
 {
-  /* err保存电机号合法性检查结果；I/F控制当前未实现。 */
   FocError err = FOC_AI_CheckMotorId(unId);
-
-  (void)fIq;
-  (void)fSpeed;
 
   if (err != FOC_SUCCESS) {
     return err;
   }
 
-  return FOC_INPUT_PARAMETER_INVALID;
+  err = FOC_AI_SelectMotor(unId);
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  return FOC_AI_MapResult(FOC_SetIFRef(fIq, fSpeed));
 }
 
 FocError Foc_SetVFReference_AI(uint8_t unId, float fVq, float fSpeed)
