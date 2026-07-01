@@ -2285,14 +2285,25 @@ static float FOC_BidirZeroTransfer_AbsMilliToA(int16_t value_mA)
     return value;
 }
 
+static int16_t FOC_BidirZeroTransfer_CurrentAppDirSign(void)
+{
+    FOC_Dir_e positive_dir = FOC_BidirSpeed_CoreDirFromSign(1);
+
+    return (s_ctx.direction == positive_dir) ? 1 : -1;
+}
+
 static float FOC_BidirZeroTransfer_LocalToSignedIq(float local_iq)
 {
-    return (s_ctx.direction == FOC_DIR_CCW) ? -local_iq : local_iq;
+    return (FOC_BidirZeroTransfer_CurrentAppDirSign() < 0)
+         ? -local_iq
+         : local_iq;
 }
 
 static float FOC_BidirZeroTransfer_SignedToLocalIq(float signed_iq)
 {
-    return (s_ctx.direction == FOC_DIR_CCW) ? -signed_iq : signed_iq;
+    return (FOC_BidirZeroTransfer_CurrentAppDirSign() < 0)
+         ? -signed_iq
+         : signed_iq;
 }
 
 static float FOC_BidirZeroTransfer_LimitSignedIq(float current,
@@ -2524,7 +2535,7 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
     }
 
     if (start_sign == 0) {
-        start_sign = (s_ctx.direction == FOC_DIR_CCW) ? -1 : 1;
+        start_sign = FOC_BidirZeroTransfer_CurrentAppDirSign();
     }
     if (FOC_IsAutoTestMotor() != 0U) {
         g_foc_zero_transfer_raw_sign = (int8_t)raw_sign;
