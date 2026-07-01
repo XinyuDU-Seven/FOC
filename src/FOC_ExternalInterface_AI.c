@@ -37,6 +37,8 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_last_get_motor_num_err = FOC_SUCCESS;
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 /* 旧测试入口的速度给定，External正式控制前会置为-1以退出旧测试给定。 */
 extern volatile float speed_ref;
+extern volatile uint8_t g_foc_bidir_zero_soft_enable;
+extern volatile uint16_t g_foc_bidir_zero_soft_start_rpm;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
 #define FOC_DETAIL_LOG_SIZE    512U
@@ -1865,15 +1867,15 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_bidir_speed_slew_enable = 0U;
     g_foc_bidir_speed_slew_rpm_per_s = 0U;
     g_foc_zero_transfer_enable = 1U;
-    g_foc_zero_transfer_enter_rpm = 320U;
-    g_foc_zero_transfer_exit_rpm = 110U;
-    g_foc_zero_transfer_ms = 80U;
-    g_foc_zero_relaunch_ms = 30U;
+    g_foc_zero_transfer_enter_rpm = 300U;
+    g_foc_zero_transfer_exit_rpm = 90U;
+    g_foc_zero_transfer_ms = 50U;
+    g_foc_zero_relaunch_ms = 90U;
     g_foc_zero_relaunch_edge_max_us = 80000U;
-    g_foc_zero_handoff_ms = 180U;
-    g_foc_zero_hold_iq_mA = 550;
-    g_foc_zero_breakaway_iq_mA = 1200;
-    g_foc_zero_iq_slew_mA_per_s = 20000U;
+    g_foc_zero_handoff_ms = 90U;
+    g_foc_zero_hold_iq_mA = 350;
+    g_foc_zero_breakaway_iq_mA = 900;
+    g_foc_zero_iq_slew_mA_per_s = 14000U;
     g_foc_zero_transfer_state = 0U;
     g_foc_zero_signed_iq_cmd_mA = 0;
     g_foc_zero_iq_ff_mA = 0;
@@ -1890,6 +1892,8 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_zero_transfer_decel_to_zero = 0U;
     g_foc_zero_transfer_raw_abs_rpm = 0U;
     g_foc_zero_transfer_prev_cmd_abs_rpm = 0U;
+    g_foc_bidir_zero_soft_enable = 1U;
+    g_foc_bidir_zero_soft_start_rpm = 420U;
     g_foc_detail_log_enable = 1U;
     g_foc_detail_log_decim_ms = 2U;
     g_foc_detail_log_trigger_rpm = 500U;

@@ -1462,7 +1462,8 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
 
     if ((g_foc_bidir_zero_soft_enable == 0U) ||
         (g_foc_bidir_speed_enable == 0U) ||
-        (g_foc_bidir_speed_step_enable != 2U) ||
+        ((g_foc_bidir_speed_step_enable != 2U) &&
+         (g_foc_bidir_speed_step_enable != 3U)) ||
        (ref_decreasing == 0U) ||
         (start_rpm < 1.0f) ||
         (speed_ref_ctrl >= start_rpm)) {
@@ -2445,23 +2446,15 @@ static uint8_t FOC_BidirZeroTransfer_HandoffActive(uint32_t now_us,
 {
     uint8_t hold_elapsed =
         ((int32_t)(s_zero_transfer_handoff_until_us - now_us) <= 0) ? 1U : 0U;
-    float breakaway_iq =
-        FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_breakaway_iq_mA);
-    float release_iq =
-        FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_hold_iq_mA);
     int16_t ctrl_sign;
 
     if (s_zero_transfer_handoff_sign == 0) {
         return 0U;
     }
 
-    if ((release_iq <= 0.0f) || (release_iq > breakaway_iq)) {
-        release_iq = breakaway_iq;
-    }
-
     ctrl_sign = FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed);
     if ((ctrl_sign == s_zero_transfer_handoff_sign) &&
-        ((hold_elapsed != 0U) || (FOC_FABS(ctrl_signed) >= release_iq))) {
+        (hold_elapsed != 0U)) {
         if (s_zero_transfer_handoff_confirm_count <
             FOC_BIDIR_ZERO_HANDOFF_CONFIRM_COUNT) {
             s_zero_transfer_handoff_confirm_count++;
@@ -2482,6 +2475,7 @@ static void FOC_BidirZeroTransfer_Start(uint32_t now_us, int16_t old_sign)
 {
     float hold_iq = FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_hold_iq_mA);
     float signed_iq = FOC_BidirZeroTransfer_LocalToSignedIq(s_ctx.iq_ref);
+    float target_iq = signed_iq;
 
     s_zero_transfer_state = FOC_ZERO_TRANSFER_STATE_APPROACH;
     s_zero_transfer_start_us = now_us;
@@ -2492,10 +2486,10 @@ static void FOC_BidirZeroTransfer_Start(uint32_t now_us, int16_t old_sign)
 
     if ((FOC_BidirZeroTransfer_SignedIqSign(signed_iq) != old_sign) ||
         (FOC_FABS(signed_iq) < hold_iq)) {
-        signed_iq = (old_sign < 0) ? -hold_iq : hold_iq;
+        target_iq = (old_sign < 0) ? -hold_iq : hold_iq;
     }
     s_zero_transfer_signed_iq = signed_iq;
-    s_zero_transfer_target_iq = signed_iq;
+    s_zero_transfer_target_iq = target_iq;
 
     if ((FOC_IsAutoTestMotor() != 0U) &&
         (g_foc_zero_transfer_count < 0xFFFFFFFFU)) {
@@ -2613,6 +2607,7 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
             FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_breakaway_iq_mA);
         float progress;
         float ease;
+        float transfer_ref_abs;
         float start_iq =
             (s_zero_transfer_old_sign < 0) ? -hold_iq : hold_iq;
         float end_iq =
@@ -2637,7 +2632,14 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
             (s_zero_transfer_direction_switched != 0U)
           ? FOC_BidirSpeed_CoreDirFromSign(s_zero_transfer_new_sign)
           : FOC_BidirSpeed_CoreDirFromSign(s_zero_transfer_old_sign);
-        target = 0.0f;
+        if (s_zero_transfer_direction_switched != 0U) {
+            transfer_ref_abs = exit_rpm * ease;
+            target = (s_zero_transfer_new_sign < 0)
+                   ? -transfer_ref_abs
+                   : transfer_ref_abs;
+        } else {
+            target = 0.0f;
+        }
 
         if ((progress >= 1.0f) &&
             (s_zero_transfer_direction_switched != 0U)) {
@@ -2657,10 +2659,16 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
         uint8_t edge_recent = 1U;
         uint8_t relaunch_ready = 0U;
         float relaunch_abs = raw_abs;
+        float relaunch_progress;
+        float relaunch_ease;
 
         if (relaunch_us == 0U) {
             relaunch_us = 1U;
         }
+        relaunch_progress =
+            FOC_CLAMP((float)relaunch_elapsed_us / (float)relaunch_us,
+                      0.0f, 1.0f);
+        relaunch_ease = FOC_BidirZeroTransfer_SmoothStep(relaunch_progress);
         if (edge_max_us != 0U) {
             edge_recent = (edge_elapsed_us <= edge_max_us) ? 1U : 0U;
         }
@@ -2668,6 +2676,8 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
         if (relaunch_abs < exit_rpm) {
             relaunch_abs = exit_rpm;
         }
+        relaunch_abs = exit_rpm +
+            ((relaunch_abs - exit_rpm) * relaunch_ease);
         target = (s_zero_transfer_new_sign < 0) ? -relaunch_abs : relaunch_abs;
 
         if ((raw_sign == s_zero_transfer_new_sign) &&
@@ -2755,31 +2765,36 @@ static float FOC_BidirZeroTransfer_ApplyIq(float iq_ref,
             g_foc_zero_direction_pending = 0;
             return iq_ref;
         }
-        desired_signed = (s_zero_transfer_handoff_sign < 0)
-                       ? -breakaway_iq
-                       : breakaway_iq;
         if ((FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed) ==
              s_zero_transfer_handoff_sign) &&
-            (FOC_FABS(ctrl_signed) > breakaway_iq)) {
+            (FOC_FABS(ctrl_signed) < breakaway_iq)) {
             desired_signed = ctrl_signed;
+        } else {
+            desired_signed = (s_zero_transfer_handoff_sign < 0)
+                           ? -breakaway_iq
+                           : breakaway_iq;
         }
         g_foc_zero_direction_pending = (int8_t)s_zero_transfer_handoff_sign;
     } else if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_APPROACH) {
-        desired_signed = (s_zero_transfer_old_sign < 0) ? -hold_iq : hold_iq;
         if ((FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed) ==
              s_zero_transfer_old_sign) &&
-            (FOC_FABS(ctrl_signed) > hold_iq)) {
+            (FOC_FABS(ctrl_signed) < hold_iq)) {
             desired_signed = ctrl_signed;
+        } else {
+            desired_signed = (s_zero_transfer_old_sign < 0)
+                           ? -hold_iq
+                           : hold_iq;
         }
     } else if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_TRANSFER) {
         desired_signed = s_zero_transfer_target_iq;
     } else {
-        desired_signed =
-            (s_zero_transfer_new_sign < 0) ? -breakaway_iq : breakaway_iq;
         if ((FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed) ==
              s_zero_transfer_new_sign) &&
-            (FOC_FABS(ctrl_signed) > breakaway_iq)) {
+            (FOC_FABS(ctrl_signed) < breakaway_iq)) {
             desired_signed = ctrl_signed;
+        } else {
+            desired_signed =
+                (s_zero_transfer_new_sign < 0) ? -breakaway_iq : breakaway_iq;
         }
     }
 
