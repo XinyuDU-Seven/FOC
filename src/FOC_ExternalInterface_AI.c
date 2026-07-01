@@ -148,6 +148,7 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_transfer_exit_rpm = FOC_BIDIR_ZER
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_transfer_ms = FOC_BIDIR_ZERO_TRANSFER_MS;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_relaunch_ms = FOC_BIDIR_ZERO_RELAUNCH_MS;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_zero_relaunch_edge_max_us = FOC_BIDIR_ZERO_RELAUNCH_EDGE_MAX_US;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_handoff_ms = FOC_BIDIR_ZERO_HANDOFF_MS;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_zero_hold_iq_mA = FOC_BIDIR_ZERO_HOLD_IQ_MA;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_zero_breakaway_iq_mA = FOC_BIDIR_ZERO_BREAKAWAY_IQ_MA;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_zero_iq_slew_mA_per_s = FOC_BIDIR_ZERO_IQ_SLEW_MA_PER_S;
@@ -1869,6 +1870,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_zero_transfer_ms = 80U;
     g_foc_zero_relaunch_ms = 30U;
     g_foc_zero_relaunch_edge_max_us = 80000U;
+    g_foc_zero_handoff_ms = 180U;
     g_foc_zero_hold_iq_mA = 550;
     g_foc_zero_breakaway_iq_mA = 1200;
     g_foc_zero_iq_slew_mA_per_s = 20000U;

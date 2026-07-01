@@ -543,6 +543,7 @@ extern volatile uint16_t g_foc_zero_transfer_exit_rpm;
 extern volatile uint16_t g_foc_zero_transfer_ms;
 extern volatile uint16_t g_foc_zero_relaunch_ms;
 extern volatile uint32_t g_foc_zero_relaunch_edge_max_us;
+extern volatile uint16_t g_foc_zero_handoff_ms;
 extern volatile int16_t  g_foc_zero_hold_iq_mA;
 extern volatile int16_t  g_foc_zero_breakaway_iq_mA;
 extern volatile uint16_t g_foc_zero_iq_slew_mA_per_s;
@@ -670,6 +671,8 @@ static float s_zero_transfer_target_iq_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f
 static int16_t s_zero_transfer_old_sign_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int16_t s_zero_transfer_new_sign_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static uint8_t s_zero_transfer_direction_switched_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint32_t s_zero_transfer_handoff_until_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static int16_t s_zero_transfer_handoff_sign_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 
 #define s_zero_transfer_state       (s_zero_transfer_state_store[s_foc_core_active_motor])
 #define s_zero_transfer_start_us    (s_zero_transfer_start_us_store[s_foc_core_active_motor])
@@ -681,6 +684,10 @@ static uint8_t s_zero_transfer_direction_switched_store[FOC_CORE_MOTOR_COUNT] = 
 #define s_zero_transfer_new_sign    (s_zero_transfer_new_sign_store[s_foc_core_active_motor])
 #define s_zero_transfer_direction_switched \
     (s_zero_transfer_direction_switched_store[s_foc_core_active_motor])
+#define s_zero_transfer_handoff_until_us \
+    (s_zero_transfer_handoff_until_us_store[s_foc_core_active_motor])
+#define s_zero_transfer_handoff_sign \
+    (s_zero_transfer_handoff_sign_store[s_foc_core_active_motor])
 
 #define FOC_BIDIR_ZERO_STATE_IDLE       0U
 #define FOC_BIDIR_ZERO_STATE_DECEL      1U
@@ -730,6 +737,10 @@ static int16_t FOC_BidirSpeed_TargetSign(float target);
 static void FOC_BidirSpeed_ServiceRef(void);
 static uint8_t FOC_BidirZeroTransfer_Active(void);
 static void FOC_BidirZeroTransfer_Reset(void);
+static void FOC_BidirZeroTransfer_ArmHandoff(uint32_t now_us,
+                                             int16_t sign,
+                                             float signed_iq);
+static uint8_t FOC_BidirZeroTransfer_HandoffActive(uint32_t now_us);
 static float FOC_BidirZeroTransfer_ServiceRef(float target,
                                               float raw_target,
                                               uint32_t now_us,
@@ -2312,7 +2323,11 @@ static void FOC_BidirZeroTransfer_UpdateDebug(uint32_t now_us)
     g_foc_zero_transfer_state = s_zero_transfer_state;
     g_foc_zero_signed_iq_cmd_mA =
         FOC_Log_ToI16(s_zero_transfer_signed_iq, 1000.0f);
-    g_foc_zero_direction_pending = (int8_t)s_zero_transfer_new_sign;
+    g_foc_zero_direction_pending =
+        (s_zero_transfer_handoff_sign != 0)
+      ? (int8_t)s_zero_transfer_handoff_sign
+      : (int8_t)s_zero_transfer_new_sign;
+    g_foc_zero_pid_freeze_active = FOC_BidirZeroTransfer_PidFrozen();
 
     if (s_zero_transfer_start_us != 0U) {
         uint32_t elapsed_us = now_us - s_zero_transfer_start_us;
@@ -2336,7 +2351,8 @@ static uint8_t FOC_BidirZeroTransfer_Active(void)
 {
     if ((g_foc_zero_transfer_enable == 0U) ||
         (g_foc_bidir_speed_enable == 0U) ||
-        (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_IDLE)) {
+        ((s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_IDLE) &&
+         (s_zero_transfer_handoff_sign == 0))) {
         return 0U;
     }
 
@@ -2359,6 +2375,8 @@ static void FOC_BidirZeroTransfer_Reset(void)
     s_zero_transfer_old_sign = 0;
     s_zero_transfer_new_sign = 0;
     s_zero_transfer_direction_switched = 0U;
+    s_zero_transfer_handoff_until_us = 0U;
+    s_zero_transfer_handoff_sign = 0;
 
     if (FOC_IsAutoTestMotor() == 0U) {
         return;
@@ -2380,6 +2398,38 @@ static void FOC_BidirZeroTransfer_Reset(void)
     g_foc_zero_transfer_decel_to_zero = 0U;
     g_foc_zero_transfer_raw_abs_rpm = 0U;
     g_foc_zero_transfer_prev_cmd_abs_rpm = 0U;
+}
+
+static void FOC_BidirZeroTransfer_ArmHandoff(uint32_t now_us,
+                                             int16_t sign,
+                                             float signed_iq)
+{
+    uint32_t handoff_us = (uint32_t)g_foc_zero_handoff_ms * 1000U;
+
+    if ((sign == 0) || (handoff_us == 0U)) {
+        s_zero_transfer_handoff_until_us = 0U;
+        s_zero_transfer_handoff_sign = 0;
+        return;
+    }
+
+    s_zero_transfer_handoff_sign = sign;
+    s_zero_transfer_handoff_until_us = now_us + handoff_us;
+    s_zero_transfer_signed_iq = signed_iq;
+}
+
+static uint8_t FOC_BidirZeroTransfer_HandoffActive(uint32_t now_us)
+{
+    if (s_zero_transfer_handoff_sign == 0) {
+        return 0U;
+    }
+
+    if ((int32_t)(s_zero_transfer_handoff_until_us - now_us) <= 0) {
+        s_zero_transfer_handoff_until_us = 0U;
+        s_zero_transfer_handoff_sign = 0;
+        return 0U;
+    }
+
+    return 1U;
 }
 
 static void FOC_BidirZeroTransfer_Start(uint32_t now_us, int16_t old_sign)
@@ -2576,7 +2626,13 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
                 relaunch_ready = 1U;
             }
             if (relaunch_ready != 0U) {
+                int16_t handoff_sign = s_zero_transfer_new_sign;
+                float handoff_iq = s_zero_transfer_signed_iq;
+
                 FOC_BidirZeroTransfer_Reset();
+                FOC_BidirZeroTransfer_ArmHandoff(now_us,
+                                                 handoff_sign,
+                                                 handoff_iq);
             }
         }
     }
@@ -2598,7 +2654,8 @@ static uint8_t FOC_BidirZeroTransfer_PidFrozen(void)
         return 0U;
     }
 
-    return (s_zero_transfer_state >= FOC_ZERO_TRANSFER_STATE_TRANSFER)
+    return ((s_zero_transfer_state >= FOC_ZERO_TRANSFER_STATE_TRANSFER) ||
+            (s_zero_transfer_handoff_sign != 0))
          ? 1U
          : 0U;
 }
@@ -2606,22 +2663,41 @@ static uint8_t FOC_BidirZeroTransfer_PidFrozen(void)
 static float FOC_BidirZeroTransfer_ApplyIq(float iq_ref,
                                            float speed_dt)
 {
+    uint32_t now_us = FOC_HAL_GetTimestampUs();
     float ctrl_signed = FOC_BidirZeroTransfer_LocalToSignedIq(iq_ref);
     float desired_signed = ctrl_signed;
     float hold_iq = FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_hold_iq_mA);
     float breakaway_iq =
         FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_breakaway_iq_mA);
+    uint8_t handoff_active;
 
     g_foc_zero_ctrl_iq_raw_mA = FOC_Log_ToI16(ctrl_signed, 1000.0f);
     g_foc_zero_pid_freeze_active = FOC_BidirZeroTransfer_PidFrozen();
 
     if ((g_foc_zero_transfer_enable == 0U) ||
-        (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_IDLE)) {
+        (g_foc_bidir_speed_enable == 0U)) {
+        s_zero_transfer_handoff_until_us = 0U;
+        s_zero_transfer_handoff_sign = 0;
         g_foc_zero_iq_ff_mA = 0;
         return iq_ref;
     }
 
-    if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_APPROACH) {
+    handoff_active = FOC_BidirZeroTransfer_HandoffActive(now_us);
+    if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_IDLE) {
+        if (handoff_active == 0U) {
+            g_foc_zero_iq_ff_mA = 0;
+            return iq_ref;
+        }
+        desired_signed = (s_zero_transfer_handoff_sign < 0)
+                       ? -breakaway_iq
+                       : breakaway_iq;
+        if ((FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed) ==
+             s_zero_transfer_handoff_sign) &&
+            (FOC_FABS(ctrl_signed) > breakaway_iq)) {
+            desired_signed = ctrl_signed;
+        }
+        g_foc_zero_direction_pending = (int8_t)s_zero_transfer_handoff_sign;
+    } else if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_APPROACH) {
         desired_signed = (s_zero_transfer_old_sign < 0) ? -hold_iq : hold_iq;
         if ((FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed) ==
              s_zero_transfer_old_sign) &&

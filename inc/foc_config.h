@@ -490,6 +490,10 @@ extern "C" {
 #define FOC_BIDIR_ZERO_RELAUNCH_EDGE_MAX_US 80000U
 #endif
 
+#ifndef FOC_BIDIR_ZERO_HANDOFF_MS
+#define FOC_BIDIR_ZERO_HANDOFF_MS 180U
+#endif
+
 #ifndef FOC_BIDIR_ZERO_HOLD_IQ_MA
 #define FOC_BIDIR_ZERO_HOLD_IQ_MA       550
 #endif
