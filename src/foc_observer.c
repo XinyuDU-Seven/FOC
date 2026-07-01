@@ -275,7 +275,7 @@ static void FOC_Observer_ClampStartupPreEdgeAngle(FOC_Context_t *ctx,
     float step;
     uint8_t clamp_needed = 0U;
 
-    if ((ctx == NULL) ||
+    if ((ctx == 0) ||
         (cur_sector == 0U) ||
         (ctx->hall_sector_dt_us != 0U) ||
         (cur_sector != ctx->hall_sector_prev) ||
