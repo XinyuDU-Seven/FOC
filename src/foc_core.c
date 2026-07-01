@@ -2446,15 +2446,21 @@ static uint8_t FOC_BidirZeroTransfer_HandoffActive(uint32_t now_us,
         ((int32_t)(s_zero_transfer_handoff_until_us - now_us) <= 0) ? 1U : 0U;
     float breakaway_iq =
         FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_breakaway_iq_mA);
+    float release_iq =
+        FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_hold_iq_mA);
     int16_t ctrl_sign;
 
     if (s_zero_transfer_handoff_sign == 0) {
         return 0U;
     }
 
+    if ((release_iq <= 0.0f) || (release_iq > breakaway_iq)) {
+        release_iq = breakaway_iq;
+    }
+
     ctrl_sign = FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed);
     if ((ctrl_sign == s_zero_transfer_handoff_sign) &&
-        ((hold_elapsed != 0U) || (FOC_FABS(ctrl_signed) >= breakaway_iq))) {
+        ((hold_elapsed != 0U) || (FOC_FABS(ctrl_signed) >= release_iq))) {
         if (s_zero_transfer_handoff_confirm_count <
             FOC_BIDIR_ZERO_HANDOFF_CONFIRM_COUNT) {
             s_zero_transfer_handoff_confirm_count++;
