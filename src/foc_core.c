@@ -2654,7 +2654,6 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
                                          : 0xFFFFFFFFU;
         uint32_t edge_max_us = g_foc_zero_relaunch_edge_max_us;
         uint8_t edge_recent = 1U;
-        uint8_t edge_after_relaunch = 0U;
         uint8_t relaunch_ready = 0U;
         float relaunch_abs = raw_abs;
 
@@ -2664,10 +2663,6 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
         if (edge_max_us != 0U) {
             edge_recent = (edge_elapsed_us <= edge_max_us) ? 1U : 0U;
         }
-        if ((s_ctx.timestamp_prev != 0U) &&
-            ((int32_t)(s_ctx.timestamp_prev - s_zero_transfer_start_us) >= 0)) {
-            edge_after_relaunch = 1U;
-        }
         *zero_dir = FOC_BidirSpeed_CoreDirFromSign(s_zero_transfer_new_sign);
         if (relaunch_abs < exit_rpm) {
             relaunch_abs = exit_rpm;
@@ -2676,11 +2671,10 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
 
         if ((raw_sign == s_zero_transfer_new_sign) &&
             (relaunch_elapsed_us >= relaunch_us)) {
-            if ((edge_after_relaunch != 0U) &&
-                ((edge_max_us == 0U) || (edge_recent != 0U))) {
+            if (raw_abs >= exit_rpm) {
                 relaunch_ready = 1U;
-            } else if ((edge_max_us != 0U) &&
-                       (relaunch_elapsed_us >= edge_max_us)) {
+            } else if ((edge_recent != 0U) &&
+                       (FOC_FABS(s_ctx.speed_fdb) >= exit_rpm)) {
                 relaunch_ready = 1U;
             }
             if (relaunch_ready != 0U) {
@@ -2779,27 +2773,11 @@ static float FOC_BidirZeroTransfer_ApplyIq(float iq_ref,
     } else if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_TRANSFER) {
         desired_signed = s_zero_transfer_target_iq;
     } else {
-        float desired_abs = breakaway_iq;
-
-        if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_RELAUNCH) {
-            uint32_t relaunch_us =
-                (uint32_t)g_foc_zero_relaunch_ms * 1000U;
-            uint32_t relaunch_elapsed_us =
-                now_us - s_zero_transfer_start_us;
-
-            if (relaunch_us == 0U) {
-                relaunch_us = 1U;
-            }
-            if ((relaunch_elapsed_us >= relaunch_us) && (hold_iq > 0.0f)) {
-                desired_abs = breakaway_iq + hold_iq;
-            }
-        }
-
         desired_signed =
-            (s_zero_transfer_new_sign < 0) ? -desired_abs : desired_abs;
+            (s_zero_transfer_new_sign < 0) ? -breakaway_iq : breakaway_iq;
         if ((FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed) ==
              s_zero_transfer_new_sign) &&
-            (FOC_FABS(ctrl_signed) > desired_abs)) {
+            (FOC_FABS(ctrl_signed) > breakaway_iq)) {
             desired_signed = ctrl_signed;
         }
     }
