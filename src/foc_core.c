@@ -2420,9 +2420,8 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
     float prev_cmd_abs = FOC_FABS(s_ctx.speed_ref);
     int16_t raw_sign = FOC_BidirSpeed_TargetSign(raw_target);
     int16_t prev_sign = FOC_BidirSpeed_TargetSign(s_zero_transfer_prev_raw);
-    uint8_t decreasing = ((prev_abs - raw_abs) > 0.5f) ? 1U : 0U;
-    uint8_t cmd_decreasing =
-        ((prev_cmd_abs - raw_abs) > 0.5f) ? 1U : 0U;
+    uint8_t decreasing = (raw_abs < prev_abs) ? 1U : 0U;
+    uint8_t cmd_decreasing = (raw_abs < prev_cmd_abs) ? 1U : 0U;
     int16_t start_sign = raw_sign;
     uint8_t start_reason = 0U;
 
