@@ -262,6 +262,38 @@ extern "C" {
 #define FOC_SPEED_DROP_FAULT_ENABLE     0U
 #endif
 
+/* Application travel stall guard.
+ * This freezes the externally reported Hall travel when the motor is pushing
+ * into a hard stop, without rejecting Hall edges used by FOC angle/speed logic.
+ */
+#ifndef FOC_HALL_TRAVEL_STALL_GUARD_ENABLE
+#define FOC_HALL_TRAVEL_STALL_GUARD_ENABLE  1U
+#endif
+
+#ifndef FOC_HALL_TRAVEL_STALL_MIN_REF_RPM
+#define FOC_HALL_TRAVEL_STALL_MIN_REF_RPM   500U
+#endif
+
+#ifndef FOC_HALL_TRAVEL_STALL_MAX_FDB_RPM
+#define FOC_HALL_TRAVEL_STALL_MAX_FDB_RPM   150U
+#endif
+
+#ifndef FOC_HALL_TRAVEL_STALL_MIN_ERR_RPM
+#define FOC_HALL_TRAVEL_STALL_MIN_ERR_RPM   300U
+#endif
+
+#ifndef FOC_HALL_TRAVEL_STALL_MIN_IQ_MA
+#define FOC_HALL_TRAVEL_STALL_MIN_IQ_MA     2500U
+#endif
+
+#ifndef FOC_HALL_TRAVEL_STALL_COUNT_THRESHOLD
+#define FOC_HALL_TRAVEL_STALL_COUNT_THRESHOLD  2000U
+#endif
+
+#ifndef FOC_HALL_TRAVEL_STALL_MAX_DIR_COUNTS
+#define FOC_HALL_TRAVEL_STALL_MAX_DIR_COUNTS  12U
+#endif
+
 /* Hall invalid-sector persistence threshold. */
 #ifndef FOC_HALL_INVALID_COUNT_THRESHOLD
 
