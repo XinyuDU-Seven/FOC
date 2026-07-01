@@ -2442,18 +2442,19 @@ static void FOC_BidirZeroTransfer_ArmHandoff(uint32_t now_us,
 static uint8_t FOC_BidirZeroTransfer_HandoffActive(uint32_t now_us,
                                                    float ctrl_signed)
 {
+    uint8_t hold_elapsed =
+        ((int32_t)(s_zero_transfer_handoff_until_us - now_us) <= 0) ? 1U : 0U;
+    float breakaway_iq =
+        FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_breakaway_iq_mA);
     int16_t ctrl_sign;
 
     if (s_zero_transfer_handoff_sign == 0) {
         return 0U;
     }
 
-    if ((int32_t)(s_zero_transfer_handoff_until_us - now_us) > 0) {
-        return 1U;
-    }
-
     ctrl_sign = FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed);
-    if (ctrl_sign == s_zero_transfer_handoff_sign) {
+    if ((ctrl_sign == s_zero_transfer_handoff_sign) &&
+        ((hold_elapsed != 0U) || (FOC_FABS(ctrl_signed) >= breakaway_iq))) {
         if (s_zero_transfer_handoff_confirm_count <
             FOC_BIDIR_ZERO_HANDOFF_CONFIRM_COUNT) {
             s_zero_transfer_handoff_confirm_count++;
