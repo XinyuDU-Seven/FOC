@@ -563,7 +563,6 @@ extern volatile uint8_t  g_foc_zero_transfer_cmd_decreasing;
 extern volatile uint8_t  g_foc_zero_transfer_decel_to_zero;
 extern volatile uint16_t g_foc_zero_transfer_raw_abs_rpm;
 extern volatile uint16_t g_foc_zero_transfer_prev_cmd_abs_rpm;
-extern volatile uint32_t g_foc_zero_relaunch_abort_count;
 extern volatile uint8_t  g_foc_bidir_zero_cross_enable;
 extern volatile uint16_t g_foc_bidir_zero_speed_rpm;
 extern volatile uint16_t g_foc_bidir_zero_confirm_ms;
@@ -2286,32 +2285,6 @@ static float FOC_BidirZeroTransfer_AbsMilliToA(int16_t value_mA)
     return value;
 }
 
-static float FOC_BidirNoEdgeLimitIq(float iq_ref)
-{
-    float limit_iq;
-
-    if ((g_foc_bidir_speed_enable == 0U) ||
-        (s_ctx.sector_no_change_count < FOC_SECTOR_NO_CHANGE_THRESHOLD)) {
-        return iq_ref;
-    }
-
-    limit_iq = FOC_BidirZeroTransfer_AbsMilliToA(g_foc_zero_hold_iq_mA);
-    if (limit_iq < 0.6f) {
-        limit_iq = 0.6f;
-    }
-
-    if (iq_ref > limit_iq) {
-        FOC_PID_Reset(&s_ctx.pid_speed);
-        return limit_iq;
-    }
-    if (iq_ref < -limit_iq) {
-        FOC_PID_Reset(&s_ctx.pid_speed);
-        return -limit_iq;
-    }
-
-    return iq_ref;
-}
-
 static int16_t FOC_BidirZeroTransfer_CurrentAppDirSign(void)
 {
     FOC_Dir_e positive_dir = FOC_BidirSpeed_CoreDirFromSign(1);
@@ -2682,6 +2655,7 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
         uint32_t edge_max_us = g_foc_zero_relaunch_edge_max_us;
         uint8_t edge_recent = 1U;
         uint8_t edge_after_relaunch = 0U;
+        uint8_t relaunch_ready = 0U;
         float relaunch_abs = raw_abs;
 
         if (relaunch_us == 0U) {
@@ -2701,28 +2675,22 @@ static float FOC_BidirZeroTransfer_ServiceRef(float target,
         target = (s_zero_transfer_new_sign < 0) ? -relaunch_abs : relaunch_abs;
 
         if ((raw_sign == s_zero_transfer_new_sign) &&
-            (relaunch_elapsed_us >= relaunch_us) &&
-            (edge_after_relaunch != 0U) &&
-            ((edge_max_us == 0U) || (edge_recent != 0U))) {
-            int16_t handoff_sign = s_zero_transfer_new_sign;
-            float handoff_iq = s_zero_transfer_signed_iq;
+            (relaunch_elapsed_us >= relaunch_us)) {
+            if ((edge_after_relaunch != 0U) &&
+                ((edge_max_us == 0U) || (edge_recent != 0U))) {
+                relaunch_ready = 1U;
+            } else if ((edge_max_us != 0U) &&
+                       (relaunch_elapsed_us >= edge_max_us)) {
+                relaunch_ready = 1U;
+            }
+            if (relaunch_ready != 0U) {
+                int16_t handoff_sign = s_zero_transfer_new_sign;
+                float handoff_iq = s_zero_transfer_signed_iq;
 
-            FOC_BidirZeroTransfer_Reset();
-            FOC_BidirZeroTransfer_ArmHandoff(now_us,
-                                             handoff_sign,
-                                             handoff_iq);
-        } else if ((edge_max_us != 0U) &&
-                   (relaunch_elapsed_us >= relaunch_us) &&
-                   (edge_after_relaunch == 0U) &&
-                   (edge_elapsed_us > edge_max_us)) {
-            FOC_BidirZeroTransfer_Reset();
-            FOC_PID_Reset(&s_ctx.pid_speed);
-            s_ctx.iq_ref = 0.0f;
-            s_bidir_speed_limited_ref_rpm = 0.0f;
-            target = 0.0f;
-            if ((FOC_IsAutoTestMotor() != 0U) &&
-                (g_foc_zero_relaunch_abort_count < 0xFFFFFFFFU)) {
-                g_foc_zero_relaunch_abort_count++;
+                FOC_BidirZeroTransfer_Reset();
+                FOC_BidirZeroTransfer_ArmHandoff(now_us,
+                                                 handoff_sign,
+                                                 handoff_iq);
             }
         }
     }
@@ -2811,11 +2779,27 @@ static float FOC_BidirZeroTransfer_ApplyIq(float iq_ref,
     } else if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_TRANSFER) {
         desired_signed = s_zero_transfer_target_iq;
     } else {
+        float desired_abs = breakaway_iq;
+
+        if (s_zero_transfer_state == FOC_ZERO_TRANSFER_STATE_RELAUNCH) {
+            uint32_t relaunch_us =
+                (uint32_t)g_foc_zero_relaunch_ms * 1000U;
+            uint32_t relaunch_elapsed_us =
+                now_us - s_zero_transfer_start_us;
+
+            if (relaunch_us == 0U) {
+                relaunch_us = 1U;
+            }
+            if ((relaunch_elapsed_us >= relaunch_us) && (hold_iq > 0.0f)) {
+                desired_abs = breakaway_iq + hold_iq;
+            }
+        }
+
         desired_signed =
-            (s_zero_transfer_new_sign < 0) ? -breakaway_iq : breakaway_iq;
+            (s_zero_transfer_new_sign < 0) ? -desired_abs : desired_abs;
         if ((FOC_BidirZeroTransfer_SignedIqSign(ctrl_signed) ==
              s_zero_transfer_new_sign) &&
-            (FOC_FABS(ctrl_signed) > breakaway_iq)) {
+            (FOC_FABS(ctrl_signed) > desired_abs)) {
             desired_signed = ctrl_signed;
         }
     }
@@ -5205,7 +5189,6 @@ static void FOC_Prof_Reset(void)
              }
              speed_iq_ref = FOC_BidirZeroTransfer_ApplyIq(speed_iq_ref,
                                                           speed_dt);
-             speed_iq_ref = FOC_BidirNoEdgeLimitIq(speed_iq_ref);
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U)) {
                  speed_iq_ref = FOC_ApplyLowSpeedIqSlew(speed_iq_ref,
