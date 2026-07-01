@@ -116,6 +116,10 @@ static FOC_Dir_e s_predict_direction_store[FOC_OBSERVER_MOTOR_COUNT] = {
     FOC_DIR_CW,
     FOC_DIR_CW
 };
+static uint8_t s_startup_sync_edge_count_store[FOC_OBSERVER_MOTOR_COUNT] = {
+    0U,
+    0U
+};
 
 static uint8_t FOC_Observer_GetMotorIndex(void)
 {
@@ -128,6 +132,8 @@ static uint8_t FOC_Observer_GetMotorIndex(void)
     (s_startup_predict_speed_rpm_store[FOC_Observer_GetMotorIndex()])
 #define s_predict_direction \
     (s_predict_direction_store[FOC_Observer_GetMotorIndex()])
+#define s_startup_sync_edge_count \
+    (s_startup_sync_edge_count_store[FOC_Observer_GetMotorIndex()])
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_direction_reset_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_decay_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_elapsed_us = 0U;
@@ -142,9 +148,15 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_predict_speed_rpm = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_release_rpm =
     (uint16_t)FOC_STARTUP_PREDICT_RELEASE_RPM;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_sync_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_sync_boost_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_sync_edge_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_recovery_sync_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_sync_step_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_sync_diff_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_pre_edge_clamp_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_startup_pre_edge_clamp_count = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_startup_pre_edge_clamp_step_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_startup_pre_edge_clamp_diff_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_no_edge_angle_clamp_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_angle_clamp_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_diff_mrad = 0;
@@ -232,9 +244,108 @@ static float FOC_Observer_GetHallEntryAngle(uint8_t sector, FOC_Dir_e hall_dir)
     return 0.0f;
 }
 
+#if FOC_STARTUP_PRE_EDGE_CLAMP_ENABLE
+static float FOC_Observer_GetHallExitAngle(uint8_t sector, FOC_Dir_e hall_dir)
+{
+    if (sector >= 1U && sector <= 6U) {
+        float edge_offset = (hall_dir == FOC_DIR_CCW)
+                          ? -(FOC_PI / 6.0f)
+                          :  (FOC_PI / 6.0f);
+
+        return FOC_NormalizeAngle(s_hall_sector_angle_lut[sector]
+                                + edge_offset
+                                + FOC_Observer_GetHallAngleTrim(sector)
+                                + FOC_HALL_ANGLE_OFFSET_RAD);
+    }
+
+    return 0.0f;
+}
+#endif
+
+static void FOC_Observer_ClampStartupPreEdgeAngle(FOC_Context_t *ctx,
+                                                  uint8_t cur_sector,
+                                                  FOC_Dir_e hall_dir)
+{
+#if FOC_STARTUP_PRE_EDGE_CLAMP_ENABLE
+    float margin = FOC_STARTUP_PRE_EDGE_MARGIN_RAD;
+    float step_max = FOC_STARTUP_PRE_EDGE_CLAMP_STEP_MAX_RAD;
+    float exit_angle;
+    float diff;
+    float target;
+    float step;
+    uint8_t clamp_needed = 0U;
+
+    if ((ctx == NULL) ||
+        (cur_sector == 0U) ||
+        (ctx->hall_sector_dt_us != 0U) ||
+        (cur_sector != ctx->hall_sector_prev) ||
+        (g_foc_observer_startup_ref_active == 0U)) {
+        return;
+    }
+
+    if (margin < 0.0f) {
+        margin = -margin;
+    }
+    if (margin > (FOC_PI / 3.0f)) {
+        margin = FOC_PI / 3.0f;
+    }
+    if (step_max < 0.0f) {
+        step_max = -step_max;
+    }
+
+    exit_angle = FOC_Observer_GetHallExitAngle(cur_sector, hall_dir);
+    diff = FOC_Observer_NormalizeAngleDiff(ctx->theta_e_predicted -
+                                           exit_angle);
+
+    if (hall_dir == FOC_DIR_CCW) {
+        if (diff < -margin) {
+            target = FOC_NormalizeAngle(exit_angle - margin);
+            clamp_needed = 1U;
+        } else {
+            target = ctx->theta_e_predicted;
+        }
+    } else {
+        if (diff > margin) {
+            target = FOC_NormalizeAngle(exit_angle + margin);
+            clamp_needed = 1U;
+        } else {
+            target = ctx->theta_e_predicted;
+        }
+    }
+
+    g_foc_observer_startup_pre_edge_clamp_diff_mrad =
+        (int16_t)(diff * 1000.0f);
+
+    if (clamp_needed == 0U) {
+        return;
+    }
+
+    step = FOC_Observer_NormalizeAngleDiff(target - ctx->theta_e_predicted);
+    if (step_max > 0.0f) {
+        if (step > step_max) {
+            step = step_max;
+        } else if (step < -step_max) {
+            step = -step_max;
+        }
+    }
+
+    ctx->theta_e_predicted =
+        FOC_NormalizeAngle(ctx->theta_e_predicted + step);
+    g_foc_observer_startup_pre_edge_clamp_step_mrad =
+        (int16_t)(step * 1000.0f);
+    g_foc_observer_startup_pre_edge_clamp_active = 1U;
+    g_foc_observer_startup_pre_edge_clamp_count++;
+#else
+    (void)ctx;
+    (void)cur_sector;
+    (void)hall_dir;
+#endif
+}
+
 static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
                                                 uint8_t sector,
-                                                float omega_e)
+                                                float omega_e,
+                                                float advance_max)
 {
     uint32_t now_us = FOC_HAL_GetTimestampUs();
     uint32_t age_us = (ctx->hall_sector_timestamp_us != 0U)
@@ -247,8 +358,11 @@ static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
     if (advance < 0.0f) {
         advance = 0.0f;
     }
-    if (advance > FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD) {
-        advance = FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD;
+    if (advance_max < 0.0f) {
+        advance_max = 0.0f;
+    }
+    if (advance > advance_max) {
+        advance = advance_max;
     }
 
     if (hall_dir == FOC_DIR_CCW) {
@@ -420,6 +534,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      ctx->theta_e_predicted        = 0.0f;
      s_startup_predict_speed_rpm   = 0.0f;
      s_predict_direction           = FOC_Observer_GetHallMotionDir(ctx);
+     s_startup_sync_edge_count     = 0U;
      g_foc_observer_direction_reset_count = 0U;
      g_foc_observer_no_edge_decay_count = 0U;
      g_foc_observer_no_edge_elapsed_us = 0U;
@@ -429,6 +544,12 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_no_edge_active = 0U;
      g_foc_observer_resync_count = 0U;
      g_foc_observer_resync_diff_mrad = 0;
+     g_foc_observer_startup_sync_boost_active = 0U;
+     g_foc_observer_startup_sync_edge_count = 0U;
+     g_foc_observer_startup_pre_edge_clamp_active = 0U;
+     g_foc_observer_startup_pre_edge_clamp_count = 0U;
+     g_foc_observer_startup_pre_edge_clamp_step_mrad = 0;
+     g_foc_observer_startup_pre_edge_clamp_diff_mrad = 0;
      g_foc_observer_no_edge_angle_clamp_active = 0U;
      g_foc_observer_no_edge_angle_clamp_count = 0U;
      g_foc_observer_no_edge_angle_diff_mrad = 0;
@@ -720,16 +841,28 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          ? 1U : 0U;
      g_foc_observer_startup_ref_active = 0U;
      g_foc_observer_startup_sync_active = 0U;
+     g_foc_observer_startup_sync_boost_active = 0U;
+     g_foc_observer_startup_sync_edge_count =
+         (uint16_t)s_startup_sync_edge_count;
      g_foc_observer_recovery_sync_active = 0U;
      g_foc_observer_sync_step_mrad = 0;
      g_foc_observer_sync_diff_mrad = 0;
+     g_foc_observer_startup_pre_edge_clamp_active = 0U;
+     g_foc_observer_startup_pre_edge_clamp_step_mrad = 0;
+     g_foc_observer_startup_pre_edge_clamp_diff_mrad = 0;
      g_foc_observer_no_edge_angle_clamp_active = 0U;
      g_foc_observer_no_edge_angle_diff_mrad = 0;
      g_foc_observer_no_edge_angle_step_mrad = 0;
 
+     if ((ctx->speed_ref <= 0.5f) || (cur_sector == 0U)) {
+         s_startup_sync_edge_count = 0U;
+         g_foc_observer_startup_sync_edge_count = 0U;
+     }
+
      if (s_predict_direction != hall_dir) {
          s_predict_direction = hall_dir;
          s_startup_predict_speed_rpm = 0.0f;
+         s_startup_sync_edge_count = 0U;
          if (cur_sector != 0U) {
              ctx->theta_e_predicted = ctx->hall_sector.theta_e;
              ctx->theta_e_prev = ctx->theta_e_predicted;
@@ -799,6 +932,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      /* 扇区跳变时：软同步到跳变后的扇区中心角度，
 
       * 避免硬同步导致角度突变引发电流尖峰 */
+
+     FOC_Observer_ClampStartupPreEdgeAngle(ctx, cur_sector, hall_dir);
 
 #if FOC_HALL_NO_EDGE_ANGLE_CLAMP_ENABLE
      if ((no_edge_overdue != 0U) && (cur_sector != 0U)) {
@@ -877,9 +1012,18 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          float diff_abs;
          float sync_step;
          float recovery_step_max = FOC_ANGLE_SYNC_RECOVERY_STEP_MAX_RAD;
+         uint8_t startup_sync_boost = 0U;
 
 #if FOC_HALL_EDGE_SYNC_ENABLE
-         target = FOC_Observer_GetHallEdgeSyncAngle(ctx, cur_sector, omega_e);
+         float edge_advance_max = FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD;
+
+         if (g_foc_observer_startup_ref_active != 0U) {
+             edge_advance_max = FOC_STARTUP_EDGE_SYNC_ADVANCE_MAX_RAD;
+         }
+         target = FOC_Observer_GetHallEdgeSyncAngle(ctx,
+                                                    cur_sector,
+                                                    omega_e,
+                                                    edge_advance_max);
          sync_factor = FOC_HALL_EDGE_SYNC_FACTOR;
          sync_step_max = FOC_HALL_EDGE_SYNC_STEP_MAX_RAD;
          recovery_step_max = FOC_HALL_EDGE_SYNC_RECOVERY_STEP_MAX_RAD;
@@ -901,9 +1045,17 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          }
 
          if (g_foc_observer_startup_ref_active != 0U) {
-             sync_factor = FOC_STARTUP_EDGE_SYNC_FACTOR;
-             sync_step_max = FOC_STARTUP_EDGE_SYNC_STEP_MAX_RAD;
+             if (s_startup_sync_edge_count <
+                 (uint8_t)FOC_STARTUP_EDGE_SYNC_BOOST_COUNT) {
+                 startup_sync_boost = 1U;
+                 sync_factor = FOC_STARTUP_EDGE_SYNC_BOOST_FACTOR;
+                 sync_step_max = FOC_STARTUP_EDGE_SYNC_BOOST_STEP_MAX_RAD;
+             } else {
+                 sync_factor = FOC_STARTUP_EDGE_SYNC_FACTOR;
+                 sync_step_max = FOC_STARTUP_EDGE_SYNC_STEP_MAX_RAD;
+             }
              g_foc_observer_startup_sync_active = 1U;
+             g_foc_observer_startup_sync_boost_active = startup_sync_boost;
          } else if ((speed_err > FOC_ANGLE_SYNC_RECOVERY_SPEED_ERROR_RPM) ||
              (diff_abs > FOC_ANGLE_SYNC_RECOVERY_DIFF_RAD)) {
              g_foc_observer_recovery_sync_active = 1U;
@@ -943,6 +1095,13 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          ctx->theta_e_predicted += sync_step;
          g_foc_observer_sync_step_mrad = (int16_t)(sync_step * 1000.0f);
          g_foc_observer_sync_diff_mrad = (int16_t)(diff * 1000.0f);
+         if (g_foc_observer_startup_ref_active != 0U) {
+             if (s_startup_sync_edge_count < 255U) {
+                 s_startup_sync_edge_count++;
+             }
+             g_foc_observer_startup_sync_edge_count =
+                 (uint16_t)s_startup_sync_edge_count;
+         }
 
          }
 
