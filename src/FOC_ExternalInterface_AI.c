@@ -56,6 +56,9 @@ extern volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s;
 #define FOC_TEST_CASE_DYN_SPEED_CW      2U
 #define FOC_TEST_CASE_BIDIR_SWITCH      3U
 #define FOC_TEST_CASE_DYN_SPEED_CCW     4U
+#define FOC_TEST_CASE_IQ_START_SWEEP    5U
+
+static void FOC_IqStartTest_ResetRuntime(void);
 
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_up_rpm_per_s = 600U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_down_rpm_per_s = 1200U;
@@ -350,6 +353,39 @@ FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_id_fdb_a = 0.0f;
 FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_iq_fdb_a = 0.0f;
 FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_current_peak_a = 0.0f;
 FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_speed_fdb_rpm = 0.0f;
+
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_start_mA = 200U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_step_mA = 100U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_max_mA = 2500U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_step_ms = 120U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_max_hold_ms = 300U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_move_rpm = 5U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_direction = 2U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_disable_on_done = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_active = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_done = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_result = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_elapsed_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_cmd_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_iq_ref_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_iq_mA = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_current_peak_mA = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_speed_fdb_rpm = 0;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_start_sector = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_last_sector = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_edge_count = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_first_edge_cmd_mA = 0;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_first_edge_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_first_speed_cmd_mA = 0;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_first_speed_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_state = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_fault = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_api_result = 0U;
+
+static uint32_t s_foc_iq_start_test_start_us = 0U;
+static uint32_t s_foc_iq_start_test_step_us = 0U;
+static uint32_t s_foc_iq_start_test_at_max_us = 0U;
+static uint16_t s_foc_iq_start_test_abs_cmd_mA = 0U;
 
 #if 0
 static uint8_t s_foc_dyn_speed_prev_enable = 0U;
@@ -823,6 +859,268 @@ static void FOC_AI_ClearAutoModes(void)
   g_foc_bidir_speed_reset_stats = 0U;
 }
 
+static int16_t FOC_IqStartTest_ToI16(float value, float scale)
+{
+  float scaled = value * scale;
+
+  if (scaled > 32767.0f) {
+    return 32767;
+  }
+  if (scaled < -32768.0f) {
+    return -32768;
+  }
+  return (int16_t)scaled;
+}
+
+static uint16_t FOC_IqStartTest_ToU16(float value, float scale)
+{
+  float scaled = value * scale;
+
+  if (scaled > 65535.0f) {
+    return 65535U;
+  }
+  if (scaled < 0.0f) {
+    return 0U;
+  }
+  return (uint16_t)scaled;
+}
+
+static int16_t FOC_IqStartTest_SignedCmdMilli(uint16_t abs_mA)
+{
+  if (abs_mA > 32767U) {
+    abs_mA = 32767U;
+  }
+  return (g_foc_iq_start_test_direction == FOC_APP_DIR_REVERSE)
+       ? -(int16_t)abs_mA
+       :  (int16_t)abs_mA;
+}
+
+static void FOC_IqStartTest_ResetRuntime(void)
+{
+  g_foc_iq_start_test_active = 0U;
+  g_foc_iq_start_test_done = 0U;
+  g_foc_iq_start_test_result = 0U;
+  g_foc_iq_start_test_elapsed_ms = 0U;
+  g_foc_iq_start_test_cmd_mA = 0;
+  g_foc_iq_start_test_iq_ref_mA = 0;
+  g_foc_iq_start_test_iq_mA = 0;
+  g_foc_iq_start_test_current_peak_mA = 0U;
+  g_foc_iq_start_test_speed_fdb_rpm = 0;
+  g_foc_iq_start_test_start_sector = 0U;
+  g_foc_iq_start_test_last_sector = 0U;
+  g_foc_iq_start_test_edge_count = 0U;
+  g_foc_iq_start_test_first_edge_cmd_mA = 0;
+  g_foc_iq_start_test_first_edge_ms = 0U;
+  g_foc_iq_start_test_first_speed_cmd_mA = 0;
+  g_foc_iq_start_test_first_speed_ms = 0U;
+  g_foc_iq_start_test_state = 0U;
+  g_foc_iq_start_test_fault = 0U;
+  g_foc_iq_start_test_api_result = 0U;
+  s_foc_iq_start_test_start_us = 0U;
+  s_foc_iq_start_test_step_us = 0U;
+  s_foc_iq_start_test_at_max_us = 0U;
+  s_foc_iq_start_test_abs_cmd_mA = 0U;
+}
+
+static void FOC_IqStartTest_UpdateMonitor(uint8_t motor_id, uint32_t now_us)
+{
+  const FOC_Context_t *ctx = FOC_Core_GetContextByMotor(motor_id);
+  float signed_speed = FOC_AI_SignedMechSpeed(ctx, ctx->speed_fdb);
+
+  if (s_foc_iq_start_test_start_us != 0U) {
+    g_foc_iq_start_test_elapsed_ms =
+        (now_us - s_foc_iq_start_test_start_us) / 1000U;
+  }
+  g_foc_iq_start_test_state = (uint16_t)ctx->state;
+  g_foc_iq_start_test_fault = (uint16_t)ctx->fault;
+  g_foc_iq_start_test_iq_ref_mA =
+      FOC_IqStartTest_ToI16(FOC_AI_SignedIqRef(ctx), 1000.0f);
+  g_foc_iq_start_test_iq_mA =
+      FOC_IqStartTest_ToI16(ctx->i_dq.q, 1000.0f);
+  g_foc_iq_start_test_current_peak_mA =
+      FOC_IqStartTest_ToU16(ctx->current_peak, 1000.0f);
+  g_foc_iq_start_test_speed_fdb_rpm =
+      FOC_IqStartTest_ToI16(signed_speed, 1.0f);
+}
+
+static FocError FOC_IqStartTest_Command(uint8_t motor_id, uint16_t abs_mA)
+{
+  float target = 0.0f;
+  FocError result;
+
+  result = FOC_AI_MakeSignedTarget(g_foc_iq_start_test_direction,
+                                   (float)abs_mA * 0.001f,
+                                   &target);
+  if (result == FOC_SUCCESS) {
+    result = Foc_SetCurrentReference(motor_id, 0.0f, target);
+  }
+
+  s_foc_iq_start_test_abs_cmd_mA = abs_mA;
+  g_foc_iq_start_test_cmd_mA = FOC_IqStartTest_SignedCmdMilli(abs_mA);
+  g_foc_iq_start_test_api_result = (uint16_t)result;
+
+  return result;
+}
+
+static void FOC_IqStartTest_Finish(uint8_t motor_id, uint8_t result)
+{
+  FocError stop_result;
+
+  g_foc_iq_start_test_result = result;
+  g_foc_iq_start_test_done = 1U;
+  g_foc_iq_start_test_active = 0U;
+
+  if (g_foc_iq_start_test_disable_on_done != 0U) {
+    stop_result = Foc_DisableFocControl(motor_id);
+  } else {
+    stop_result = Foc_SetCurrentReference(motor_id, 0.0f, 0.0f);
+  }
+
+  if (stop_result != FOC_SUCCESS) {
+    g_foc_iq_start_test_api_result = (uint16_t)stop_result;
+  }
+}
+
+static void FOC_IqStartTest_Start(uint8_t motor_id)
+{
+  const FOC_Context_t *ctx;
+  FocError result;
+  uint16_t start_mA = g_foc_iq_start_test_start_mA;
+  uint16_t max_mA = g_foc_iq_start_test_max_mA;
+  uint32_t now_us = FOC_HAL_GetTimestampUs();
+
+  FOC_IqStartTest_ResetRuntime();
+
+  if (max_mA < start_mA) {
+    max_mA = start_mA;
+  }
+
+  g_foc_iq_start_test_active = 1U;
+  s_foc_iq_start_test_start_us = now_us;
+  s_foc_iq_start_test_step_us = now_us;
+  s_foc_iq_start_test_at_max_us = (start_mA >= max_mA) ? now_us : 0U;
+
+  result = Foc_EnableFocControl(motor_id);
+  if (result == FOC_SUCCESS) {
+    result = FOC_IqStartTest_Command(motor_id, start_mA);
+  }
+  if (result != FOC_SUCCESS) {
+    g_foc_iq_start_test_api_result = (uint16_t)result;
+    FOC_IqStartTest_Finish(motor_id, 5U);
+    return;
+  }
+
+  ctx = FOC_Core_GetContextByMotor(motor_id);
+  g_foc_iq_start_test_start_sector = ctx->hall_sector.sector;
+  g_foc_iq_start_test_last_sector = ctx->hall_sector.sector;
+  FOC_IqStartTest_UpdateMonitor(motor_id, now_us);
+}
+
+static void FOC_IqStartTest_Service(uint8_t motor_id)
+{
+  const FOC_Context_t *ctx;
+  uint32_t now_us;
+  uint32_t step_us;
+  uint32_t max_hold_us;
+  uint16_t step_mA;
+  uint16_t max_mA;
+  uint8_t cur_sector;
+  float speed_abs;
+
+  if (g_foc_iq_start_test_active == 0U) {
+    return;
+  }
+
+  now_us = FOC_HAL_GetTimestampUs();
+  ctx = FOC_Core_GetContextByMotor(motor_id);
+  cur_sector = ctx->hall_sector.sector;
+  FOC_IqStartTest_UpdateMonitor(motor_id, now_us);
+
+  if ((ctx->state == FOC_STATE_FAULT) || (ctx->fault != FOC_FAULT_NONE)) {
+    FOC_IqStartTest_Finish(motor_id, 4U);
+    return;
+  }
+
+  if ((g_foc_iq_start_test_last_sector != 0U) &&
+      (cur_sector != 0U) &&
+      (cur_sector != g_foc_iq_start_test_last_sector)) {
+    if (g_foc_iq_start_test_edge_count < 65535U) {
+      g_foc_iq_start_test_edge_count++;
+    }
+    if (g_foc_iq_start_test_first_edge_cmd_mA == 0) {
+      g_foc_iq_start_test_first_edge_cmd_mA =
+          g_foc_iq_start_test_cmd_mA;
+      g_foc_iq_start_test_first_edge_ms =
+          g_foc_iq_start_test_elapsed_ms;
+    }
+    g_foc_iq_start_test_last_sector = cur_sector;
+    FOC_IqStartTest_Finish(motor_id, 1U);
+    return;
+  }
+  if (cur_sector != 0U) {
+    g_foc_iq_start_test_last_sector = cur_sector;
+  }
+
+  speed_abs = ctx->speed_fdb;
+  if (speed_abs < 0.0f) {
+    speed_abs = -speed_abs;
+  }
+  if ((g_foc_iq_start_test_move_rpm != 0U) &&
+      (speed_abs >= (float)g_foc_iq_start_test_move_rpm)) {
+    if (g_foc_iq_start_test_first_speed_cmd_mA == 0) {
+      g_foc_iq_start_test_first_speed_cmd_mA =
+          g_foc_iq_start_test_cmd_mA;
+      g_foc_iq_start_test_first_speed_ms =
+          g_foc_iq_start_test_elapsed_ms;
+    }
+    FOC_IqStartTest_Finish(motor_id, 2U);
+    return;
+  }
+
+  step_mA = g_foc_iq_start_test_step_mA;
+  if (step_mA == 0U) {
+    step_mA = 100U;
+  }
+  max_mA = g_foc_iq_start_test_max_mA;
+  if (max_mA < g_foc_iq_start_test_start_mA) {
+    max_mA = g_foc_iq_start_test_start_mA;
+  }
+  step_us = (uint32_t)g_foc_iq_start_test_step_ms * 1000U;
+  if (step_us < 10000U) {
+    step_us = 10000U;
+  }
+
+  if ((now_us - s_foc_iq_start_test_step_us) >= step_us) {
+    if (s_foc_iq_start_test_abs_cmd_mA < max_mA) {
+      uint32_t next_mA =
+          (uint32_t)s_foc_iq_start_test_abs_cmd_mA + (uint32_t)step_mA;
+      if (next_mA > (uint32_t)max_mA) {
+        next_mA = max_mA;
+      }
+      s_foc_iq_start_test_step_us = now_us;
+      if (FOC_IqStartTest_Command(motor_id, (uint16_t)next_mA) !=
+          FOC_SUCCESS) {
+        FOC_IqStartTest_Finish(motor_id, 5U);
+        return;
+      }
+      if ((uint16_t)next_mA >= max_mA) {
+        s_foc_iq_start_test_at_max_us = now_us;
+      }
+    } else if (s_foc_iq_start_test_at_max_us == 0U) {
+      s_foc_iq_start_test_at_max_us = now_us;
+    }
+  }
+
+  max_hold_us = (uint32_t)g_foc_iq_start_test_max_hold_ms * 1000U;
+  if (max_hold_us == 0U) {
+    max_hold_us = step_us;
+  }
+  if ((s_foc_iq_start_test_at_max_us != 0U) &&
+      ((now_us - s_foc_iq_start_test_at_max_us) >= max_hold_us)) {
+    FOC_IqStartTest_Finish(motor_id, 3U);
+  }
+}
+
 static void FOC_SpeedApiTest_ClearLog(void)
 {
   uint16_t i;
@@ -1005,6 +1303,10 @@ static void FOC_CurrentCmd_Service(void)
     has_cmd = 1U;
 
     g_foc_test_case_select = FOC_TEST_CASE_STOP;
+    g_foc_test_case_applied = FOC_TEST_CASE_STOP;
+    g_foc_test_motor_id_applied = motor_id;
+    s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
+    s_foc_test_case_last_motor_id = motor_id;
     g_foc_speed_api_test_enable = 0U;
     g_foc_ext_api_test_enable = 0U;
     FOC_AI_ClearAutoModes();
@@ -1297,6 +1599,7 @@ void Foc_AlgorithmControlCallback_AI(void){
   g_foc_ai_callback_count++;
 
   FOC_TestCase_Service();
+  FOC_CurrentCmd_Service();
 
   FOC_MainLoop();
 
@@ -1826,6 +2129,7 @@ static void FOC_TestCase_ClearAutoModes(void)
 {
   speed_ref = -1.0f;
   FOC_TestCase_ClearFixedStartupLimits();
+  FOC_IqStartTest_ResetRuntime();
   g_foc_dyn_speed_enable = 0U;
   g_foc_dyn_speed_reverse = 0U;
   g_foc_dyn_speed_reset_stats = 0U;
@@ -1901,6 +2205,16 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     }
     g_foc_detail_log_start_now = 1U;
     s_foc_test_case_last_fixed_ref = fixed_ref;
+
+  }else if(test_case == FOC_TEST_CASE_IQ_START_SWEEP){
+
+    FOC_TestCase_ClearAutoModes();
+    FOC_TestCase_PrepareFixedSpeedDetailLog();
+
+    g_foc_detail_log_zero_window_enable = 0U;
+    g_foc_detail_log_zero_post_ms = 0U;
+    FOC_IqStartTest_Start(unId);
+    g_foc_detail_log_start_now = 1U;
 
   }else if(test_case == FOC_TEST_CASE_DYN_SPEED_CW){
 
@@ -2030,6 +2344,8 @@ static void FOC_TestCase_Service(void)
       if (FOC_FABS(fixed_ref - s_foc_test_case_last_fixed_ref) >= 0.5f) {
         FOC_TestCase_Apply(test_case);
       }
+    } else if (test_case == FOC_TEST_CASE_IQ_START_SWEEP) {
+      FOC_IqStartTest_Service(motor_id);
     }
     return;
   }
