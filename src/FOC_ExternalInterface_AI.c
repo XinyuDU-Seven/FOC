@@ -46,6 +46,7 @@ extern volatile float speed_ref;
 #define FOC_TEST_CASE_DYN_SPEED_CW      2U
 #define FOC_TEST_CASE_BIDIR_SWITCH      3U
 #define FOC_TEST_CASE_DYN_SPEED_CCW     4U
+#define FOC_TEST_CASE_CRADLE_SEAT       5U
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reverse = 0U;
@@ -195,7 +196,7 @@ FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_zero_ref_rpm = 0;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_zero_brake_limited_count = 0U;
 
 /* LiveWatch: 0 stop, 1 fixed, 2 +1000..+4000 sine,
- * 3 +/-1000 sine, 4 -1000..-4000 sine.
+ * 3 +/-1000 sine, 4 -1000..-4000 sine, 5 seat cradle.
  */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_select = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_applied = FOC_TEST_CASE_STOP;
@@ -203,6 +204,29 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_last_error = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_test_case_exec_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_motor_id = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_motor_id_applied = 0U;
+
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_amplitude_hall = 120U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_max_rpm = 300U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_kp_rpm_per_hall = 6U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_slow_zone_hall = 45U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_min_move_rpm = 45U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_slew_rpm_per_s = 450U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_deadband_hall = 2U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_hold_ms = 300U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_control_ms = 5U;
+FOC_AI_DEBUG_ROOT volatile int8_t   g_foc_cradle_cmd_polarity = 1;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_cradle_reset_center = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_cradle_active = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_cradle_hold_active = 0U;
+FOC_AI_DEBUG_ROOT volatile int8_t   g_foc_cradle_target_side = 1;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_cradle_center_hall = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_cradle_pos_hall = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_cradle_target_hall = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_cradle_error_hall = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_cradle_abs_error_hall = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_cradle_speed_ref_rpm = 0;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_cradle_elapsed_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_cradle_cycle_count = 0U;
 
 static uint8_t s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
 static uint8_t s_foc_test_case_last_motor_id = 0U;
@@ -1769,12 +1793,42 @@ FOC_AI_DEBUG_ROOT volatile float gfSpeedTarget = 0.0f;
 FOC_AI_DEBUG_ROOT volatile uint8_t gunCtrl = 0U;
 
 static float s_foc_test_case_last_fixed_ref = 0.0f;
+static uint8_t s_foc_cradle_active = 0U;
+static uint32_t s_foc_cradle_start_us = 0U;
+static uint32_t s_foc_cradle_last_service_us = 0U;
+static uint32_t s_foc_cradle_last_ref_us = 0U;
+static uint32_t s_foc_cradle_hold_start_us = 0U;
+static float s_foc_cradle_last_ref_rpm = 0.0f;
+static int16_t s_foc_cradle_center_hall = 0;
+static int8_t s_foc_cradle_target_side = 1;
+
+#define FOC_CRADLE_SEAT_MOTOR_ID             1U
+#define FOC_CRADLE_MIN_AMPLITUDE_HALL        4U
+#define FOC_CRADLE_MIN_MAX_RPM               30U
+#define FOC_CRADLE_ERROR_READ_HALL           0xE1U
+#define FOC_CRADLE_ERROR_SELECT_MOTOR        0xE2U
+#define FOC_CRADLE_ERROR_SET_REF             0xE3U
+#define FOC_CRADLE_ERROR_ENABLE              0xE4U
+
+static uint8_t FOC_TestCase_GetEffectiveMotorId(uint8_t test_case);
+static void FOC_TestCase_ResetCradle(void);
+static void FOC_TestCase_StartCradle(uint32_t now_us);
+static void FOC_TestCase_ServiceCradle(void);
 
 static uint8_t FOC_TestCase_GetMotorId(void)
 {
   return (g_foc_test_motor_id < FOC_PHY_MOTOR_COUNT)
        ? g_foc_test_motor_id
        : 0U;
+}
+
+static uint8_t FOC_TestCase_GetEffectiveMotorId(uint8_t test_case)
+{
+  if (test_case == FOC_TEST_CASE_CRADLE_SEAT) {
+    return FOC_CRADLE_SEAT_MOTOR_ID;
+  }
+
+  return FOC_TestCase_GetMotorId();
 }
 
 static void FOC_TestCase_ClearAutoModes(void)
@@ -1786,6 +1840,7 @@ static void FOC_TestCase_ClearAutoModes(void)
   g_foc_bidir_speed_enable = 0U;
   g_foc_bidir_speed_step_enable = 0U;
   g_foc_bidir_speed_reset_stats = 0U;
+  FOC_TestCase_ResetCradle();
 }
 
 static float FOC_TestCase_GetFixedSpeedRef(uint8_t unId)
@@ -1803,9 +1858,275 @@ static float FOC_TestCase_GetFixedSpeedRef(uint8_t unId)
   return fixed_ref;
 }
 
+static int16_t FOC_TestCase_ToI16(float value)
+{
+  if (value > 32767.0f) {
+    return 32767;
+  }
+  if (value < -32768.0f) {
+    return -32768;
+  }
+  return (int16_t)value;
+}
+
+static int16_t FOC_TestCase_ClampI32ToI16(int32_t value)
+{
+  if (value > 32767) {
+    return 32767;
+  }
+  if (value < -32768) {
+    return -32768;
+  }
+  return (int16_t)value;
+}
+
+static uint16_t FOC_TestCase_AbsI32ToU16(int32_t value)
+{
+  uint32_t abs_value = (value < 0) ? (uint32_t)(-value) : (uint32_t)value;
+
+  return (abs_value > 65535U) ? 65535U : (uint16_t)abs_value;
+}
+
+static float FOC_TestCase_SmoothStep(float x)
+{
+  x = FOC_CLAMP(x, 0.0f, 1.0f);
+  return x * x * (3.0f - (2.0f * x));
+}
+
+static int8_t FOC_TestCase_CradlePolarity(void)
+{
+  return (g_foc_cradle_cmd_polarity < 0) ? -1 : 1;
+}
+
+static float FOC_TestCase_LimitCradleSlew(float target_rpm, uint32_t now_us)
+{
+  uint16_t slew_rpm_per_s = g_foc_cradle_slew_rpm_per_s;
+  float limited = target_rpm;
+
+  if ((slew_rpm_per_s != 0U) && (s_foc_cradle_last_ref_us != 0U)) {
+    uint32_t dt_us = now_us - s_foc_cradle_last_ref_us;
+    float step = (float)slew_rpm_per_s * ((float)dt_us * 0.000001f);
+    float delta = target_rpm - s_foc_cradle_last_ref_rpm;
+
+    if (delta > step) {
+      limited = s_foc_cradle_last_ref_rpm + step;
+    } else if (delta < -step) {
+      limited = s_foc_cradle_last_ref_rpm - step;
+    }
+  }
+
+  s_foc_cradle_last_ref_us = now_us;
+  s_foc_cradle_last_ref_rpm = limited;
+  return limited;
+}
+
+static void FOC_TestCase_UpdateCradleDebug(int16_t pos,
+                                           int16_t target,
+                                           int32_t error,
+                                           float speed_ref,
+                                           uint32_t now_us)
+{
+  g_foc_cradle_active = s_foc_cradle_active;
+  g_foc_cradle_hold_active = (s_foc_cradle_hold_start_us != 0U) ? 1U : 0U;
+  g_foc_cradle_target_side = s_foc_cradle_target_side;
+  g_foc_cradle_center_hall = s_foc_cradle_center_hall;
+  g_foc_cradle_pos_hall = pos;
+  g_foc_cradle_target_hall = target;
+  g_foc_cradle_error_hall = FOC_TestCase_ClampI32ToI16(error);
+  g_foc_cradle_abs_error_hall = FOC_TestCase_AbsI32ToU16(error);
+  g_foc_cradle_speed_ref_rpm = FOC_TestCase_ToI16(speed_ref);
+  g_foc_cradle_elapsed_ms =
+      (s_foc_cradle_start_us == 0U) ? 0U : ((now_us - s_foc_cradle_start_us) / 1000U);
+}
+
+static void FOC_TestCase_ResetCradle(void)
+{
+  s_foc_cradle_active = 0U;
+  s_foc_cradle_start_us = 0U;
+  s_foc_cradle_last_service_us = 0U;
+  s_foc_cradle_last_ref_us = 0U;
+  s_foc_cradle_hold_start_us = 0U;
+  s_foc_cradle_last_ref_rpm = 0.0f;
+  s_foc_cradle_target_side = 1;
+
+  g_foc_cradle_active = 0U;
+  g_foc_cradle_hold_active = 0U;
+  g_foc_cradle_target_side = 1;
+  g_foc_cradle_speed_ref_rpm = 0;
+  g_foc_cradle_elapsed_ms = 0U;
+}
+
+static void FOC_TestCase_StartCradle(uint32_t now_us)
+{
+  int16_t pos = 0;
+
+  if (FOC_Core_ReadHallTravel(FOC_CRADLE_SEAT_MOTOR_ID, &pos) != FOC_OK) {
+    g_foc_test_case_last_error = FOC_CRADLE_ERROR_READ_HALL;
+    s_foc_cradle_active = 0U;
+    g_foc_cradle_active = 0U;
+    return;
+  }
+
+  s_foc_cradle_center_hall = pos;
+  s_foc_cradle_start_us = now_us;
+  s_foc_cradle_last_service_us = 0U;
+  s_foc_cradle_last_ref_us = 0U;
+  s_foc_cradle_hold_start_us = 0U;
+  s_foc_cradle_last_ref_rpm = 0.0f;
+  s_foc_cradle_target_side = 1;
+  s_foc_cradle_active = 1U;
+
+  g_foc_cradle_reset_center = 0U;
+  g_foc_cradle_cycle_count = 0U;
+  FOC_TestCase_UpdateCradleDebug(pos, pos, 0, 0.0f, now_us);
+}
+
+static float FOC_TestCase_CalcCradleSpeed(int32_t error, uint16_t deadband)
+{
+  uint16_t max_rpm_u16 = g_foc_cradle_max_rpm;
+  uint16_t slow_zone = g_foc_cradle_slow_zone_hall;
+  uint16_t min_move = g_foc_cradle_min_move_rpm;
+  float abs_error = (float)FOC_TestCase_AbsI32ToU16(error);
+  float max_rpm;
+  float limit;
+  float speed_ref;
+
+  if (max_rpm_u16 < FOC_CRADLE_MIN_MAX_RPM) {
+    max_rpm_u16 = FOC_CRADLE_MIN_MAX_RPM;
+  }
+  if (slow_zone == 0U) {
+    slow_zone = 1U;
+  }
+
+  max_rpm = (float)max_rpm_u16;
+  limit = max_rpm;
+  if (abs_error < (float)slow_zone) {
+    limit = max_rpm * FOC_TestCase_SmoothStep(abs_error / (float)slow_zone);
+  }
+
+  if (abs_error <= (float)deadband) {
+    return 0.0f;
+  }
+
+  if ((min_move != 0U) && (limit < (float)min_move)) {
+    limit = (float)min_move;
+  }
+  if (limit > max_rpm) {
+    limit = max_rpm;
+  }
+
+  speed_ref = (float)error * (float)g_foc_cradle_kp_rpm_per_hall;
+  speed_ref = FOC_CLAMP(speed_ref, -limit, limit);
+  if (FOC_TestCase_CradlePolarity() < 0) {
+    speed_ref = -speed_ref;
+  }
+
+  return speed_ref;
+}
+
+static uint8_t FOC_TestCase_CradleHoldOrSwap(uint32_t now_us,
+                                             uint16_t abs_error,
+                                             uint16_t deadband)
+{
+  uint32_t hold_us = (uint32_t)g_foc_cradle_hold_ms * 1000U;
+
+  if (abs_error > deadband) {
+    s_foc_cradle_hold_start_us = 0U;
+    return 0U;
+  }
+
+  if (s_foc_cradle_hold_start_us == 0U) {
+    s_foc_cradle_hold_start_us = now_us;
+  }
+
+  if ((now_us - s_foc_cradle_hold_start_us) < hold_us) {
+    return 1U;
+  }
+
+  s_foc_cradle_target_side = -s_foc_cradle_target_side;
+  s_foc_cradle_hold_start_us = 0U;
+  if (g_foc_cradle_cycle_count < 0xFFFFFFFFU) {
+    g_foc_cradle_cycle_count++;
+  }
+
+  return 0U;
+}
+
+static void FOC_TestCase_WriteCradleSpeed(float speed_ref)
+{
+  if (FOC_AI_SelectMotor(FOC_CRADLE_SEAT_MOTOR_ID) != FOC_SUCCESS) {
+    g_foc_test_case_last_error = FOC_CRADLE_ERROR_SELECT_MOTOR;
+    return;
+  }
+
+  if (FOC_SetSpeedRef(speed_ref) != FOC_OK) {
+    g_foc_test_case_last_error = FOC_CRADLE_ERROR_SET_REF;
+  }
+}
+
+static void FOC_TestCase_ServiceCradle(void)
+{
+  uint32_t now_us = FOC_HAL_GetTimestampUs();
+  uint32_t control_us = (uint32_t)g_foc_cradle_control_ms * 1000U;
+  uint16_t amplitude = g_foc_cradle_amplitude_hall;
+  uint16_t deadband = g_foc_cradle_deadband_hall;
+  int16_t pos = 0;
+  int16_t target;
+  int32_t target_i32;
+  int32_t error;
+  uint16_t abs_error;
+  float speed_ref = 0.0f;
+  uint8_t holding;
+
+  if ((s_foc_cradle_active == 0U) || (g_foc_cradle_reset_center != 0U)) {
+    FOC_TestCase_StartCradle(now_us);
+  }
+
+  if (control_us == 0U) {
+    control_us = 1000U;
+  }
+  if ((s_foc_cradle_last_service_us != 0U) &&
+      ((now_us - s_foc_cradle_last_service_us) < control_us)) {
+    return;
+  }
+  s_foc_cradle_last_service_us = now_us;
+
+  if (FOC_Core_ReadHallTravel(FOC_CRADLE_SEAT_MOTOR_ID, &pos) != FOC_OK) {
+    g_foc_test_case_last_error = FOC_CRADLE_ERROR_READ_HALL;
+    FOC_TestCase_WriteCradleSpeed(0.0f);
+    return;
+  }
+
+  if (amplitude < FOC_CRADLE_MIN_AMPLITUDE_HALL) {
+    amplitude = FOC_CRADLE_MIN_AMPLITUDE_HALL;
+  }
+  if (deadband >= amplitude) {
+    deadband = (uint16_t)(amplitude - 1U);
+  }
+
+  target_i32 = (int32_t)s_foc_cradle_center_hall +
+               ((int32_t)s_foc_cradle_target_side * (int32_t)amplitude);
+  target = FOC_TestCase_ClampI32ToI16(target_i32);
+  error = (int32_t)target - (int32_t)pos;
+  abs_error = FOC_TestCase_AbsI32ToU16(error);
+
+  holding = FOC_TestCase_CradleHoldOrSwap(now_us, abs_error, deadband);
+  if (holding == 0U) {
+    target_i32 = (int32_t)s_foc_cradle_center_hall +
+                 ((int32_t)s_foc_cradle_target_side * (int32_t)amplitude);
+    target = FOC_TestCase_ClampI32ToI16(target_i32);
+    error = (int32_t)target - (int32_t)pos;
+    speed_ref = FOC_TestCase_CalcCradleSpeed(error, deadband);
+  }
+
+  speed_ref = FOC_TestCase_LimitCradleSlew(speed_ref, now_us);
+  FOC_TestCase_WriteCradleSpeed(speed_ref);
+  FOC_TestCase_UpdateCradleDebug(pos, target, error, speed_ref, now_us);
+}
+
 static void FOC_TestCase_Apply(uint8_t test_case)
 {
-  uint8_t unId = FOC_TestCase_GetMotorId();
+  uint8_t unId = FOC_TestCase_GetEffectiveMotorId(test_case);
 
   g_foc_test_case_last_error = 0U;
   speed_ref = -1.0f;
@@ -1935,6 +2256,32 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
     g_foc_dyn_speed_reset_stats = 1U;
 
+  }else if(test_case == FOC_TEST_CASE_CRADLE_SEAT){
+
+    FocError enable_err;
+    uint8_t other_id = (FOC_CRADLE_SEAT_MOTOR_ID == 0U) ? 1U : 0U;
+
+    FOC_TestCase_ClearAutoModes();
+    g_foc_test_motor_id = FOC_CRADLE_SEAT_MOTOR_ID;
+    (void)Foc_DisableFocControl(other_id);
+
+    enable_err = Foc_EnableFocControl(unId);
+    if (enable_err != FOC_SUCCESS) {
+      g_foc_test_case_last_error = FOC_CRADLE_ERROR_ENABLE;
+      return;
+    }
+
+    g_foc_dyn_speed_start_on_max_ref = 0U;
+    g_foc_dyn_speed_start_on_max_fdb = 0U;
+    g_foc_detail_log_enable = 1U;
+    g_foc_detail_log_decim_ms = 5U;
+    g_foc_detail_log_trigger_rpm = g_foc_cradle_max_rpm;
+    g_foc_detail_log_zero_window_enable = 0U;
+    g_foc_detail_log_reset = 1U;
+
+    FOC_TestCase_StartCradle(FOC_HAL_GetTimestampUs());
+    FOC_TestCase_WriteCradleSpeed(0.0f);
+
   }else{
 
     g_foc_test_case_last_error = test_case;
@@ -1951,7 +2298,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 static void FOC_TestCase_Service(void)
 {
   uint8_t test_case = g_foc_test_case_select;
-  uint8_t motor_id = FOC_TestCase_GetMotorId();
+  uint8_t motor_id = FOC_TestCase_GetEffectiveMotorId(test_case);
 
   if((test_case == s_foc_test_case_last_select) &&
      (motor_id == s_foc_test_case_last_motor_id)){
@@ -1960,6 +2307,8 @@ static void FOC_TestCase_Service(void)
       if (FOC_FABS(fixed_ref - s_foc_test_case_last_fixed_ref) >= 0.5f) {
         FOC_TestCase_Apply(test_case);
       }
+    } else if (test_case == FOC_TEST_CASE_CRADLE_SEAT) {
+      FOC_TestCase_ServiceCradle();
     }
     return;
   }
