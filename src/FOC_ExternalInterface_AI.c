@@ -47,6 +47,7 @@ extern volatile uint8_t  g_foc_low_speed_iq_slew_enable;
 extern volatile uint16_t g_foc_low_speed_iq_slew_max_rpm;
 extern volatile uint16_t g_foc_low_speed_iq_slew_up_mA_per_s;
 extern volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s;
+extern volatile int16_t  g_foc_hall_angle_offset_mrad;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
 #define FOC_DETAIL_LOG_SIZE    512U
@@ -57,6 +58,8 @@ extern volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s;
 #define FOC_TEST_CASE_BIDIR_SWITCH      3U
 #define FOC_TEST_CASE_DYN_SPEED_CCW     4U
 #define FOC_TEST_CASE_IQ_START_SWEEP    5U
+
+#define FOC_IQ_START_OFFSET_SCORE_INVALID 2147483647L
 
 static void FOC_IqStartTest_ResetRuntime(void);
 
@@ -381,6 +384,19 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_first_edge_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_first_speed_cmd_mA = 0;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_first_speed_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_end_cmd_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_offset_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_offset_score_valid = 0U;
+FOC_AI_DEBUG_ROOT volatile int32_t  g_foc_iq_start_test_offset_score =
+    FOC_IQ_START_OFFSET_SCORE_INVALID;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_offset_score_cmd_mA = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_offset_score_time_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_offset_best_reset = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_offset_best_valid = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_offset_best_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int32_t  g_foc_iq_start_test_offset_best_score =
+    FOC_IQ_START_OFFSET_SCORE_INVALID;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_offset_best_cmd_mA = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_offset_best_time_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_state = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_fault = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_api_result = 0U;
@@ -898,8 +914,65 @@ static int16_t FOC_IqStartTest_SignedCmdMilli(uint16_t abs_mA)
        :  (int16_t)abs_mA;
 }
 
+static uint16_t FOC_IqStartTest_AbsCmdMilli(int16_t cmd_mA)
+{
+  int32_t value = (int32_t)cmd_mA;
+
+  if (value < 0) {
+    value = -value;
+  }
+  return (value > 65535L) ? 65535U : (uint16_t)value;
+}
+
+static int32_t FOC_IqStartTest_MakeOffsetScore(uint16_t cmd_mA,
+                                                uint32_t time_ms)
+{
+  int32_t score = (int32_t)cmd_mA * 1000L;
+
+  if (time_ms > (uint32_t)(FOC_IQ_START_OFFSET_SCORE_INVALID - score)) {
+    return FOC_IQ_START_OFFSET_SCORE_INVALID;
+  }
+  return score + (int32_t)time_ms;
+}
+
+static void FOC_IqStartTest_ClearBestOffsetScore(void)
+{
+  g_foc_iq_start_test_offset_best_reset = 0U;
+  g_foc_iq_start_test_offset_best_valid = 0U;
+  g_foc_iq_start_test_offset_best_mrad = 0;
+  g_foc_iq_start_test_offset_best_score =
+      FOC_IQ_START_OFFSET_SCORE_INVALID;
+  g_foc_iq_start_test_offset_best_cmd_mA = 0U;
+  g_foc_iq_start_test_offset_best_time_ms = 0U;
+}
+
+static void FOC_IqStartTest_RecordOffsetScore(uint16_t cmd_mA,
+                                               uint32_t time_ms)
+{
+  int32_t score = FOC_IqStartTest_MakeOffsetScore(cmd_mA, time_ms);
+
+  g_foc_iq_start_test_offset_score_valid = 1U;
+  g_foc_iq_start_test_offset_score = score;
+  g_foc_iq_start_test_offset_score_cmd_mA = cmd_mA;
+  g_foc_iq_start_test_offset_score_time_ms = time_ms;
+
+  if ((g_foc_iq_start_test_offset_best_valid == 0U) ||
+      (score < g_foc_iq_start_test_offset_best_score)) {
+    g_foc_iq_start_test_offset_best_valid = 1U;
+    g_foc_iq_start_test_offset_best_mrad =
+        g_foc_iq_start_test_offset_mrad;
+    g_foc_iq_start_test_offset_best_score = score;
+    g_foc_iq_start_test_offset_best_cmd_mA = cmd_mA;
+    g_foc_iq_start_test_offset_best_time_ms = time_ms;
+  }
+}
+
 static void FOC_IqStartTest_ResetRuntime(void)
 {
+  if (g_foc_iq_start_test_offset_best_reset != 0U) {
+    FOC_IqStartTest_ClearBestOffsetScore();
+  }
+
   g_foc_iq_start_test_active = 0U;
   g_foc_iq_start_test_done = 0U;
   g_foc_iq_start_test_result = 0U;
@@ -917,6 +990,12 @@ static void FOC_IqStartTest_ResetRuntime(void)
   g_foc_iq_start_test_first_speed_cmd_mA = 0;
   g_foc_iq_start_test_first_speed_ms = 0U;
   g_foc_iq_start_test_end_cmd_mA = 0;
+  g_foc_iq_start_test_offset_mrad = g_foc_hall_angle_offset_mrad;
+  g_foc_iq_start_test_offset_score_valid = 0U;
+  g_foc_iq_start_test_offset_score =
+      FOC_IQ_START_OFFSET_SCORE_INVALID;
+  g_foc_iq_start_test_offset_score_cmd_mA = 0U;
+  g_foc_iq_start_test_offset_score_time_ms = 0U;
   g_foc_iq_start_test_state = 0U;
   g_foc_iq_start_test_fault = 0U;
   g_foc_iq_start_test_api_result = 0U;
@@ -1073,6 +1152,9 @@ static void FOC_IqStartTest_Service(uint8_t motor_id)
           g_foc_iq_start_test_cmd_mA;
       g_foc_iq_start_test_first_edge_ms =
           g_foc_iq_start_test_elapsed_ms;
+      FOC_IqStartTest_RecordOffsetScore(
+          FOC_IqStartTest_AbsCmdMilli(g_foc_iq_start_test_cmd_mA),
+          g_foc_iq_start_test_elapsed_ms);
     }
     g_foc_iq_start_test_last_sector = cur_sector;
     success_edges = g_foc_iq_start_test_success_edge_count;
@@ -1099,6 +1181,11 @@ static void FOC_IqStartTest_Service(uint8_t motor_id)
           g_foc_iq_start_test_cmd_mA;
       g_foc_iq_start_test_first_speed_ms =
           g_foc_iq_start_test_elapsed_ms;
+      if (g_foc_iq_start_test_offset_score_valid == 0U) {
+        FOC_IqStartTest_RecordOffsetScore(
+            FOC_IqStartTest_AbsCmdMilli(g_foc_iq_start_test_cmd_mA),
+            g_foc_iq_start_test_elapsed_ms);
+      }
     }
     FOC_IqStartTest_Finish(motor_id, 2U);
     return;
