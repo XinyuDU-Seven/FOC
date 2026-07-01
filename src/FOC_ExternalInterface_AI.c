@@ -41,6 +41,12 @@ extern volatile uint8_t g_foc_bidir_zero_soft_enable;
 extern volatile uint16_t g_foc_bidir_zero_soft_start_rpm;
 extern volatile uint8_t  g_foc_start_log_enable;
 extern volatile uint8_t  g_foc_start_log_reset;
+extern volatile uint16_t g_foc_speed_ref_ramp_up_rpm_per_s;
+extern volatile uint16_t g_foc_speed_ref_ramp_down_rpm_per_s;
+extern volatile uint8_t  g_foc_low_speed_iq_slew_enable;
+extern volatile uint16_t g_foc_low_speed_iq_slew_max_rpm;
+extern volatile uint16_t g_foc_low_speed_iq_slew_up_mA_per_s;
+extern volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
 #define FOC_DETAIL_LOG_SIZE    512U
@@ -50,6 +56,39 @@ extern volatile uint8_t  g_foc_start_log_reset;
 #define FOC_TEST_CASE_DYN_SPEED_CW      2U
 #define FOC_TEST_CASE_BIDIR_SWITCH      3U
 #define FOC_TEST_CASE_DYN_SPEED_CCW     4U
+
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_up_rpm_per_s = 600U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_down_rpm_per_s = 1200U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_max_rpm = 600U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_up_mA_per_s = 4000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_down_mA_per_s = 10000U;
+
+static void FOC_TestCase_ClearFixedStartupLimits(void)
+{
+  g_foc_speed_ref_ramp_up_rpm_per_s = 0U;
+  g_foc_speed_ref_ramp_down_rpm_per_s = 0U;
+  g_foc_low_speed_iq_slew_enable = 0U;
+  g_foc_low_speed_iq_slew_max_rpm = 0U;
+  g_foc_low_speed_iq_slew_up_mA_per_s = 0U;
+  g_foc_low_speed_iq_slew_down_mA_per_s = 0U;
+}
+
+static void FOC_TestCase_ApplyFixedStartupLimits(void)
+{
+  g_foc_speed_ref_ramp_up_rpm_per_s =
+      g_foc_testcase1_start_ramp_up_rpm_per_s;
+  g_foc_speed_ref_ramp_down_rpm_per_s =
+      g_foc_testcase1_start_ramp_down_rpm_per_s;
+  g_foc_low_speed_iq_slew_max_rpm = g_foc_testcase1_iq_slew_max_rpm;
+  g_foc_low_speed_iq_slew_up_mA_per_s =
+      g_foc_testcase1_iq_slew_up_mA_per_s;
+  g_foc_low_speed_iq_slew_down_mA_per_s =
+      g_foc_testcase1_iq_slew_down_mA_per_s;
+  g_foc_low_speed_iq_slew_enable =
+      ((g_foc_low_speed_iq_slew_max_rpm != 0U) &&
+       ((g_foc_low_speed_iq_slew_up_mA_per_s != 0U) ||
+        (g_foc_low_speed_iq_slew_down_mA_per_s != 0U))) ? 1U : 0U;
+}
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reverse = 0U;
@@ -775,6 +814,7 @@ static FocError FOC_AI_MakeSignedTarget(uint16_t direction,
 static void FOC_AI_ClearAutoModes(void)
 {
   speed_ref = -1.0f;
+  FOC_TestCase_ClearFixedStartupLimits();
   g_foc_dyn_speed_enable = 0U;
   g_foc_dyn_speed_reverse = 0U;
   g_foc_dyn_speed_reset_stats = 0U;
@@ -1785,6 +1825,7 @@ static uint8_t FOC_TestCase_GetMotorId(void)
 static void FOC_TestCase_ClearAutoModes(void)
 {
   speed_ref = -1.0f;
+  FOC_TestCase_ClearFixedStartupLimits();
   g_foc_dyn_speed_enable = 0U;
   g_foc_dyn_speed_reverse = 0U;
   g_foc_dyn_speed_reset_stats = 0U;
@@ -1853,7 +1894,11 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
     Foc_EnableFocControl(unId);
 
-    Foc_SetSpeedReference(unId, fixed_ref);
+    if ((FOC_AI_SelectMotor(unId) == FOC_SUCCESS) &&
+        (FOC_AI_CheckReferenceState() == FOC_SUCCESS)) {
+      FOC_TestCase_ApplyFixedStartupLimits();
+      (void)FOC_SetSpeedRef(fixed_ref);
+    }
     g_foc_detail_log_start_now = 1U;
     s_foc_test_case_last_fixed_ref = fixed_ref;
 

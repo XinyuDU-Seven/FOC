@@ -613,6 +613,8 @@ static FOC_Dir_e s_speed_ref_ctrl_direction_store[FOC_CORE_MOTOR_COUNT] = {
     FOC_DIR_CW,
     FOC_DIR_CW
 };
+static float s_low_speed_iq_slew_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+static uint8_t s_low_speed_iq_slew_initialized_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static float s_speed_error_boost_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static float s_bidir_decel_hold_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static float s_bidir_zero_soft_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
@@ -632,6 +634,8 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_speed_fdb_drop_peak_rpm        (s_speed_fdb_drop_peak_rpm_store[s_foc_core_active_motor])
 #define s_speed_ref_ctrl                 (s_speed_ref_ctrl_store[s_foc_core_active_motor])
 #define s_speed_ref_ctrl_direction       (s_speed_ref_ctrl_direction_store[s_foc_core_active_motor])
+#define s_low_speed_iq_slew_ref          (s_low_speed_iq_slew_ref_store[s_foc_core_active_motor])
+#define s_low_speed_iq_slew_initialized  (s_low_speed_iq_slew_initialized_store[s_foc_core_active_motor])
 #define s_speed_error_boost_prev_ref     (s_speed_error_boost_prev_ref_store[s_foc_core_active_motor])
 #define s_bidir_decel_hold_prev_ref      (s_bidir_decel_hold_prev_ref_store[s_foc_core_active_motor])
 #define s_bidir_zero_soft_prev_ref       (s_bidir_zero_soft_prev_ref_store[s_foc_core_active_motor])
@@ -1066,6 +1070,8 @@ static void FOC_StartLog_Service(uint32_t now_us)
      s_speed_ref_ctrl = 0.0f;
      s_ctx.speed_ref_ctrl = 0.0f;
      s_speed_ref_ctrl_direction = s_ctx.direction;
+     s_low_speed_iq_slew_ref = 0.0f;
+     s_low_speed_iq_slew_initialized = 0U;
      g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(FOC_FABS(s_ctx.speed_ref), 1.0f);
      g_foc_speed_ref_ctrl_rpm = 0;
      g_foc_speed_ref_ramp_active = 0U;
@@ -1525,7 +1531,9 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
 static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
 {
      float target = FOC_FABS(s_ctx.speed_ref);
-     (void)dt_us;
+     float delta;
+     float rate_rpm_per_s;
+     float step_rpm;
 
      if (target > s_config.motor.max_speed_rpm) {
          target = s_config.motor.max_speed_rpm;
@@ -1533,16 +1541,42 @@ static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
 
      if (s_speed_ref_ctrl_direction != s_ctx.direction) {
          s_speed_ref_ctrl_direction = s_ctx.direction;
+         s_speed_ref_ctrl = 0.0f;
          FOC_PID_Reset(&s_ctx.pid_speed);
          s_speed_error_boost_prev_ref = 0.0f;
      }
 
-     s_speed_ref_ctrl = target;
+     delta = target - s_speed_ref_ctrl;
+     rate_rpm_per_s = (delta >= 0.0f)
+                    ? (float)g_foc_speed_ref_ramp_up_rpm_per_s
+                    : (float)g_foc_speed_ref_ramp_down_rpm_per_s;
+
+     if ((rate_rpm_per_s > 0.0f) && (FOC_FABS(delta) > 0.0f)) {
+         if (dt_us == 0U) {
+             dt_us = FOC_CONTROL_PERIOD_US;
+         }
+         if (dt_us > FOC_CONTROL_PID_DT_MAX_US) {
+             dt_us = FOC_CONTROL_PID_DT_MAX_US;
+         }
+
+         step_rpm = rate_rpm_per_s * ((float)dt_us * 1.0e-6f);
+         if ((step_rpm <= 0.0f) || (FOC_FABS(delta) <= step_rpm)) {
+             s_speed_ref_ctrl = target;
+         } else if (delta > 0.0f) {
+             s_speed_ref_ctrl += step_rpm;
+         } else {
+             s_speed_ref_ctrl -= step_rpm;
+         }
+         g_foc_speed_ref_ramp_active =
+             (FOC_FABS(target - s_speed_ref_ctrl) > 0.5f) ? 1U : 0U;
+     } else {
+         s_speed_ref_ctrl = target;
+         g_foc_speed_ref_ramp_active = 0U;
+     }
 
      s_ctx.speed_ref_ctrl = s_speed_ref_ctrl;
      g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(target, 1.0f);
      g_foc_speed_ref_ctrl_rpm = FOC_Log_ToI16(s_speed_ref_ctrl, 1.0f);
-     g_foc_speed_ref_ramp_active = 0U;
 
      return s_speed_ref_ctrl;
  }
@@ -1681,13 +1715,69 @@ static float FOC_ApplyLowSpeedIqSlew(float iq_ref,
                                      float speed_ref_ctrl,
                                      float speed_dt)
 {
-     (void)speed_ref_ctrl;
-     (void)speed_dt;
+     float ref_abs = FOC_FABS(speed_ref_ctrl);
+     float max_rpm = (float)g_foc_low_speed_iq_slew_max_rpm;
+     float prev_iq;
+     float delta;
+     float rate_mA_per_s;
+     float step_a;
 
      g_foc_low_speed_iq_slew_active = 0U;
      g_foc_low_speed_iq_slew_limited_mA = 0;
 
-     return iq_ref;
+     if ((g_foc_low_speed_iq_slew_enable == 0U) ||
+         (max_rpm < 1.0f) ||
+         (ref_abs > max_rpm) ||
+         ((g_foc_low_speed_iq_slew_up_mA_per_s == 0U) &&
+          (g_foc_low_speed_iq_slew_down_mA_per_s == 0U))) {
+         s_low_speed_iq_slew_ref = iq_ref;
+         s_low_speed_iq_slew_initialized = 1U;
+         return iq_ref;
+     }
+
+     if (speed_dt <= 0.0f) {
+         speed_dt = (float)(FOC_CONTROL_PERIOD_US *
+                            (uint32_t)FOC_SPEED_LOOP_DOWNSAMPLE) *
+                    1.0e-6f;
+     }
+
+     if (s_low_speed_iq_slew_initialized == 0U) {
+         s_low_speed_iq_slew_ref = s_ctx.iq_ref;
+         s_low_speed_iq_slew_initialized = 1U;
+     }
+
+     prev_iq = s_low_speed_iq_slew_ref;
+     delta = iq_ref - prev_iq;
+     if (FOC_FABS(delta) <= 0.0005f) {
+         s_low_speed_iq_slew_ref = iq_ref;
+         return iq_ref;
+     }
+
+     rate_mA_per_s =
+         (FOC_FABS(iq_ref) > FOC_FABS(prev_iq))
+         ? (float)g_foc_low_speed_iq_slew_up_mA_per_s
+         : (float)g_foc_low_speed_iq_slew_down_mA_per_s;
+     if (rate_mA_per_s <= 0.0f) {
+         s_low_speed_iq_slew_ref = iq_ref;
+         return iq_ref;
+     }
+
+     step_a = rate_mA_per_s * 0.001f * speed_dt;
+     if ((step_a <= 0.0f) || (FOC_FABS(delta) <= step_a)) {
+         s_low_speed_iq_slew_ref = iq_ref;
+         return iq_ref;
+     }
+
+     s_low_speed_iq_slew_ref =
+         (delta > 0.0f) ? (prev_iq + step_a) : (prev_iq - step_a);
+     g_foc_low_speed_iq_slew_active = 1U;
+     g_foc_low_speed_iq_slew_limited_mA =
+         FOC_Log_ToI16(iq_ref - s_low_speed_iq_slew_ref, 1000.0f);
+     if (g_foc_low_speed_iq_slew_count < 0xFFFFFFFFU) {
+         g_foc_low_speed_iq_slew_count++;
+     }
+
+     return s_low_speed_iq_slew_ref;
 }
 
  static float FOC_ApplyLowSpeedCurrentFeedForward(float vq)
@@ -1838,8 +1928,13 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
 
     if ((g_foc_dyn_speed_enable == 0U) &&
         (g_foc_bidir_speed_enable == 0U)) {
-        detail_ref_rpm = FOC_Log_ToI16(FOC_SignedSpeedRef(), 1.0f);
-        detail_raw_ref_rpm = detail_ref_rpm;
+        float signed_ctrl_ref = s_speed_ref_ctrl;
+
+        if (s_ctx.direction == FOC_DIR_CCW) {
+            signed_ctrl_ref = -signed_ctrl_ref;
+        }
+        detail_raw_ref_rpm = FOC_Log_ToI16(FOC_SignedSpeedRef(), 1.0f);
+        detail_ref_rpm = FOC_Log_ToI16(signed_ctrl_ref, 1.0f);
     }
 
     if ((detail_ref_rpm < 0) &&
