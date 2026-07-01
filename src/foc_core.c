@@ -1905,7 +1905,8 @@ static void FOC_DetailLog_Service(float theta_ctrl, uint32_t now_us)
     uint8_t zero_event = 0U;
     uint8_t bidir_zero_window_mode =
         ((g_foc_bidir_speed_step_enable == 0U) ||
-         (g_foc_bidir_speed_step_enable == 2U)) ? 1U : 0U;
+         (g_foc_bidir_speed_step_enable == 2U) ||
+         (g_foc_bidir_speed_step_enable == 3U)) ? 1U : 0U;
 
     if (FOC_IsAutoTestMotor() == 0U) {
         return;
@@ -3085,6 +3086,13 @@ static void FOC_BidirSpeed_ServiceRef(void)
             raw_target = -(float)g_foc_bidir_speed_max_rpm *
                          (1.0f - ease);
         }
+    } else if (g_foc_bidir_speed_step_enable == 3U) {
+        float sine = FOC_FastSin(phase);
+        float mag = FOC_CLAMP(FOC_FABS(sine), 0.0f, 1.0f);
+
+        mag = 1.0f - ((1.0f - mag) * (1.0f - mag));
+        raw_target = (float)g_foc_bidir_speed_max_rpm *
+                     ((sine < 0.0f) ? -mag : mag);
     } else {
         raw_target = (float)g_foc_bidir_speed_max_rpm * FOC_FastSin(phase);
     }

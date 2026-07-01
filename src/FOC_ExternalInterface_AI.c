@@ -1861,7 +1861,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
     g_foc_bidir_speed_period_ms = 4000U;
     g_foc_bidir_speed_max_rpm = 1000U;
-    g_foc_bidir_speed_step_enable = 0U;
+    g_foc_bidir_speed_step_enable = 3U;
     g_foc_bidir_speed_slew_enable = 0U;
     g_foc_bidir_speed_slew_rpm_per_s = 0U;
     g_foc_zero_transfer_enable = 1U;
