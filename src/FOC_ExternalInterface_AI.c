@@ -390,13 +390,27 @@ FOC_AI_DEBUG_ROOT volatile int32_t  g_foc_iq_start_test_offset_score =
     FOC_IQ_START_OFFSET_SCORE_INVALID;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_offset_score_cmd_mA = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_offset_score_time_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_offset_direction = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_offset_best_reset = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_offset_best_valid = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_offset_best_direction = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_offset_best_mrad = 0;
 FOC_AI_DEBUG_ROOT volatile int32_t  g_foc_iq_start_test_offset_best_score =
     FOC_IQ_START_OFFSET_SCORE_INVALID;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_offset_best_cmd_mA = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_offset_best_time_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_offset_fwd_best_valid = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_offset_fwd_best_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int32_t  g_foc_iq_start_test_offset_fwd_best_score =
+    FOC_IQ_START_OFFSET_SCORE_INVALID;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_offset_fwd_best_cmd_mA = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_offset_fwd_best_time_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_offset_rev_best_valid = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_offset_rev_best_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int32_t  g_foc_iq_start_test_offset_rev_best_score =
+    FOC_IQ_START_OFFSET_SCORE_INVALID;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_offset_rev_best_cmd_mA = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_offset_rev_best_time_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_state = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_fault = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_api_result = 0U;
@@ -939,17 +953,31 @@ static void FOC_IqStartTest_ClearBestOffsetScore(void)
 {
   g_foc_iq_start_test_offset_best_reset = 0U;
   g_foc_iq_start_test_offset_best_valid = 0U;
+  g_foc_iq_start_test_offset_best_direction = 0U;
   g_foc_iq_start_test_offset_best_mrad = 0;
   g_foc_iq_start_test_offset_best_score =
       FOC_IQ_START_OFFSET_SCORE_INVALID;
   g_foc_iq_start_test_offset_best_cmd_mA = 0U;
   g_foc_iq_start_test_offset_best_time_ms = 0U;
+  g_foc_iq_start_test_offset_fwd_best_valid = 0U;
+  g_foc_iq_start_test_offset_fwd_best_mrad = 0;
+  g_foc_iq_start_test_offset_fwd_best_score =
+      FOC_IQ_START_OFFSET_SCORE_INVALID;
+  g_foc_iq_start_test_offset_fwd_best_cmd_mA = 0U;
+  g_foc_iq_start_test_offset_fwd_best_time_ms = 0U;
+  g_foc_iq_start_test_offset_rev_best_valid = 0U;
+  g_foc_iq_start_test_offset_rev_best_mrad = 0;
+  g_foc_iq_start_test_offset_rev_best_score =
+      FOC_IQ_START_OFFSET_SCORE_INVALID;
+  g_foc_iq_start_test_offset_rev_best_cmd_mA = 0U;
+  g_foc_iq_start_test_offset_rev_best_time_ms = 0U;
 }
 
 static void FOC_IqStartTest_RecordOffsetScore(uint16_t cmd_mA,
                                                uint32_t time_ms)
 {
   int32_t score = FOC_IqStartTest_MakeOffsetScore(cmd_mA, time_ms);
+  uint8_t direction = g_foc_iq_start_test_offset_direction;
 
   g_foc_iq_start_test_offset_score_valid = 1U;
   g_foc_iq_start_test_offset_score = score;
@@ -959,11 +987,34 @@ static void FOC_IqStartTest_RecordOffsetScore(uint16_t cmd_mA,
   if ((g_foc_iq_start_test_offset_best_valid == 0U) ||
       (score < g_foc_iq_start_test_offset_best_score)) {
     g_foc_iq_start_test_offset_best_valid = 1U;
+    g_foc_iq_start_test_offset_best_direction = direction;
     g_foc_iq_start_test_offset_best_mrad =
         g_foc_iq_start_test_offset_mrad;
     g_foc_iq_start_test_offset_best_score = score;
     g_foc_iq_start_test_offset_best_cmd_mA = cmd_mA;
     g_foc_iq_start_test_offset_best_time_ms = time_ms;
+  }
+
+  if (direction == FOC_APP_DIR_FORWARD) {
+    if ((g_foc_iq_start_test_offset_fwd_best_valid == 0U) ||
+        (score < g_foc_iq_start_test_offset_fwd_best_score)) {
+      g_foc_iq_start_test_offset_fwd_best_valid = 1U;
+      g_foc_iq_start_test_offset_fwd_best_mrad =
+          g_foc_iq_start_test_offset_mrad;
+      g_foc_iq_start_test_offset_fwd_best_score = score;
+      g_foc_iq_start_test_offset_fwd_best_cmd_mA = cmd_mA;
+      g_foc_iq_start_test_offset_fwd_best_time_ms = time_ms;
+    }
+  } else if (direction == FOC_APP_DIR_REVERSE) {
+    if ((g_foc_iq_start_test_offset_rev_best_valid == 0U) ||
+        (score < g_foc_iq_start_test_offset_rev_best_score)) {
+      g_foc_iq_start_test_offset_rev_best_valid = 1U;
+      g_foc_iq_start_test_offset_rev_best_mrad =
+          g_foc_iq_start_test_offset_mrad;
+      g_foc_iq_start_test_offset_rev_best_score = score;
+      g_foc_iq_start_test_offset_rev_best_cmd_mA = cmd_mA;
+      g_foc_iq_start_test_offset_rev_best_time_ms = time_ms;
+    }
   }
 }
 
@@ -996,6 +1047,7 @@ static void FOC_IqStartTest_ResetRuntime(void)
       FOC_IQ_START_OFFSET_SCORE_INVALID;
   g_foc_iq_start_test_offset_score_cmd_mA = 0U;
   g_foc_iq_start_test_offset_score_time_ms = 0U;
+  g_foc_iq_start_test_offset_direction = g_foc_iq_start_test_direction;
   g_foc_iq_start_test_state = 0U;
   g_foc_iq_start_test_fault = 0U;
   g_foc_iq_start_test_api_result = 0U;
