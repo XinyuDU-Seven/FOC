@@ -58,7 +58,7 @@
 
 #define MOTOR_HALL_IO_PIN_W_1 P14_02 /* 高调电机HW(V0.2模具件硬件: P14_02, V0.1模具件硬件: P14_02) */
 
-#define FOC_PORT_MOTOR_COUNT 2U
+#define FOC_PORT_MOTOR_COUNT FOC_PHYSICAL_MOTOR_COUNT
 
  
 
@@ -88,26 +88,42 @@ static volatile uint32_t s_hall_event_timestamp_us[FOC_PORT_MOTOR_COUNT] = {0U, 
 static volatile uint32_t s_hall_event_seq[FOC_PORT_MOTOR_COUNT] = {0U, 0U};
 static volatile uint32_t s_hall_event_version[FOC_PORT_MOTOR_COUNT] = {0U, 0U};
 
-static uint8_t FOC_HAL_GetActiveMotor(void)
+static uint8_t FOC_HAL_MapLogicalToPhysical(uint8_t motor)
 {
-    uint8_t motor = s_foc_selected_motor;
+    if (motor == FOC_NOLOAD_MOTOR_ID) {
+        return (FOC_NOLOAD_PHYSICAL_MOTOR_ID < FOC_PORT_MOTOR_COUNT)
+             ? FOC_NOLOAD_PHYSICAL_MOTOR_ID
+             : 0U;
+    }
 
     return (motor < FOC_PORT_MOTOR_COUNT) ? motor : 0U;
 }
 
+static uint8_t FOC_HAL_GetActiveMotor(void)
+{
+    return FOC_HAL_MapLogicalToPhysical(s_foc_selected_motor);
+}
+
 void FOC_HAL_SelectMotor(uint8_t motor_id)
 {
-    if (motor_id >= FOC_PORT_MOTOR_COUNT) {
-        return;
+    if (motor_id >= FOC_CORE_MOTOR_COUNT) {
+        motor_id = 0U;
     }
 
-    if (FOC_HAL_GetActiveMotor() != motor_id) {
+    if (s_foc_selected_motor != motor_id) {
         s_foc_adc_cache_valid = 0U;
         s_foc_selected_motor = motor_id;
     }
 }
 
 uint8_t FOC_HAL_GetSelectedMotor(void)
+{
+    uint8_t motor = s_foc_selected_motor;
+
+    return (motor < FOC_CORE_MOTOR_COUNT) ? motor : 0U;
+}
+
+uint8_t FOC_HAL_GetActivePhysicalMotor(void)
 {
     return FOC_HAL_GetActiveMotor();
 }

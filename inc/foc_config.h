@@ -28,6 +28,31 @@ extern "C" {
 #endif
 
 /* ===================================================================
+ *  Motor topology
+ * =================================================================== */
+
+/*
+ * The FOC core keeps independent state per logical motor. The port layer
+ * maps each logical motor to the actual PWM/ADC/Hall physical channel.
+ * The no-load bench motor is logical 2 and uses physical channel 0.
+ */
+#ifndef FOC_CORE_MOTOR_COUNT
+#define FOC_CORE_MOTOR_COUNT         3U
+#endif
+
+#ifndef FOC_PHYSICAL_MOTOR_COUNT
+#define FOC_PHYSICAL_MOTOR_COUNT     2U
+#endif
+
+#ifndef FOC_NOLOAD_MOTOR_ID
+#define FOC_NOLOAD_MOTOR_ID          2U
+#endif
+
+#ifndef FOC_NOLOAD_PHYSICAL_MOTOR_ID
+#define FOC_NOLOAD_PHYSICAL_MOTOR_ID 0U
+#endif
+
+/* ===================================================================
 
  *  数学常量
 

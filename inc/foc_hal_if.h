@@ -83,6 +83,8 @@ void FOC_HAL_SelectMotor(uint8_t motor_id);
 
 uint8_t FOC_HAL_GetSelectedMotor(void);
 
+uint8_t FOC_HAL_GetActivePhysicalMotor(void);
+
  
 
 /* ===================================================================

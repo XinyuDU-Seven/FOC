@@ -17,19 +17,24 @@
 
 /* External接口调试计数：每进入一次FOC周期回调自增一次，用于Watch确认主循环是否在跑。 */
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
-/* 最近一次通过External接口选中的FOC物理电机号，底层只支持0/1。 */
+/* 最近一次通过External接口选中的FOC逻辑电机号。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_selected_motor_id = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_selected_physical_motor_id = 0U;
 /* 应用层“水平电机”的子电机ID，Foc_GetMotorNum用它匹配应用层传入的unMotorID。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_level_motor_id = 1U;
 /* 应用层“坐盆电机”的子电机ID，当前应用层坐盆默认是5。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_bidet_motor_id = 5U;
-/* 应用层水平电机映射到的FOC物理电机号，默认0。 */
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_noload_motor_id = FOC_NOLOAD_MOTOR_ID;
+/* 应用层水平电机映射到的FOC逻辑电机号，默认0。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_level_foc_motor_id = 0U;
-/* 应用层坐盆电机映射到的FOC物理电机号，默认1。 */
+/* 应用层坐盆电机映射到的FOC逻辑电机号，默认1。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_bidet_foc_motor_id = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_noload_foc_motor_id = FOC_NOLOAD_MOTOR_ID;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_noload_physical_motor_id =
+    FOC_NOLOAD_PHYSICAL_MOTOR_ID;
 /* 最近一次Foc_GetMotorNum收到的应用层电机ID，便于定位映射输入。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_app_id = 0U;
-/* 最近一次Foc_GetMotorNum输出的FOC物理电机号；0xFF表示本次未成功输出。 */
+/* 最近一次Foc_GetMotorNum输出的FOC逻辑电机号；0xFF表示本次未成功输出。 */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_foc_id = 0xFFU;
 /* 最近一次Foc_GetMotorNum返回的错误码，Watch中用于确认映射是否成功。 */
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_last_get_motor_num_err = FOC_SUCCESS;
@@ -594,10 +599,10 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 }
 #endif
 
-/* External接口允许的应用层ID上限；注意FOC核心物理电机仍只有0/1。 */
+/* External接口允许的应用层ID上限；注意FOC核心逻辑电机和底层物理通道分开配置。 */
 #define FOC_APP_MOTOR_COUNT    200U
-/* FOC核心当前支持的物理电机数量。 */
-#define FOC_PHY_MOTOR_COUNT    2U
+/* FOC核心当前支持的逻辑电机数量。 */
+#define FOC_LOGICAL_MOTOR_COUNT FOC_CORE_MOTOR_COUNT
 /* 当前FOC初始化使用的电机极对数。 */
 #define FOC_APP_POLE_PAIRS     4U
 /* 应用层方向编码：无方向，仅目标为0时允许。 */
@@ -619,17 +624,17 @@ static void FOC_AI_UpdateDynamicSpeedMetrics(void)
 
 static FocError FOC_AI_CheckMotorId(uint8_t unId)
 {
-  return (unId < FOC_PHY_MOTOR_COUNT) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
+  return (unId < FOC_LOGICAL_MOTOR_COUNT) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
 }
 
-static FocError FOC_AI_CheckPhysicalMotorId(uint8_t unId)
+static FocError FOC_AI_CheckMappedMotorId(uint8_t unId)
 {
-  return (unId < FOC_PHY_MOTOR_COUNT) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
+  return (unId < FOC_LOGICAL_MOTOR_COUNT) ? FOC_SUCCESS : FOC_MOTOR_ID_INVALID;
 }
 
 static FocError FOC_AI_MapAppMotorNum(uint8_t unMotorID, uint8_t *punMotorNum)
 {
-  /* 应用层电机ID映射后的FOC物理电机号，成功时只能是0或1。 */
+  /* 应用层电机ID映射后的FOC逻辑电机号，成功时小于FOC_LOGICAL_MOTOR_COUNT。 */
   uint8_t mapped_motor;
 
   if (punMotorNum == NULL) {
@@ -644,13 +649,15 @@ static FocError FOC_AI_MapAppMotorNum(uint8_t unMotorID, uint8_t *punMotorNum)
     mapped_motor = g_foc_app_level_foc_motor_id;
   } else if (unMotorID == g_foc_app_bidet_motor_id) {
     mapped_motor = g_foc_app_bidet_foc_motor_id;
-  } else if (unMotorID < FOC_PHY_MOTOR_COUNT) {
+  } else if (unMotorID == g_foc_app_noload_motor_id) {
+    mapped_motor = g_foc_app_noload_foc_motor_id;
+  } else if (unMotorID < FOC_LOGICAL_MOTOR_COUNT) {
     mapped_motor = unMotorID;
   } else {
     return FOC_MOTOR_ID_INVALID;
   }
 
-  if (FOC_AI_CheckPhysicalMotorId(mapped_motor) != FOC_SUCCESS) {
+  if (FOC_AI_CheckMappedMotorId(mapped_motor) != FOC_SUCCESS) {
     return FOC_MOTOR_ID_INVALID;
   }
 
@@ -669,6 +676,7 @@ static FocError FOC_AI_SelectMotor(uint8_t unId)
 
   FOC_Core_SelectMotor(unId);
   g_foc_selected_motor_id = FOC_HAL_GetSelectedMotor();
+  g_foc_selected_physical_motor_id = FOC_HAL_GetActivePhysicalMotor();
   return FOC_SUCCESS;
 }
 
@@ -1274,7 +1282,7 @@ void Foc_AlgorithmControlCallback_AI(void){
 
 void Foc_Init_AI(void)
 {
-  /* FOC核心初始化配置，当前两个物理电机共用同一套默认参数初始化。 */
+  /* FOC核心初始化配置，三个逻辑电机共用当前测试分支默认参数初始化。 */
   FOC_Config_t config;
 
   memset(&config, 0, sizeof(FOC_Config_t));
@@ -1558,7 +1566,7 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
     pstMotorFullStates->unCurrentDirectionHallCounts = direction_hall_counts;
   }
 
-  /* 以下字段是对应用层返回的电机快照，unId保持调用者传入的FOC物理电机号。 */
+  /* 以下字段是对应用层返回的电机快照，unId保持调用者传入的FOC逻辑电机号。 */
   pstMotorFullStates->unId = unId;
   pstMotorFullStates->unHallState = FOC_AI_HallRawToU8(&ctx->hall_raw);
   pstMotorFullStates->fSpeedMechEstimate =
@@ -1620,7 +1628,7 @@ FocError Foc_GetMotorFullParameters_AI(uint8_t unId, MotorFullStates *pstMotorFu
 
 FocError Foc_GetMotorNum_AI(uint8_t unCarConfigID, uint8_t unSeatID, uint8_t unMotorID, uint8_t *punMotorNum)
 {
-  /* err保存应用层电机ID到FOC物理电机号的映射结果。 */
+  /* err保存应用层电机ID到FOC逻辑电机号的映射结果。 */
   FocError err;
   (void)unCarConfigID;
   (void)unSeatID;
@@ -1771,7 +1779,7 @@ static float s_foc_test_case_last_fixed_ref = 0.0f;
 
 static uint8_t FOC_TestCase_GetMotorId(void)
 {
-  return (g_foc_test_motor_id < FOC_PHY_MOTOR_COUNT)
+  return (g_foc_test_motor_id < FOC_LOGICAL_MOTOR_COUNT)
        ? g_foc_test_motor_id
        : 0U;
 }

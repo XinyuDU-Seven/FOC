@@ -43,8 +43,6 @@
 
  /** FOC 运行上下文实例 */
 
-#define FOC_CORE_MOTOR_COUNT 2U
-
 FOC_Context_t g_foc_ctx[FOC_CORE_MOTOR_COUNT];
 
  
@@ -57,6 +55,12 @@ static volatile uint8_t s_foc_core_active_motor = 0U;
 
 #define s_ctx    (g_foc_ctx[s_foc_core_active_motor])
 #define s_config (g_foc_config[s_foc_core_active_motor])
+
+#define FOC_CORE_PWM_OWNER_NONE 0xFFU
+static uint8_t s_foc_physical_pwm_owner[FOC_PHYSICAL_MOTOR_COUNT] = {
+    FOC_CORE_PWM_OWNER_NONE,
+    FOC_CORE_PWM_OWNER_NONE
+};
 
 #define FOC_CTRL_SOURCE_SPEED   0U
 #define FOC_CTRL_SOURCE_CURRENT 1U
@@ -85,6 +89,11 @@ FOC_Protection_Threshold_t s_prot_threshold;
 #define FOC_TEXT_LOG_SIZE   128U
 #define FOC_START_LOG_SIZE  512U
 #define FOC_HALL_HISTORY_SIZE 100U
+
+FOC_DEBUG_ROOT volatile uint8_t g_foc_physical_pwm_owner[FOC_PHYSICAL_MOTOR_COUNT] = {
+    FOC_CORE_PWM_OWNER_NONE,
+    FOC_CORE_PWM_OWNER_NONE
+};
 
 typedef struct {
     uint32_t seq;
@@ -303,7 +312,7 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_travel_freeze_count[FOC_CORE_MOTOR_C
 static uint32_t s_foc_hall_history_delta_us[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
 static uint8_t  s_foc_hall_history_raw[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
 static uint64_t s_foc_hall_history_count[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
-static int16_t  s_foc_hall_history_head[FOC_CORE_MOTOR_COUNT] = {-1, -1};
+static int16_t  s_foc_hall_history_head[FOC_CORE_MOTOR_COUNT] = {-1, -1, -1};
 static uint16_t s_foc_hall_history_valid_count[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint64_t s_foc_hall_total_update_count[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint64_t s_foc_hall_direction_update_count[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
@@ -596,6 +605,7 @@ static uint16_t s_hall_illegal_transition_count_store[FOC_CORE_MOTOR_COUNT] = {0
 static uint32_t s_foc_prof_last_enter_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_foc_control_period_us_store[FOC_CORE_MOTOR_COUNT] = {
     FOC_CONTROL_PERIOD_US,
+    FOC_CONTROL_PERIOD_US,
     FOC_CONTROL_PERIOD_US
 };
 static uint16_t s_hall_recovery_accept_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
@@ -608,6 +618,7 @@ static uint16_t s_speed_drop_bidir_no_edge_holdoff_store[FOC_CORE_MOTOR_COUNT] =
 static uint16_t s_speed_fdb_drop_peak_rpm_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static float s_speed_ref_ctrl_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static FOC_Dir_e s_speed_ref_ctrl_direction_store[FOC_CORE_MOTOR_COUNT] = {
+    FOC_DIR_CW,
     FOC_DIR_CW,
     FOC_DIR_CW
 };
@@ -708,10 +719,16 @@ static uint8_t s_zero_transfer_direction_switched_store[FOC_CORE_MOTOR_COUNT] = 
  static void FOC_Prof_Exit(uint32_t enter_us, uint32_t exit_us);
  static void FOC_Prof_Reset(void);
  static void FOC_LastFault_Reset(void);
- static uint32_t FOC_ControlPeriodUs(void);
- static uint8_t FOC_ControlPeriodIsLate(uint32_t period_us);
- static float FOC_ControlDtFromUs(uint32_t period_us, uint32_t max_us);
- static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
+static uint32_t FOC_ControlPeriodUs(void);
+static uint8_t FOC_ControlPeriodIsLate(uint32_t period_us);
+static float FOC_ControlDtFromUs(uint32_t period_us, uint32_t max_us);
+static float FOC_ControlInvDtFromUs(uint32_t period_us, uint32_t max_us);
+static uint8_t FOC_Core_GetPhysicalMotor(uint8_t motor_id);
+static uint8_t FOC_Core_GetSelectedPhysicalMotor(void);
+static uint8_t FOC_Core_SelectedMotorOwnsPwm(void);
+static uint8_t FOC_Core_PhysicalMotorIsBusy(uint8_t motor_id);
+static void FOC_Core_SetPwmOwner(uint8_t physical_motor, uint8_t motor_id);
+static void FOC_Core_ClearPwmOwner(uint8_t motor_id);
 static uint8_t FOC_ControlPeriodNeedsRecovery(uint32_t period_us);
 static void FOC_ResetClosedLoopForRecovery(void);
 static void FOC_StartLog_Reset(void);
@@ -815,6 +832,83 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
 
      s_foc_core_active_motor = motor_id;
      FOC_HAL_SelectMotor(motor_id);
+ }
+
+ static uint8_t FOC_Core_GetPhysicalMotor(uint8_t motor_id)
+ {
+     if (motor_id == FOC_NOLOAD_MOTOR_ID) {
+         return (FOC_NOLOAD_PHYSICAL_MOTOR_ID < FOC_PHYSICAL_MOTOR_COUNT)
+              ? FOC_NOLOAD_PHYSICAL_MOTOR_ID
+              : 0U;
+     }
+
+     return (motor_id < FOC_PHYSICAL_MOTOR_COUNT) ? motor_id : 0U;
+ }
+
+ static uint8_t FOC_Core_GetSelectedPhysicalMotor(void)
+ {
+     return FOC_Core_GetPhysicalMotor(s_foc_core_active_motor);
+ }
+
+ static void FOC_Core_SetPwmOwner(uint8_t physical_motor, uint8_t motor_id)
+ {
+     if ((physical_motor >= FOC_PHYSICAL_MOTOR_COUNT) ||
+         (motor_id >= FOC_CORE_MOTOR_COUNT)) {
+         return;
+     }
+
+     s_foc_physical_pwm_owner[physical_motor] = motor_id;
+     g_foc_physical_pwm_owner[physical_motor] = motor_id;
+ }
+
+ static void FOC_Core_ClearPwmOwner(uint8_t motor_id)
+ {
+     uint8_t physical_motor;
+
+     for (physical_motor = 0U;
+          physical_motor < FOC_PHYSICAL_MOTOR_COUNT;
+          physical_motor++) {
+         if (s_foc_physical_pwm_owner[physical_motor] == motor_id) {
+             s_foc_physical_pwm_owner[physical_motor] = FOC_CORE_PWM_OWNER_NONE;
+             g_foc_physical_pwm_owner[physical_motor] = FOC_CORE_PWM_OWNER_NONE;
+         }
+     }
+ }
+
+ static uint8_t FOC_Core_SelectedMotorOwnsPwm(void)
+ {
+     uint8_t physical_motor = FOC_Core_GetSelectedPhysicalMotor();
+
+     if (physical_motor >= FOC_PHYSICAL_MOTOR_COUNT) {
+         return 0U;
+     }
+
+     return (s_foc_physical_pwm_owner[physical_motor] ==
+             s_foc_core_active_motor) ? 1U : 0U;
+ }
+
+ static uint8_t FOC_Core_PhysicalMotorIsBusy(uint8_t motor_id)
+ {
+     uint8_t physical_motor = FOC_Core_GetPhysicalMotor(motor_id);
+     uint8_t owner;
+
+     if (physical_motor >= FOC_PHYSICAL_MOTOR_COUNT) {
+         return 1U;
+     }
+
+     owner = s_foc_physical_pwm_owner[physical_motor];
+     if ((owner == FOC_CORE_PWM_OWNER_NONE) || (owner == motor_id)) {
+         return 0U;
+     }
+
+     if ((owner < FOC_CORE_MOTOR_COUNT) &&
+         (g_foc_ctx[owner].state == FOC_STATE_RUNNING)) {
+         return 1U;
+     }
+
+     s_foc_physical_pwm_owner[physical_motor] = FOC_CORE_PWM_OWNER_NONE;
+     g_foc_physical_pwm_owner[physical_motor] = FOC_CORE_PWM_OWNER_NONE;
+     return 0U;
  }
 
  uint8_t FOC_Core_GetSelectedMotor(void)
@@ -4010,8 +4104,13 @@ static void FOC_Prof_Reset(void)
          g_foc_last_fault_theta_ctrl = g_foc_last_fault_theta_pred;
      }
 
-     FOC_HAL_DisablePWM();
-     FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
+     if (FOC_Core_SelectedMotorOwnsPwm() != 0U) {
+         FOC_HAL_DisablePWM();
+     }
+     if (FOC_Core_SelectedMotorOwnsPwm() != 0U) {
+         FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
+         FOC_Core_ClearPwmOwner(s_foc_core_active_motor);
+     }
 
      s_ctx.duty_a = 0.0f;
      s_ctx.duty_b = 0.0f;
@@ -4268,6 +4367,7 @@ static void FOC_Prof_Reset(void)
 
  {
      uint8_t motor;
+     uint8_t physical_motor;
 
      if (config == NULL) {
 
@@ -4290,6 +4390,13 @@ static void FOC_Prof_Reset(void)
      /* 初始化 sin/cos 查找表 */
 
      FOC_Math_InitTable();
+
+     for (physical_motor = 0U;
+          physical_motor < FOC_PHYSICAL_MOTOR_COUNT;
+          physical_motor++) {
+         s_foc_physical_pwm_owner[physical_motor] = FOC_CORE_PWM_OWNER_NONE;
+         g_foc_physical_pwm_owner[physical_motor] = FOC_CORE_PWM_OWNER_NONE;
+     }
 
      for (motor = 0U; motor < FOC_CORE_MOTOR_COUNT; motor++) {
          g_foc_hall_travel_count[motor] = 0;
@@ -4430,6 +4537,7 @@ static void FOC_Prof_Reset(void)
 
  {
      uint8_t motor;
+     uint8_t physical_motor;
 
      for (motor = 0U; motor < FOC_CORE_MOTOR_COUNT; motor++) {
          FOC_Core_SelectMotor(motor);
@@ -4438,9 +4546,19 @@ static void FOC_Prof_Reset(void)
              FOC_Core_Stop();
          }
 
-         FOC_HAL_DisablePWM();
-         memset(&s_ctx, 0, sizeof(FOC_Context_t));
+        if (FOC_Core_SelectedMotorOwnsPwm() != 0U) {
+            FOC_HAL_DisablePWM();
+            FOC_Core_ClearPwmOwner(s_foc_core_active_motor);
+        }
+        memset(&s_ctx, 0, sizeof(FOC_Context_t));
          s_ctx.state = FOC_STATE_INIT;
+     }
+
+     for (physical_motor = 0U;
+          physical_motor < FOC_PHYSICAL_MOTOR_COUNT;
+          physical_motor++) {
+         s_foc_physical_pwm_owner[physical_motor] = FOC_CORE_PWM_OWNER_NONE;
+         g_foc_physical_pwm_owner[physical_motor] = FOC_CORE_PWM_OWNER_NONE;
      }
 
      FOC_Core_SelectMotor(0U);
@@ -4475,6 +4593,10 @@ static void FOC_Prof_Reset(void)
 
          return FOC_BUSY;
 
+     }
+
+     if (FOC_Core_PhysicalMotorIsBusy(s_foc_core_active_motor) != 0U) {
+         return FOC_BUSY;
      }
 
  
@@ -4513,6 +4635,8 @@ static void FOC_Prof_Reset(void)
 
      FOC_Log_Reset();
 
+     FOC_Core_SetPwmOwner(FOC_Core_GetSelectedPhysicalMotor(),
+                          s_foc_core_active_motor);
      FOC_HAL_EnablePWM();
 
  
@@ -4529,13 +4653,15 @@ static void FOC_Prof_Reset(void)
 
  
 
- int FOC_Core_Stop(void)
+int FOC_Core_Stop(void)
 
- {
+{
 
-     /* 禁用 PWM 输出 */
+    /* 禁用 PWM 输出 */
 
-     FOC_HAL_DisablePWM();
+    if (FOC_Core_SelectedMotorOwnsPwm() != 0U) {
+        FOC_HAL_DisablePWM();
+    }
 
  
 
@@ -4547,7 +4673,10 @@ static void FOC_Prof_Reset(void)
 
      s_ctx.duty_c = 0.0f;
 
-     FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
+    if (FOC_Core_SelectedMotorOwnsPwm() != 0U) {
+        FOC_HAL_SetDutyCycle(0.0f, 0.0f, 0.0f);
+        FOC_Core_ClearPwmOwner(s_foc_core_active_motor);
+    }
 
  
 

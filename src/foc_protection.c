@@ -29,13 +29,13 @@ static FOC_Protection_Threshold_t s_threshold;
 
 /** 霍尔无效扇区连续计数 */
 
-static uint32_t s_hall_invalid_counter_store[2U] = {0U, 0U};
+static uint32_t s_hall_invalid_counter_store[FOC_CORE_MOTOR_COUNT] = {0U};
 
 static uint8_t FOC_Protection_GetMotorIndex(void)
 {
     uint8_t motor = FOC_HAL_GetSelectedMotor();
 
-    return (motor < 2U) ? motor : 0U;
+    return (motor < FOC_CORE_MOTOR_COUNT) ? motor : 0U;
 }
 
 #define s_hall_invalid_counter \

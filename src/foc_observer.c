@@ -106,7 +106,7 @@
 
  };
 
-#define FOC_OBSERVER_MOTOR_COUNT 2U
+#define FOC_OBSERVER_MOTOR_COUNT FOC_CORE_MOTOR_COUNT
 
 static float s_startup_predict_speed_rpm_store[FOC_OBSERVER_MOTOR_COUNT] = {
     0.0f,
