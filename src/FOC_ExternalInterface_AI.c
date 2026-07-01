@@ -1864,7 +1864,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_bidir_speed_slew_enable = 0U;
     g_foc_bidir_speed_slew_rpm_per_s = 0U;
     g_foc_zero_transfer_enable = 1U;
-    g_foc_zero_transfer_enter_rpm = 160U;
+    g_foc_zero_transfer_enter_rpm = 320U;
     g_foc_zero_transfer_exit_rpm = 110U;
     g_foc_zero_transfer_ms = 80U;
     g_foc_zero_relaunch_ms = 30U;
