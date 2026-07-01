@@ -39,6 +39,8 @@ extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 extern volatile float speed_ref;
 extern volatile uint8_t g_foc_bidir_zero_soft_enable;
 extern volatile uint16_t g_foc_bidir_zero_soft_start_rpm;
+extern volatile uint8_t  g_foc_start_log_enable;
+extern volatile uint8_t  g_foc_start_log_reset;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
 #define FOC_DETAIL_LOG_SIZE    512U
@@ -89,6 +91,7 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_enable = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_reset = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_start_now = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_armed = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_active = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_stop = 0U;
@@ -203,7 +206,7 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_select = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_applied = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_last_error = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_test_case_exec_count = 0U;
-FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_motor_id = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_motor_id = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_motor_id_applied = 0U;
 
 static uint8_t s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
@@ -1805,6 +1808,22 @@ static float FOC_TestCase_GetFixedSpeedRef(uint8_t unId)
   return fixed_ref;
 }
 
+static void FOC_TestCase_PrepareFixedSpeedDetailLog(void)
+{
+  g_foc_start_log_enable = 0U;
+  g_foc_start_log_reset = 1U;
+
+  g_foc_detail_log_enable = 1U;
+  g_foc_detail_log_decim_ms = 2U;
+  g_foc_detail_log_zero_window_enable = 0U;
+  g_foc_detail_log_zero_post_ms = 0U;
+  g_foc_detail_log_zero_event_idx = 0xFFFFU;
+  g_foc_detail_log_zero_event_count = 0U;
+  g_foc_detail_log_zero_window_done = 0U;
+  g_foc_detail_log_start_now = 0U;
+  g_foc_detail_log_reset = 1U;
+}
+
 static void FOC_TestCase_Apply(uint8_t test_case)
 {
   uint8_t unId = FOC_TestCase_GetMotorId();
@@ -1830,10 +1849,12 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     FOC_TestCase_ClearAutoModes();
     g_foc_dyn_speed_start_on_max_ref = 0U;
     g_foc_dyn_speed_start_on_max_fdb = 0U;
+    FOC_TestCase_PrepareFixedSpeedDetailLog();
 
     Foc_EnableFocControl(unId);
 
     Foc_SetSpeedReference(unId, fixed_ref);
+    g_foc_detail_log_start_now = 1U;
     s_foc_test_case_last_fixed_ref = fixed_ref;
 
   }else if(test_case == FOC_TEST_CASE_DYN_SPEED_CW){

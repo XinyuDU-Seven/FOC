@@ -482,6 +482,7 @@ extern volatile uint16_t g_foc_dyn_log_current_peak_mA[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile uint16_t g_foc_dyn_log_fault[FOC_DYN_SPEED_LOG_SIZE];
 extern volatile uint8_t  g_foc_detail_log_enable;
 extern volatile uint8_t  g_foc_detail_log_reset;
+extern volatile uint8_t  g_foc_detail_log_start_now;
 extern volatile uint8_t  g_foc_detail_log_armed;
 extern volatile uint8_t  g_foc_detail_log_active;
 extern volatile uint8_t  g_foc_detail_log_stop;
@@ -645,6 +646,8 @@ static uint32_t s_dyn_speed_start_us = 0U;
 static uint32_t s_dyn_log_last_us = 0U;
 static float s_dyn_abs_err_avg_rpm = 0.0f;
 static uint32_t s_detail_log_last_us = 0U;
+static uint32_t s_detail_log_start_us = 0U;
+static uint8_t s_detail_log_use_relative_time = 0U;
 static float s_detail_log_prev_abs_ref_rpm = 0.0f;
 static int16_t s_detail_log_prev_raw_sign = 0;
 static uint8_t s_detail_log_zero_event_seen = 0U;
@@ -1762,6 +1765,8 @@ static void FOC_DetailLog_Reset(void)
     g_foc_detail_log_armed = (g_foc_detail_log_enable != 0U) ? 1U : 0U;
     g_foc_detail_log_reset = 0U;
     s_detail_log_last_us = 0U;
+    s_detail_log_start_us = 0U;
+    s_detail_log_use_relative_time = 0U;
     s_detail_log_prev_abs_ref_rpm = 0.0f;
     s_detail_log_prev_raw_sign = 0;
     s_detail_log_zero_event_seen = 0U;
@@ -1808,6 +1813,8 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
     uint16_t idx;
     uint32_t decim_us = (uint32_t)g_foc_detail_log_decim_ms * 1000U;
     uint32_t edge_elapsed_us = 0U;
+    int16_t detail_raw_ref_rpm = g_foc_bidir_speed_raw_ref_rpm;
+    int16_t detail_ref_rpm = g_foc_dyn_speed_ref_rpm;
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
 
@@ -1829,7 +1836,13 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
         return;
     }
 
-    if ((g_foc_dyn_speed_ref_rpm < 0) &&
+    if ((g_foc_dyn_speed_enable == 0U) &&
+        (g_foc_bidir_speed_enable == 0U)) {
+        detail_ref_rpm = FOC_Log_ToI16(FOC_SignedSpeedRef(), 1.0f);
+        detail_raw_ref_rpm = detail_ref_rpm;
+    }
+
+    if ((detail_ref_rpm < 0) &&
         (s_ctx.direction == FOC_DIR_CCW)) {
         signed_speed_fdb = -signed_speed_fdb;
         signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
@@ -1839,9 +1852,12 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
     }
 
     s_detail_log_last_us = now_us;
-    g_foc_detail_log_t_ms[idx] = g_foc_bidir_speed_elapsed_ms;
-    g_foc_detail_log_raw_ref_rpm[idx] = g_foc_bidir_speed_raw_ref_rpm;
-    g_foc_detail_log_ref_rpm[idx] = g_foc_dyn_speed_ref_rpm;
+    g_foc_detail_log_t_ms[idx] =
+        (s_detail_log_use_relative_time != 0U)
+        ? ((now_us - s_detail_log_start_us) / 1000U)
+        : g_foc_bidir_speed_elapsed_ms;
+    g_foc_detail_log_raw_ref_rpm[idx] = detail_raw_ref_rpm;
+    g_foc_detail_log_ref_rpm[idx] = detail_ref_rpm;
     g_foc_detail_log_fdb_rpm[idx] =
         FOC_Log_ToI16(signed_speed_fdb, 1.0f);
     g_foc_detail_log_ctrl_fdb_rpm[idx] =
@@ -1920,8 +1936,30 @@ static void FOC_DetailLog_Service(float theta_ctrl, uint32_t now_us)
         g_foc_detail_log_active = 0U;
         g_foc_detail_log_armed = 0U;
         g_foc_detail_log_stop = 1U;
+        g_foc_detail_log_start_now = 0U;
         s_detail_log_prev_abs_ref_rpm = ref_abs;
         return;
+    }
+
+    if ((g_foc_detail_log_start_now != 0U) &&
+        (g_foc_detail_log_active == 0U) &&
+        (g_foc_detail_log_stop == 0U)) {
+        g_foc_detail_log_idx = 0U;
+        g_foc_detail_log_active = 1U;
+        g_foc_detail_log_armed = 0U;
+        g_foc_detail_log_start_now = 0U;
+        s_detail_log_zero_event_seen = 0U;
+        s_detail_log_zero_event_us = 0U;
+        g_foc_detail_log_zero_event_idx = 0xFFFFU;
+        g_foc_detail_log_zero_window_done = 0U;
+        s_detail_log_last_us = 0U;
+        s_detail_log_start_us = now_us;
+        s_detail_log_use_relative_time = 1U;
+        if (g_foc_detail_log_trigger_count < 0xFFFFFFFFU) {
+            g_foc_detail_log_trigger_count++;
+        }
+    } else if (g_foc_detail_log_start_now != 0U) {
+        g_foc_detail_log_start_now = 0U;
     }
 
     if ((g_foc_detail_log_armed != 0U) &&
@@ -1940,6 +1978,8 @@ static void FOC_DetailLog_Service(float theta_ctrl, uint32_t now_us)
         g_foc_detail_log_zero_event_idx = 0xFFFFU;
         g_foc_detail_log_zero_window_done = 0U;
         s_detail_log_last_us = 0U;
+        s_detail_log_start_us = now_us;
+        s_detail_log_use_relative_time = 0U;
         if (g_foc_detail_log_trigger_count < 0xFFFFFFFFU) {
             g_foc_detail_log_trigger_count++;
         }
