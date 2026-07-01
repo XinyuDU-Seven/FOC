@@ -120,12 +120,18 @@
 
   */
 
- /* Returns the calibrated Hall sync angle, not the raw sector center angle. */
- float FOC_Observer_HallSectorToElecAngle(uint8_t sector);
+/* Returns the calibrated Hall sync angle, not the raw sector center angle. */
+float FOC_Observer_HallSectorToElecAngle(uint8_t sector);
+
+/* Returns the calibrated Hall edge angle used by observer edge sync. */
+float FOC_Observer_HallEdgeSyncAngle(const FOC_Context_t *ctx,
+                                     uint8_t sector,
+                                     float omega_e,
+                                     float advance_max);
 
  
 
- /**
+/**
 
   * @brief 估算电机转速
 

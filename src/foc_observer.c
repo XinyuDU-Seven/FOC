@@ -162,6 +162,8 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_angle_clamp_cou
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_diff_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_limit_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_step_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_hall_angle_offset_mrad =
+    (int16_t)(FOC_HALL_ANGLE_OFFSET_RAD * 1000.0f);
 
 static float FOC_Observer_NormalizeAngleDiff(float diff)
 {
@@ -194,12 +196,17 @@ static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
     return 0.0f;
 }
 
+static float FOC_Observer_GetHallAngleOffset(void)
+{
+    return (float)g_foc_hall_angle_offset_mrad * 0.001f;
+}
+
 static float FOC_Observer_GetHallSyncAngle(uint8_t sector)
 {
     if (sector >= 1U && sector <= 6U) {
         return FOC_NormalizeAngle(s_hall_sector_angle_lut[sector]
                                 + FOC_Observer_GetHallAngleTrim(sector)
-                                + FOC_HALL_ANGLE_OFFSET_RAD);
+                                + FOC_Observer_GetHallAngleOffset());
     }
 
     return 0.0f;
@@ -238,7 +245,7 @@ static float FOC_Observer_GetHallEntryAngle(uint8_t sector, FOC_Dir_e hall_dir)
         return FOC_NormalizeAngle(s_hall_sector_angle_lut[sector]
                                 + edge_offset
                                 + FOC_Observer_GetHallAngleTrim(sector)
-                                + FOC_HALL_ANGLE_OFFSET_RAD);
+                                + FOC_Observer_GetHallAngleOffset());
     }
 
     return 0.0f;
@@ -255,7 +262,7 @@ static float FOC_Observer_GetHallExitAngle(uint8_t sector, FOC_Dir_e hall_dir)
         return FOC_NormalizeAngle(s_hall_sector_angle_lut[sector]
                                 + edge_offset
                                 + FOC_Observer_GetHallAngleTrim(sector)
-                                + FOC_HALL_ANGLE_OFFSET_RAD);
+                                + FOC_Observer_GetHallAngleOffset());
     }
 
     return 0.0f;
@@ -370,6 +377,18 @@ static float FOC_Observer_GetHallEdgeSyncAngle(const FOC_Context_t *ctx,
     }
 
     return FOC_NormalizeAngle(target + advance);
+}
+
+float FOC_Observer_HallEdgeSyncAngle(const FOC_Context_t *ctx,
+                                     uint8_t sector,
+                                     float omega_e,
+                                     float advance_max)
+{
+    if ((ctx == 0) || (sector == 0U)) {
+        return 0.0f;
+    }
+
+    return FOC_Observer_GetHallEdgeSyncAngle(ctx, sector, omega_e, advance_max);
 }
 
 static uint8_t FOC_Observer_GetSectorStepCount(const FOC_Context_t *ctx,

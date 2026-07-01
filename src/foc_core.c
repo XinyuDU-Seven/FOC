@@ -86,6 +86,21 @@ FOC_Protection_Threshold_t s_prot_threshold;
 #define FOC_DEBUG_ROOT
 #endif
 
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_if_edge_sync_enable = 1U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_if_edge_sync_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_if_edge_sync_sector = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_sync_theta_hall = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_sync_theta_if_before = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_sync_theta_if_after = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_sync_diff_mrad = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_sync_iq_ref_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_if_edge_sync_first_sector = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_sync_first_theta_hall = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_sync_first_theta_if_before = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_sync_first_theta_if_after = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_sync_first_diff_mrad = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_sync_first_iq_ref_mA = 0;
+
 #define FOC_LOG_SIZE        512U
 #define FOC_LOG_DECIMATION  1U
 #define FOC_TEXT_LOG_SIZE   128U
@@ -793,6 +808,8 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
                                     uint32_t timestamp_us,
                                     uint8_t timestamp_valid,
                                     uint8_t allow_missed_transition);
+static void FOC_IF_ResetEdgeSyncDebug(void);
+static void FOC_IF_SyncAngleOnHallEdge(float omega_e);
 
  static int16_t FOC_Log_ToI16(float v, float scale)
  {
@@ -835,6 +852,87 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
      }
      return (uint16_t)(angle * (65535.0f / FOC_2PI));
  }
+
+static void FOC_IF_ResetEdgeSyncDebug(void)
+{
+    g_foc_if_edge_sync_count = 0U;
+    g_foc_if_edge_sync_sector = 0U;
+    g_foc_if_edge_sync_theta_hall = 0U;
+    g_foc_if_edge_sync_theta_if_before = 0U;
+    g_foc_if_edge_sync_theta_if_after = 0U;
+    g_foc_if_edge_sync_diff_mrad = 0;
+    g_foc_if_edge_sync_iq_ref_mA = 0;
+    g_foc_if_edge_sync_first_sector = 0U;
+    g_foc_if_edge_sync_first_theta_hall = 0U;
+    g_foc_if_edge_sync_first_theta_if_before = 0U;
+    g_foc_if_edge_sync_first_theta_if_after = 0U;
+    g_foc_if_edge_sync_first_diff_mrad = 0;
+    g_foc_if_edge_sync_first_iq_ref_mA = 0;
+}
+
+static void FOC_IF_SyncAngleOnHallEdge(float omega_e)
+{
+    uint8_t cur_sector = s_ctx.hall_sector.sector;
+    uint8_t prev_sector = s_ctx.hall_sector_prev;
+    float target;
+    float before;
+    float diff;
+    uint16_t theta_hall_u16;
+    uint16_t theta_before_u16;
+    uint16_t theta_after_u16;
+    int16_t diff_mrad;
+    int16_t iq_ref_mA;
+
+    if ((g_foc_if_edge_sync_enable == 0U) ||
+        (cur_sector == 0U) ||
+        (prev_sector == 0U) ||
+        (cur_sector == prev_sector)) {
+        return;
+    }
+
+    target = FOC_Observer_HallEdgeSyncAngle(&s_ctx,
+                                            cur_sector,
+                                            omega_e,
+                                            FOC_STARTUP_EDGE_SYNC_ADVANCE_MAX_RAD);
+    before = s_if_angle;
+    diff = target - before;
+    if (diff > FOC_PI) {
+        diff -= FOC_2PI;
+    } else if (diff < -FOC_PI) {
+        diff += FOC_2PI;
+    }
+
+    s_if_angle = target;
+    s_ctx.theta_e_predicted = target;
+
+    theta_hall_u16 = FOC_Log_AngleU16(s_ctx.theta_e);
+    theta_before_u16 = FOC_Log_AngleU16(before);
+    theta_after_u16 = FOC_Log_AngleU16(target);
+    diff_mrad = FOC_Log_ToI16(diff, 1000.0f);
+    iq_ref_mA = FOC_Log_ToI16((s_ctx.direction == FOC_DIR_CCW)
+                              ? -s_ctx.iq_ref
+                              : s_ctx.iq_ref,
+                              1000.0f);
+
+    if (g_foc_if_edge_sync_count == 0U) {
+        g_foc_if_edge_sync_first_sector = cur_sector;
+        g_foc_if_edge_sync_first_theta_hall = theta_hall_u16;
+        g_foc_if_edge_sync_first_theta_if_before = theta_before_u16;
+        g_foc_if_edge_sync_first_theta_if_after = theta_after_u16;
+        g_foc_if_edge_sync_first_diff_mrad = diff_mrad;
+        g_foc_if_edge_sync_first_iq_ref_mA = iq_ref_mA;
+    }
+    if (g_foc_if_edge_sync_count < 0xFFFFFFFFU) {
+        g_foc_if_edge_sync_count++;
+    }
+
+    g_foc_if_edge_sync_sector = cur_sector;
+    g_foc_if_edge_sync_theta_hall = theta_hall_u16;
+    g_foc_if_edge_sync_theta_if_before = theta_before_u16;
+    g_foc_if_edge_sync_theta_if_after = theta_after_u16;
+    g_foc_if_edge_sync_diff_mrad = diff_mrad;
+    g_foc_if_edge_sync_iq_ref_mA = iq_ref_mA;
+}
 
  void FOC_Core_SelectMotor(uint8_t motor_id)
  {
@@ -5142,11 +5240,18 @@ static void FOC_Prof_Reset(void)
          FOC_ResetSpeedLoopForZeroHold();
      }
 
+     float if_omega_e = 0.0f;
      float theta_e_ctrl = FOC_Observer_PredictAngle(&s_ctx, observer_dt,
 
                                                      s_config.motor.pole_pairs);
 
- 
+     if (s_foc_ctrl_source == FOC_CTRL_SOURCE_IF) {
+         if_omega_e = s_if_speed_rpm *
+                      (FOC_2PI / 60.0f) *
+                      (float)s_config.motor.pole_pairs;
+         FOC_IF_SyncAngleOnHallEdge(if_omega_e);
+     }
+
 
      s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
 
@@ -5158,14 +5263,10 @@ static void FOC_Prof_Reset(void)
      }
 
      if (s_foc_ctrl_source == FOC_CTRL_SOURCE_IF) {
-         float omega_e = s_if_speed_rpm *
-                         (FOC_2PI / 60.0f) *
-                         (float)s_config.motor.pole_pairs;
-
          if (s_ctx.direction == FOC_DIR_CCW) {
-             s_if_angle -= omega_e * observer_dt;
+             s_if_angle -= if_omega_e * observer_dt;
          } else {
-             s_if_angle += omega_e * observer_dt;
+             s_if_angle += if_omega_e * observer_dt;
          }
          s_if_angle = FOC_NormalizeAngle(s_if_angle);
          s_ctx.theta_e_predicted = s_if_angle;
@@ -5835,6 +5936,7 @@ int FOC_Core_SetIFRef(float iq, float rpm)
          s_if_angle = (s_ctx.hall_sector.sector != 0U)
                     ? s_ctx.hall_sector.theta_e
                     : s_ctx.theta_e_predicted;
+         FOC_IF_ResetEdgeSyncDebug();
      }
 
      g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(abs_rpm, 1.0f);
