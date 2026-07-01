@@ -100,6 +100,21 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_sync_first_theta_if_before = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_sync_first_theta_if_after = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_sync_first_diff_mrad = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_sync_first_iq_ref_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_if_edge_calib_enable = 1U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_if_edge_calib_reset = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_if_edge_calib_skip_edges = 2U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_if_edge_calib_target_edges = 12U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_if_edge_calib_done = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_calib_sample_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_calib_skipped_count = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_calib_start_offset_mrad = 0;
+FOC_DEBUG_ROOT volatile int32_t  g_foc_if_edge_calib_sum_diff_mrad = 0;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_if_edge_calib_abs_sum_diff_mrad = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_calib_avg_diff_mrad = 0;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_if_edge_calib_abs_avg_diff_mrad = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_calib_min_diff_mrad = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_calib_max_diff_mrad = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_calib_recommended_offset_mrad = 0;
 
 #define FOC_LOG_SIZE        512U
 #define FOC_LOG_DECIMATION  1U
@@ -809,6 +824,7 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
                                     uint8_t timestamp_valid,
                                     uint8_t allow_missed_transition);
 static void FOC_IF_ResetEdgeSyncDebug(void);
+static void FOC_IF_RecordEdgeCalib(int16_t diff_mrad);
 static void FOC_IF_SyncAngleOnHallEdge(float omega_e);
 
  static int16_t FOC_Log_ToI16(float v, float scale)
@@ -868,6 +884,82 @@ static void FOC_IF_ResetEdgeSyncDebug(void)
     g_foc_if_edge_sync_first_theta_if_after = 0U;
     g_foc_if_edge_sync_first_diff_mrad = 0;
     g_foc_if_edge_sync_first_iq_ref_mA = 0;
+
+    g_foc_if_edge_calib_reset = 0U;
+    g_foc_if_edge_calib_done = 0U;
+    g_foc_if_edge_calib_sample_count = 0U;
+    g_foc_if_edge_calib_skipped_count = 0U;
+    g_foc_if_edge_calib_start_offset_mrad = g_foc_hall_angle_offset_mrad;
+    g_foc_if_edge_calib_sum_diff_mrad = 0;
+    g_foc_if_edge_calib_abs_sum_diff_mrad = 0U;
+    g_foc_if_edge_calib_avg_diff_mrad = 0;
+    g_foc_if_edge_calib_abs_avg_diff_mrad = 0U;
+    g_foc_if_edge_calib_min_diff_mrad = 0;
+    g_foc_if_edge_calib_max_diff_mrad = 0;
+    g_foc_if_edge_calib_recommended_offset_mrad = g_foc_hall_angle_offset_mrad;
+}
+
+static void FOC_IF_RecordEdgeCalib(int16_t diff_mrad)
+{
+    uint8_t target_edges;
+    uint16_t count;
+    uint32_t abs_diff;
+    int32_t avg;
+    int32_t rec_offset;
+
+    if ((g_foc_if_edge_calib_enable == 0U) ||
+        (g_foc_if_edge_calib_done != 0U)) {
+        return;
+    }
+
+    target_edges = g_foc_if_edge_calib_target_edges;
+    if (target_edges == 0U) {
+        target_edges = 1U;
+    }
+
+    if (g_foc_if_edge_calib_skipped_count < g_foc_if_edge_calib_skip_edges) {
+        g_foc_if_edge_calib_skipped_count++;
+        return;
+    }
+
+    if (g_foc_if_edge_calib_sample_count >= (uint16_t)target_edges) {
+        g_foc_if_edge_calib_done = 1U;
+        return;
+    }
+
+    abs_diff = (diff_mrad < 0) ? (uint32_t)(-(int32_t)diff_mrad)
+                               : (uint32_t)diff_mrad;
+    count = (uint16_t)(g_foc_if_edge_calib_sample_count + 1U);
+
+    if (g_foc_if_edge_calib_sample_count == 0U) {
+        g_foc_if_edge_calib_min_diff_mrad = diff_mrad;
+        g_foc_if_edge_calib_max_diff_mrad = diff_mrad;
+    } else {
+        if (diff_mrad < g_foc_if_edge_calib_min_diff_mrad) {
+            g_foc_if_edge_calib_min_diff_mrad = diff_mrad;
+        }
+        if (diff_mrad > g_foc_if_edge_calib_max_diff_mrad) {
+            g_foc_if_edge_calib_max_diff_mrad = diff_mrad;
+        }
+    }
+
+    g_foc_if_edge_calib_sample_count = count;
+    g_foc_if_edge_calib_sum_diff_mrad += diff_mrad;
+    g_foc_if_edge_calib_abs_sum_diff_mrad += abs_diff;
+
+    avg = g_foc_if_edge_calib_sum_diff_mrad / (int32_t)count;
+    g_foc_if_edge_calib_avg_diff_mrad = FOC_ClampI32ToI16(avg);
+    g_foc_if_edge_calib_abs_avg_diff_mrad =
+        (uint16_t)(g_foc_if_edge_calib_abs_sum_diff_mrad / (uint32_t)count);
+
+    /* target already includes the current offset; subtract avg diff to center it. */
+    rec_offset = (int32_t)g_foc_if_edge_calib_start_offset_mrad - avg;
+    g_foc_if_edge_calib_recommended_offset_mrad =
+        FOC_ClampI32ToI16(rec_offset);
+
+    if (count >= (uint16_t)target_edges) {
+        g_foc_if_edge_calib_done = 1U;
+    }
 }
 
 static void FOC_IF_SyncAngleOnHallEdge(float omega_e)
@@ -925,6 +1017,7 @@ static void FOC_IF_SyncAngleOnHallEdge(float omega_e)
     if (g_foc_if_edge_sync_count < 0xFFFFFFFFU) {
         g_foc_if_edge_sync_count++;
     }
+    FOC_IF_RecordEdgeCalib(diff_mrad);
 
     g_foc_if_edge_sync_sector = cur_sector;
     g_foc_if_edge_sync_theta_hall = theta_hall_u16;
@@ -5249,6 +5342,9 @@ static void FOC_Prof_Reset(void)
          if_omega_e = s_if_speed_rpm *
                       (FOC_2PI / 60.0f) *
                       (float)s_config.motor.pole_pairs;
+         if (g_foc_if_edge_calib_reset != 0U) {
+             FOC_IF_ResetEdgeSyncDebug();
+         }
          FOC_IF_SyncAngleOnHallEdge(if_omega_e);
      }
 

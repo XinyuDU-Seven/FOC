@@ -129,6 +129,9 @@ float FOC_Observer_HallEdgeSyncAngle(const FOC_Context_t *ctx,
                                      float omega_e,
                                      float advance_max);
 
+/* Runtime global Hall angle offset, in mrad. Used for coarse offset calibration. */
+extern volatile int16_t g_foc_hall_angle_offset_mrad;
+
  
 
 /**
