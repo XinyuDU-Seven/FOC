@@ -360,6 +360,7 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_max_mA = 2500U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_step_ms = 120U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_max_hold_ms = 300U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_move_rpm = 5U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_success_edge_count = 6U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_direction = 2U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_disable_on_done = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_iq_start_test_active = 0U;
@@ -378,6 +379,7 @@ FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_first_edge_cmd_mA = 0;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_first_edge_ms = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_first_speed_cmd_mA = 0;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_iq_start_test_first_speed_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_iq_start_test_end_cmd_mA = 0;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_state = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_fault = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_api_result = 0U;
@@ -913,6 +915,7 @@ static void FOC_IqStartTest_ResetRuntime(void)
   g_foc_iq_start_test_first_edge_ms = 0U;
   g_foc_iq_start_test_first_speed_cmd_mA = 0;
   g_foc_iq_start_test_first_speed_ms = 0U;
+  g_foc_iq_start_test_end_cmd_mA = 0;
   g_foc_iq_start_test_state = 0U;
   g_foc_iq_start_test_fault = 0U;
   g_foc_iq_start_test_api_result = 0U;
@@ -965,12 +968,22 @@ static FocError FOC_IqStartTest_Command(uint8_t motor_id, uint16_t abs_mA)
 static void FOC_IqStartTest_Finish(uint8_t motor_id, uint8_t result)
 {
   FocError stop_result;
+  uint8_t keep_current =
+      ((g_foc_iq_start_test_disable_on_done == 0U) &&
+       ((result == 1U) || (result == 2U))) ? 1U : 0U;
 
   g_foc_iq_start_test_result = result;
   g_foc_iq_start_test_done = 1U;
   g_foc_iq_start_test_active = 0U;
+  g_foc_iq_start_test_end_cmd_mA = g_foc_iq_start_test_cmd_mA;
 
-  if (g_foc_iq_start_test_disable_on_done != 0U) {
+  if (keep_current != 0U) {
+    return;
+  }
+
+  if ((g_foc_iq_start_test_disable_on_done != 0U) ||
+      (result == 4U) ||
+      (result == 5U)) {
     stop_result = Foc_DisableFocControl(motor_id);
   } else {
     stop_result = Foc_SetCurrentReference(motor_id, 0.0f, 0.0f);
@@ -1024,6 +1037,7 @@ static void FOC_IqStartTest_Service(uint8_t motor_id)
   uint32_t max_hold_us;
   uint16_t step_mA;
   uint16_t max_mA;
+  uint16_t success_edges;
   uint8_t cur_sector;
   float speed_abs;
 
@@ -1054,8 +1068,14 @@ static void FOC_IqStartTest_Service(uint8_t motor_id)
           g_foc_iq_start_test_elapsed_ms;
     }
     g_foc_iq_start_test_last_sector = cur_sector;
-    FOC_IqStartTest_Finish(motor_id, 1U);
-    return;
+    success_edges = g_foc_iq_start_test_success_edge_count;
+    if (success_edges == 0U) {
+      success_edges = 1U;
+    }
+    if (g_foc_iq_start_test_edge_count >= success_edges) {
+      FOC_IqStartTest_Finish(motor_id, 1U);
+      return;
+    }
   }
   if (cur_sector != 0U) {
     g_foc_iq_start_test_last_sector = cur_sector;
