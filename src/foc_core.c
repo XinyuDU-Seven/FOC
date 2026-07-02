@@ -680,6 +680,7 @@ static uint8_t s_speed_start_state_store[FOC_CORE_MOTOR_COUNT] = {
 };
 static uint32_t s_speed_start_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_speed_start_soft_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint32_t s_speed_start_release_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static float s_speed_start_iq_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static FOC_Dir_e s_speed_start_direction_store[FOC_CORE_MOTOR_COUNT] = {
     FOC_DIR_CW,
@@ -709,6 +710,7 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_speed_start_state              (s_speed_start_state_store[s_foc_core_active_motor])
 #define s_speed_start_elapsed_us         (s_speed_start_elapsed_us_store[s_foc_core_active_motor])
 #define s_speed_start_soft_elapsed_us    (s_speed_start_soft_elapsed_us_store[s_foc_core_active_motor])
+#define s_speed_start_release_elapsed_us (s_speed_start_release_elapsed_us_store[s_foc_core_active_motor])
 #define s_speed_start_iq_ref             (s_speed_start_iq_ref_store[s_foc_core_active_motor])
 #define s_speed_start_direction          (s_speed_start_direction_store[s_foc_core_active_motor])
 #define s_low_speed_iq_slew_ref          (s_low_speed_iq_slew_ref_store[s_foc_core_active_motor])
@@ -1168,6 +1170,7 @@ static void FOC_SpeedStart_Reset(void)
      s_speed_start_state = FOC_SPEED_START_STATE_IDLE;
      s_speed_start_elapsed_us = 0U;
      s_speed_start_soft_elapsed_us = 0U;
+     s_speed_start_release_elapsed_us = 0U;
      s_speed_start_iq_ref = 0.0f;
      s_speed_start_direction = s_ctx.direction;
      g_foc_speed_start_moving = 0U;
@@ -1198,6 +1201,12 @@ static uint8_t FOC_SpeedStart_IsNearZero(void)
 
      return ((FOC_FABS(s_ctx.speed_fdb) <= near_zero) &&
              (FOC_FABS(s_ctx.speed_ctrl_fdb) <= near_zero)) ? 1U : 0U;
+}
+
+static void FOC_LowSpeedIqSlew_Prime(float iq_ref)
+{
+     s_low_speed_iq_slew_ref = iq_ref;
+     s_low_speed_iq_slew_initialized = 1U;
 }
 
 static uint8_t FOC_SpeedStart_IsMoving(void)
@@ -1318,6 +1327,7 @@ static void FOC_SpeedStart_Close(float speed_error,
              (handoff_iq - p_term) / s_ctx.pid_speed.ki;
      }
      s_ctx.pid_speed.prev_error = speed_error;
+     FOC_LowSpeedIqSlew_Prime(handoff_iq);
 
      s_speed_start_state = FOC_SPEED_START_STATE_CLOSED;
      s_speed_start_iq_ref = 0.0f;
@@ -1328,8 +1338,10 @@ static void FOC_SpeedStart_BeginBreakaway(float speed_iq_ref_max)
      s_speed_start_state = FOC_SPEED_START_STATE_BREAKAWAY;
      s_speed_start_elapsed_us = 0U;
      s_speed_start_soft_elapsed_us = 0U;
+     s_speed_start_release_elapsed_us = 0U;
      s_speed_start_direction = s_ctx.direction;
      s_speed_start_iq_ref = FOC_SpeedStart_BreakawayIq(speed_iq_ref_max);
+     FOC_LowSpeedIqSlew_Prime(s_speed_start_iq_ref);
      FOC_BidirZeroTransfer_ClearHandoff();
      g_foc_speed_start_moving = 0U;
      if (g_foc_speed_start_breakaway_count < 0xFFFFFFFFU) {
@@ -1342,8 +1354,10 @@ static void FOC_SpeedStart_BeginSoftStart(float speed_iq_ref_max)
 {
      s_speed_start_state = FOC_SPEED_START_STATE_SOFT_START;
      s_speed_start_soft_elapsed_us = 0U;
+     s_speed_start_release_elapsed_us = 0U;
      s_speed_start_iq_ref =
          FOC_CLAMP(s_speed_start_iq_ref, 0.0f, speed_iq_ref_max);
+     FOC_LowSpeedIqSlew_Prime(s_speed_start_iq_ref);
      FOC_PID_Reset(&s_ctx.pid_speed);
      if (g_foc_speed_start_soft_count < 0xFFFFFFFFU) {
          g_foc_speed_start_soft_count++;
@@ -1404,6 +1418,7 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
          float release_rpm = FOC_SpeedStart_ReleaseRpm();
          uint8_t release_by_speed;
          uint8_t close_ready;
+         uint8_t release_ready;
 
          if ((0xFFFFFFFFU - s_speed_start_soft_elapsed_us) >= elapsed_us) {
              s_speed_start_soft_elapsed_us += elapsed_us;
@@ -1412,12 +1427,26 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
          }
          release_by_speed = FOC_SpeedStart_ReleaseReached();
          close_ready = FOC_SpeedStart_CloseReady(speed_ref_ctrl);
+         release_ready =
+             ((release_by_speed != 0U) && (close_ready != 0U)) ? 1U : 0U;
          FOC_SpeedStart_IsMoving();
+         if (release_ready != 0U) {
+             if ((0xFFFFFFFFU - s_speed_start_release_elapsed_us) >=
+                 elapsed_us) {
+                 s_speed_start_release_elapsed_us += elapsed_us;
+             } else {
+                 s_speed_start_release_elapsed_us = 0xFFFFFFFFU;
+             }
+         } else {
+             s_speed_start_release_elapsed_us = 0U;
+         }
          /* Keep the hold floor below release; soft_ms is the post-release fade. */
-         if (((release_rpm <= 0.0f) ||
-              ((release_by_speed != 0U) && (close_ready != 0U))) &&
-             ((soft_us == 0U) ||
-              (s_speed_start_soft_elapsed_us >= soft_us))) {
+         if (((release_rpm <= 0.0f) &&
+              ((soft_us == 0U) ||
+               (s_speed_start_soft_elapsed_us >= soft_us))) ||
+             ((release_ready != 0U) &&
+              ((soft_us == 0U) ||
+               (s_speed_start_release_elapsed_us >= soft_us)))) {
              FOC_SpeedStart_Close(speed_ref_ctrl - s_ctx.speed_ctrl_fdb,
                                   speed_iq_ref_max);
          }
@@ -1484,6 +1513,7 @@ static float FOC_SpeedStart_ApplySoftRamp(float iq_ref,
      }
 
      s_speed_start_iq_ref = FOC_CLAMP(iq_ref, 0.0f, speed_iq_ref_max);
+     FOC_LowSpeedIqSlew_Prime(s_speed_start_iq_ref);
      FOC_SpeedStart_UpdateDebug();
      return s_speed_start_iq_ref;
 }
