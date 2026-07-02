@@ -63,7 +63,7 @@ extern volatile int16_t  g_foc_hall_angle_offset_mrad;
 
 static void FOC_IqStartTest_ResetRuntime(void);
 
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_up_rpm_per_s = 600U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_up_rpm_per_s = 400U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_down_rpm_per_s = 1200U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_max_rpm = 600U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_up_mA_per_s = 4000U;
