@@ -447,13 +447,6 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_soft_start_rpm =
 FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_soft_scale_percent = 100U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_bidir_zero_soft_limited_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_bidir_zero_soft_count = 0U;
-FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_current_ff_enable =
-    FOC_LOW_SPEED_CURRENT_FF_ENABLE;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_low_speed_current_ff_max_rpm =
-    FOC_LOW_SPEED_CURRENT_FF_MAX_RPM;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_current_q_rs_ff_gain_milli =
-    FOC_CURRENT_Q_RS_FF_GAIN_MILLI;
-FOC_DEBUG_ROOT volatile int16_t  g_foc_current_q_ff_mV = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_enable =
     FOC_SPEED_DROP_FAULT_ENABLE;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_min_rpm = 600U;
@@ -1335,17 +1328,23 @@ static void FOC_SpeedStart_Close(float speed_error,
                                  float speed_iq_ref_max)
 {
      float handoff_iq = s_speed_start_iq_ref;
+     float close_deadband = (float)g_foc_speed_start_close_deadband_rpm;
 
      if (speed_iq_ref_max < 0.0f) {
          speed_iq_ref_max = 0.0f;
      }
+     if (speed_error <= close_deadband) {
+         handoff_iq = 0.0f;
+     }
      handoff_iq = FOC_CLAMP(handoff_iq, 0.0f, speed_iq_ref_max);
 
-     if (s_ctx.pid_speed.ki > 0.0f) {
+     if ((s_ctx.pid_speed.ki > 0.0f) && (handoff_iq > 0.0f)) {
          float p_term = s_ctx.pid_speed.kp * speed_error;
 
          s_ctx.pid_speed.integral =
              (handoff_iq - p_term) / s_ctx.pid_speed.ki;
+     } else {
+         s_ctx.pid_speed.integral = 0.0f;
      }
      s_ctx.pid_speed.prev_error = speed_error;
      FOC_LowSpeedIqSlew_Prime(handoff_iq);
@@ -1461,13 +1460,10 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
          } else {
              s_speed_start_release_elapsed_us = 0U;
          }
-         /* Keep the hold floor below release; soft_ms is the post-release fade. */
-         if (((release_rpm <= 0.0f) &&
+         if ((release_ready != 0U) ||
+             ((release_rpm <= 0.0f) &&
               ((soft_us == 0U) ||
-               (s_speed_start_soft_elapsed_us >= soft_us))) ||
-             ((release_ready != 0U) &&
-              ((soft_us == 0U) ||
-               (s_speed_start_release_elapsed_us >= soft_us)))) {
+               (s_speed_start_soft_elapsed_us >= soft_us)))) {
              FOC_SpeedStart_Close(speed_ref_ctrl - s_ctx.speed_ctrl_fdb,
                                   speed_iq_ref_max);
          }
@@ -1755,7 +1751,6 @@ static void FOC_StartLog_Service(uint32_t now_us)
      FOC_ResetSpeedPidDebug();
      g_foc_low_speed_torque_active = 0U;
      g_foc_low_speed_torque_applied_mA = 0;
-     g_foc_current_q_ff_mV = 0;
      g_foc_low_speed_iq_slew_active = 0U;
      g_foc_low_speed_iq_slew_limited_mA = 0;
      g_foc_lift_current_limit_active = 0U;
@@ -2447,31 +2442,6 @@ static float FOC_ApplyLowSpeedIqSlew(float iq_ref,
 
      return s_low_speed_iq_slew_ref;
 }
-
- static float FOC_ApplyLowSpeedCurrentFeedForward(float vq)
- {
-     float ref_abs = FOC_FABS(s_ctx.speed_ref_ctrl);
-     float max_rpm = (float)g_foc_low_speed_current_ff_max_rpm;
-     float gain = (float)g_foc_current_q_rs_ff_gain_milli * 0.001f;
-     float ff_v = 0.0f;
-
-     g_foc_current_q_ff_mV = 0;
-
-     if ((g_foc_low_speed_current_ff_enable == 0U) ||
-         (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED) ||
-         (max_rpm < 1.0f) ||
-         (ref_abs > max_rpm) ||
-         (gain <= 0.0f)) {
-         return vq;
-     }
-
-     ff_v = s_config.motor.rs * FOC_ControlIqRef() * gain;
-     g_foc_current_q_ff_mV = FOC_Log_ToI16(ff_v, 1000.0f);
-
-     return FOC_CLAMP(vq + ff_v,
-                      s_ctx.pid_iq.out_min,
-                      s_ctx.pid_iq.out_max);
- }
 
 static uint8_t FOC_DynSpeed_Near(float a, float b)
 {
@@ -6166,7 +6136,6 @@ static void FOC_Prof_Reset(void)
          g_foc_bidir_zero_soft_active = 0U;
          g_foc_bidir_zero_soft_scale_percent = 100U;
          g_foc_bidir_zero_soft_limited_mA = 0;
-         g_foc_current_q_ff_mV = 0;
      }
 
      s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
@@ -6180,7 +6149,6 @@ static void FOC_Prof_Reset(void)
                                      FOC_ControlIqRef() - s_ctx.i_dq.q,
 
                                      pid_dt, pid_inv_dt);
-     s_ctx.v_dq.q = FOC_ApplyLowSpeedCurrentFeedForward(s_ctx.v_dq.q);
 
  
 
