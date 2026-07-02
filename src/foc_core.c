@@ -356,6 +356,10 @@ static int8_t   s_foc_hall_travel_stall_dir_store[FOC_CORE_MOTOR_COUNT] = {0, 0}
 static int32_t  s_foc_hall_travel_suppressed_delta_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_pid_err_rpm = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_pid_iq_mA = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_pid_i_mA = 0;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_iq_max_mA = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_ctrl_rpm = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_ref_ramp_active = 0U;
@@ -562,10 +566,22 @@ extern volatile int16_t  g_foc_detail_log_raw_ref_rpm[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_ref_rpm[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_fdb_rpm[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_ctrl_fdb_rpm[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_speed_err_rpm[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_speed_pid_iq_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_speed_pid_i_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_speed_iq_max_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_speed_error_boost_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile uint8_t  g_foc_detail_log_speed_start_state[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_speed_start_iq_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile uint8_t  g_foc_detail_log_iq_slew_active[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_iq_slew_limited_mA[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_iq_ref_mA[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_id_mA[FOC_DETAIL_LOG_SIZE];
 extern volatile int16_t  g_foc_detail_log_iq_mA[FOC_DETAIL_LOG_SIZE];
 extern volatile uint16_t g_foc_detail_log_current_peak_mA[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_vq_mV[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_vbus_mV[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_duty_max[FOC_DETAIL_LOG_SIZE];
 extern volatile uint8_t  g_foc_detail_log_hall_raw[FOC_DETAIL_LOG_SIZE];
 extern volatile uint8_t  g_foc_detail_log_hall_sector[FOC_DETAIL_LOG_SIZE];
 extern volatile uint16_t g_foc_detail_log_sector_no_change_count[FOC_DETAIL_LOG_SIZE];
@@ -1117,9 +1133,14 @@ static void FOC_IF_SyncAngleOnHallEdge(float omega_e)
      return &g_foc_ctx[motor_id];
  }
 
+static float FOC_DebugSignedIq(float iq)
+{
+     return (s_ctx.direction == FOC_DIR_CCW) ? -iq : iq;
+}
+
 static float FOC_ControlIqRef(void)
 {
-     return (s_ctx.direction == FOC_DIR_CCW) ? -s_ctx.iq_ref : s_ctx.iq_ref;
+     return FOC_DebugSignedIq(s_ctx.iq_ref);
 }
 
 static float FOC_ApplyAppDirectionInvertToRef(float ref)
@@ -1701,6 +1722,14 @@ static void FOC_StartLog_Service(uint32_t now_us)
      FOC_StartLog_Record(now_us);
 }
 
+ static void FOC_ResetSpeedPidDebug(void)
+ {
+     g_foc_speed_pid_err_rpm = 0;
+     g_foc_speed_pid_iq_mA = 0;
+     g_foc_speed_pid_i_mA = 0;
+     g_foc_speed_iq_max_mA = 0U;
+ }
+
  static void FOC_ResetSpeedRefRamp(void)
  {
      s_speed_ref_ctrl = 0.0f;
@@ -1711,6 +1740,7 @@ static void FOC_StartLog_Service(uint32_t now_us)
      g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(FOC_FABS(s_ctx.speed_ref), 1.0f);
      g_foc_speed_ref_ctrl_rpm = 0;
      g_foc_speed_ref_ramp_active = 0U;
+     FOC_ResetSpeedPidDebug();
  }
  static void FOC_ResetSpeedLoopForZeroHold(void)
  {
@@ -1722,6 +1752,7 @@ static void FOC_StartLog_Service(uint32_t now_us)
      s_speed_loop_accum_us = 0U;
      s_speed_error_boost_prev_ref = 0.0f;
      g_foc_speed_error_boost_mA = 0;
+     FOC_ResetSpeedPidDebug();
      g_foc_low_speed_torque_active = 0U;
      g_foc_low_speed_torque_applied_mA = 0;
      g_foc_current_q_ff_mV = 0;
@@ -1796,6 +1827,7 @@ static void FOC_ApplyHallTravelStallCurrentCut(uint8_t reset_pid)
 {
     s_ctx.iq_ref = 0.0f;
     g_foc_speed_error_boost_mA = 0;
+    FOC_ResetSpeedPidDebug();
     g_foc_low_speed_torque_active = 0U;
     g_foc_low_speed_torque_applied_mA = 0;
     g_foc_low_speed_iq_slew_active = 0U;
@@ -2506,10 +2538,22 @@ static void FOC_DetailLog_Reset(void)
         g_foc_detail_log_ref_rpm[i] = 0;
         g_foc_detail_log_fdb_rpm[i] = 0;
         g_foc_detail_log_ctrl_fdb_rpm[i] = 0;
+        g_foc_detail_log_speed_err_rpm[i] = 0;
+        g_foc_detail_log_speed_pid_iq_mA[i] = 0;
+        g_foc_detail_log_speed_pid_i_mA[i] = 0;
+        g_foc_detail_log_speed_iq_max_mA[i] = 0U;
+        g_foc_detail_log_speed_error_boost_mA[i] = 0;
+        g_foc_detail_log_speed_start_state[i] = 0U;
+        g_foc_detail_log_speed_start_iq_mA[i] = 0;
+        g_foc_detail_log_iq_slew_active[i] = 0U;
+        g_foc_detail_log_iq_slew_limited_mA[i] = 0;
         g_foc_detail_log_iq_ref_mA[i] = 0;
         g_foc_detail_log_id_mA[i] = 0;
         g_foc_detail_log_iq_mA[i] = 0;
         g_foc_detail_log_current_peak_mA[i] = 0U;
+        g_foc_detail_log_vq_mV[i] = 0;
+        g_foc_detail_log_vbus_mV[i] = 0U;
+        g_foc_detail_log_duty_max[i] = 0U;
         g_foc_detail_log_hall_raw[i] = 0U;
         g_foc_detail_log_hall_sector[i] = 0U;
         g_foc_detail_log_sector_no_change_count[i] = 0U;
@@ -2543,6 +2587,7 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
     int16_t detail_ref_rpm = g_foc_dyn_speed_ref_rpm;
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
+    float duty_max = s_ctx.duty_a;
 
     if (g_foc_detail_log_active == 0U) {
         return;
@@ -2581,6 +2626,12 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
     if (s_ctx.timestamp_prev != 0U) {
         edge_elapsed_us = now_us - s_ctx.timestamp_prev;
     }
+    if (s_ctx.duty_b > duty_max) {
+        duty_max = s_ctx.duty_b;
+    }
+    if (s_ctx.duty_c > duty_max) {
+        duty_max = s_ctx.duty_c;
+    }
 
     s_detail_log_last_us = now_us;
     g_foc_detail_log_t_ms[idx] =
@@ -2593,12 +2644,28 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
         FOC_Log_ToI16(signed_speed_fdb, 1.0f);
     g_foc_detail_log_ctrl_fdb_rpm[idx] =
         FOC_Log_ToI16(signed_speed_ctrl_fdb, 1.0f);
+    g_foc_detail_log_speed_err_rpm[idx] = g_foc_speed_pid_err_rpm;
+    g_foc_detail_log_speed_pid_iq_mA[idx] = g_foc_speed_pid_iq_mA;
+    g_foc_detail_log_speed_pid_i_mA[idx] = g_foc_speed_pid_i_mA;
+    g_foc_detail_log_speed_iq_max_mA[idx] = g_foc_speed_iq_max_mA;
+    g_foc_detail_log_speed_error_boost_mA[idx] =
+        g_foc_speed_error_boost_mA;
+    g_foc_detail_log_speed_start_state[idx] = g_foc_speed_start_state;
+    g_foc_detail_log_speed_start_iq_mA[idx] =
+        g_foc_speed_start_applied_iq_mA;
+    g_foc_detail_log_iq_slew_active[idx] =
+        g_foc_low_speed_iq_slew_active;
+    g_foc_detail_log_iq_slew_limited_mA[idx] =
+        g_foc_low_speed_iq_slew_limited_mA;
     g_foc_detail_log_iq_ref_mA[idx] =
         FOC_Log_ToI16(FOC_ControlIqRef(), 1000.0f);
     g_foc_detail_log_id_mA[idx] = FOC_Log_ToI16(s_ctx.i_dq.d, 1000.0f);
     g_foc_detail_log_iq_mA[idx] = FOC_Log_ToI16(s_ctx.i_dq.q, 1000.0f);
     g_foc_detail_log_current_peak_mA[idx] =
         FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
+    g_foc_detail_log_vq_mV[idx] = FOC_Log_ToI16(s_ctx.v_dq.q, 1000.0f);
+    g_foc_detail_log_vbus_mV[idx] = FOC_Log_ToU16(s_ctx.v_bus, 1000.0f);
+    g_foc_detail_log_duty_max[idx] = FOC_Log_ToU16(duty_max, 10000.0f);
     g_foc_detail_log_hall_raw[idx] =
         (uint8_t)((s_ctx.hall_raw.h1 << 2) |
                   (s_ctx.hall_raw.h2 << 1) |
@@ -4479,6 +4546,7 @@ static void FOC_Prof_Reset(void)
      g_foc_hall_poll_count = 0U;
      g_foc_speed_ctrl_fdb_rpm = 0;
      g_foc_speed_error_boost_mA = 0;
+     FOC_ResetSpeedPidDebug();
      FOC_ResetSpeedDropFaultMonitor();
      FOC_ResetSpeedFdbDropFaultMonitor();
      g_foc_signed_speed_ref_normalize_count = 0U;
@@ -5884,6 +5952,8 @@ static void FOC_Prof_Reset(void)
              float speed_iq_ref_min_saved = s_ctx.pid_speed.out_min;
              float speed_iq_ref_max_saved = s_ctx.pid_speed.out_max;
              float speed_iq_ref;
+             float speed_pid_iq = 0.0f;
+             float speed_pid_i = 0.0f;
              uint8_t zero_speed_pid_frozen =
                  FOC_BidirZeroTransfer_SpeedPidFrozen();
              uint8_t zero_output_held = FOC_BidirZeroTransfer_PidFrozen();
@@ -5899,17 +5969,24 @@ static void FOC_Prof_Reset(void)
 
              s_speed_loop_accum_us = 0U;
              s_ctx.speed_loop_counter = 0U;
+             g_foc_speed_pid_err_rpm = FOC_Log_ToI16(speed_error, 1.0f);
+             g_foc_speed_iq_max_mA =
+                 FOC_Log_ToU16(speed_iq_ref_max, 1000.0f);
 
              if (hall_travel_stall_blocked != 0U) {
                  speed_iq_ref = 0.0f;
+                 speed_pid_iq = speed_iq_ref;
                  FOC_PID_Reset(&s_ctx.pid_speed);
                  g_foc_speed_error_boost_mA = 0;
              } else if (zero_speed_pid_frozen != 0U) {
                  speed_iq_ref = s_ctx.iq_ref;
+                 speed_pid_iq = speed_iq_ref;
+                 speed_pid_i = s_ctx.pid_speed.ki * s_ctx.pid_speed.integral;
                  FOC_PID_Reset(&s_ctx.pid_speed);
                  g_foc_speed_error_boost_mA = 0;
              } else if (speed_start_state == FOC_SPEED_START_STATE_BREAKAWAY) {
                  speed_iq_ref = FOC_SpeedStart_BreakawayIq(speed_iq_ref_max);
+                 speed_pid_iq = speed_iq_ref;
                  s_speed_start_iq_ref = speed_iq_ref;
                  FOC_SpeedStart_UpdateDebug();
                  FOC_PID_Reset(&s_ctx.pid_speed);
@@ -5937,6 +6014,8 @@ static void FOC_Prof_Reset(void)
                  speed_iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
                                                 speed_error,
                                                 speed_dt, speed_inv_dt);
+                 speed_pid_iq = speed_iq_ref;
+                 speed_pid_i = s_ctx.pid_speed.ki * s_ctx.pid_speed.integral;
                  s_ctx.pid_speed.out_min = speed_iq_ref_min_saved;
                  s_ctx.pid_speed.out_max = speed_iq_ref_max_saved;
 
@@ -5965,6 +6044,10 @@ static void FOC_Prof_Reset(void)
                  g_foc_speed_error_boost_mA = 0;
 #endif
              }
+             g_foc_speed_pid_iq_mA =
+                 FOC_Log_ToI16(FOC_DebugSignedIq(speed_pid_iq), 1000.0f);
+             g_foc_speed_pid_i_mA =
+                 FOC_Log_ToI16(FOC_DebugSignedIq(speed_pid_i), 1000.0f);
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
                  (g_foc_bidir_speed_enable != 0U) &&
@@ -6069,6 +6152,7 @@ static void FOC_Prof_Reset(void)
          s_ctx.speed_loop_counter = 0U;
          FOC_SpeedStart_Reset();
          g_foc_speed_error_boost_mA = 0;
+         FOC_ResetSpeedPidDebug();
          s_speed_error_boost_prev_ref = 0.0f;
          g_foc_low_speed_torque_active = 0U;
          g_foc_low_speed_torque_applied_mA = 0;
@@ -6457,6 +6541,7 @@ int FOC_Core_SetCurrentRef(float id, float iq)
      s_ctx.speed_ctrl_fdb = 0.0f;
      g_foc_speed_ctrl_fdb_rpm = 0;
      g_foc_speed_error_boost_mA = 0;
+     FOC_ResetSpeedPidDebug();
      s_speed_error_boost_prev_ref = 0.0f;
      s_bidir_decel_hold_prev_ref = 0.0f;
      g_foc_bidir_decel_hold_active = 0U;
@@ -6554,6 +6639,7 @@ int FOC_Core_SetIFRef(float iq, float rpm)
      s_ctx.speed_ctrl_fdb = 0.0f;
      g_foc_speed_ctrl_fdb_rpm = 0;
      g_foc_speed_error_boost_mA = 0;
+     FOC_ResetSpeedPidDebug();
      s_speed_error_boost_prev_ref = 0.0f;
      s_bidir_decel_hold_prev_ref = 0.0f;
      g_foc_bidir_decel_hold_active = 0U;
