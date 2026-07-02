@@ -837,6 +837,7 @@ static int16_t FOC_BidirSpeed_TargetSign(float target);
 static void FOC_BidirSpeed_ServiceRef(void);
 static uint8_t FOC_BidirZeroTransfer_Active(void);
 static void FOC_BidirZeroTransfer_Reset(void);
+static void FOC_BidirZeroTransfer_ClearHandoff(void);
 static void FOC_BidirZeroTransfer_ArmHandoff(uint32_t now_us,
                                              int16_t sign,
                                              float signed_iq);
@@ -1228,6 +1229,7 @@ static void FOC_SpeedStart_BeginBreakaway(float speed_iq_ref_max)
      s_speed_start_soft_elapsed_us = 0U;
      s_speed_start_direction = s_ctx.direction;
      s_speed_start_iq_ref = FOC_SpeedStart_BreakawayIq(speed_iq_ref_max);
+     FOC_BidirZeroTransfer_ClearHandoff();
      g_foc_speed_start_moving = 0U;
      if (g_foc_speed_start_breakaway_count < 0xFFFFFFFFU) {
          g_foc_speed_start_breakaway_count++;
@@ -5872,13 +5874,22 @@ static void FOC_Prof_Reset(void)
                                                              speed_iq_ref_max,
                                                              speed_dt);
              }
-             if (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) {
+             if ((speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
+                 (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref = FOC_BidirZeroTransfer_ApplyIq(speed_iq_ref,
                                                               speed_dt);
+             } else if (speed_start_state == FOC_SPEED_START_STATE_SOFT_START) {
+                 g_foc_zero_ctrl_iq_raw_mA =
+                     FOC_Log_ToI16(FOC_BidirZeroTransfer_LocalToSignedIq(speed_iq_ref),
+                                   1000.0f);
+                 g_foc_zero_iq_ff_mA = 0;
+                 g_foc_zero_pid_freeze_active = 0U;
+                 g_foc_zero_direction_pending = 0;
              }
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
-                 (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY)) {
+                 (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
+                 (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref = FOC_ApplyLowSpeedIqSlew(speed_iq_ref,
                                                         speed_ref_ctrl,
                                                         speed_dt);
