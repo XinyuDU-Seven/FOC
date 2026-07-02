@@ -405,6 +405,7 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_soft_ms = 200U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_cw_breakaway_iq_mA = 3200U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_ccw_breakaway_iq_mA = 2000U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_hold_percent = 80U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_close_deadband_rpm = 5U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_soft_slew_mA_per_s = 12000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_elapsed_ms = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_soft_elapsed_ms = 0U;
@@ -823,6 +824,9 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
 static float FOC_SpeedStart_BreakawayIq(float speed_iq_ref_max);
 static float FOC_SpeedStart_HoldIq(float speed_iq_ref_max);
 static uint8_t FOC_SpeedStart_HoldActive(void);
+static uint8_t FOC_SpeedStart_CloseReady(float speed_ref_ctrl);
+static void FOC_SpeedStart_Close(float speed_error,
+                                 float speed_iq_ref_max);
 static float FOC_SpeedStart_SoftPidOutMax(float speed_iq_ref_max,
                                           float speed_dt);
 static float FOC_SpeedStart_ApplySoftRamp(float iq_ref,
@@ -1281,6 +1285,44 @@ static uint8_t FOC_SpeedStart_HoldActive(void)
      return (FOC_SpeedStart_ReleaseReached() == 0U) ? 1U : 0U;
 }
 
+static uint8_t FOC_SpeedStart_CloseReady(float speed_ref_ctrl)
+{
+     float release_rpm = FOC_SpeedStart_ReleaseRpm();
+     float deadband = (float)g_foc_speed_start_close_deadband_rpm;
+     float ctrl_fdb = FOC_FABS(s_ctx.speed_ctrl_fdb);
+
+     if (release_rpm <= 0.0f) {
+         return 1U;
+     }
+     if (speed_ref_ctrl < release_rpm) {
+         return 0U;
+     }
+
+     return ((speed_ref_ctrl + deadband) >= ctrl_fdb) ? 1U : 0U;
+}
+
+static void FOC_SpeedStart_Close(float speed_error,
+                                 float speed_iq_ref_max)
+{
+     float handoff_iq = s_speed_start_iq_ref;
+
+     if (speed_iq_ref_max < 0.0f) {
+         speed_iq_ref_max = 0.0f;
+     }
+     handoff_iq = FOC_CLAMP(handoff_iq, 0.0f, speed_iq_ref_max);
+
+     if (s_ctx.pid_speed.ki > 0.0f) {
+         float p_term = s_ctx.pid_speed.kp * speed_error;
+
+         s_ctx.pid_speed.integral =
+             (handoff_iq - p_term) / s_ctx.pid_speed.ki;
+     }
+     s_ctx.pid_speed.prev_error = speed_error;
+
+     s_speed_start_state = FOC_SPEED_START_STATE_CLOSED;
+     s_speed_start_iq_ref = 0.0f;
+}
+
 static void FOC_SpeedStart_BeginBreakaway(float speed_iq_ref_max)
 {
      s_speed_start_state = FOC_SPEED_START_STATE_BREAKAWAY;
@@ -1361,6 +1403,7 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
          uint32_t soft_us = (uint32_t)g_foc_speed_start_soft_ms * 1000U;
          float release_rpm = FOC_SpeedStart_ReleaseRpm();
          uint8_t release_by_speed;
+         uint8_t close_ready;
 
          if ((0xFFFFFFFFU - s_speed_start_soft_elapsed_us) >= elapsed_us) {
              s_speed_start_soft_elapsed_us += elapsed_us;
@@ -1368,13 +1411,15 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
              s_speed_start_soft_elapsed_us = 0xFFFFFFFFU;
          }
          release_by_speed = FOC_SpeedStart_ReleaseReached();
+         close_ready = FOC_SpeedStart_CloseReady(speed_ref_ctrl);
          FOC_SpeedStart_IsMoving();
          /* Keep the hold floor below release; soft_ms is the post-release fade. */
-         if (((release_rpm <= 0.0f) || (release_by_speed != 0U)) &&
+         if (((release_rpm <= 0.0f) ||
+              ((release_by_speed != 0U) && (close_ready != 0U))) &&
              ((soft_us == 0U) ||
               (s_speed_start_soft_elapsed_us >= soft_us))) {
-             s_speed_start_state = FOC_SPEED_START_STATE_CLOSED;
-             s_speed_start_iq_ref = 0.0f;
+             FOC_SpeedStart_Close(speed_ref_ctrl - s_ctx.speed_ctrl_fdb,
+                                  speed_iq_ref_max);
          }
      }
 
