@@ -1307,7 +1307,7 @@ static uint8_t FOC_SpeedStart_CloseReady(float speed_ref_ctrl)
          return 0U;
      }
 
-     return ((speed_ref_ctrl + deadband) >= ctrl_fdb) ? 1U : 0U;
+     return ((ctrl_fdb + deadband) >= speed_ref_ctrl) ? 1U : 0U;
 }
 
 static void FOC_SpeedStart_Close(float speed_error,
