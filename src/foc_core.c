@@ -1784,8 +1784,7 @@ static void FOC_ApplyHallTravelStallCurrentCut(uint8_t reset_pid)
 
 static void FOC_UpdateHallTravelStallGuard(void)
 {
-    float ref_abs = FOC_FABS(s_ctx.speed_ref);
-    float ctrl_ref_abs = FOC_FABS(s_speed_ref_ctrl);
+    float ref_abs = FOC_FABS(s_speed_ref_ctrl);
     float fdb_abs = FOC_FABS(s_ctx.speed_fdb);
     float current_abs = FOC_FABS(s_ctx.iq_ref);
     float iq_fdb_abs = FOC_FABS(s_ctx.i_dq.q);
@@ -1800,9 +1799,6 @@ static void FOC_UpdateHallTravelStallGuard(void)
     uint8_t condition = 0U;
     uint8_t keep_latched = 0U;
 
-    if (ctrl_ref_abs > ref_abs) {
-        ref_abs = ctrl_ref_abs;
-    }
     if (iq_fdb_abs > current_abs) {
         current_abs = iq_fdb_abs;
     }
