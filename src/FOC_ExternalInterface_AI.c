@@ -343,11 +343,21 @@ static uint16_t s_foc_speed_api_test_decim_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_apply = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_disable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_auto_enable = 1U;
-FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_motor_id = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_live_enable = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_use_if = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_motor_id = 1U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_current_cmd_id_ref_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_current_cmd_iq_ref_mA = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_current_cmd_if_speed_rpm = 30U;
 FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_id_a = 0.0f;
 FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_iq_a = 0.0f;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_current_cmd_result = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_current_cmd_seq = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_live_active = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_current_cmd_applied_use_if = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_current_cmd_applied_id_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_current_cmd_applied_iq_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_current_cmd_applied_if_speed_rpm = 0;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_current_cmd_state = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_current_cmd_fault = 0U;
 FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_id_ref_a = 0.0f;
@@ -419,6 +429,12 @@ static uint32_t s_foc_iq_start_test_start_us = 0U;
 static uint32_t s_foc_iq_start_test_step_us = 0U;
 static uint32_t s_foc_iq_start_test_at_max_us = 0U;
 static uint16_t s_foc_iq_start_test_abs_cmd_mA = 0U;
+static uint8_t s_foc_current_cmd_live_prev_enable = 0U;
+static uint8_t s_foc_current_cmd_last_motor_id = 0xFFU;
+static uint8_t s_foc_current_cmd_last_use_if = 0xFFU;
+static int16_t s_foc_current_cmd_last_id_mA = 0;
+static int16_t s_foc_current_cmd_last_iq_mA = 0;
+static int16_t s_foc_current_cmd_last_if_speed_rpm = 0;
 
 #if 0
 static uint8_t s_foc_dyn_speed_prev_enable = 0U;
@@ -1441,10 +1457,150 @@ static void FOC_SpeedApiTest_Service(void)
   }
 }
 
+static uint8_t FOC_CurrentCmd_GetMotorId(void)
+{
+  return (g_foc_current_cmd_motor_id < FOC_PHY_MOTOR_COUNT)
+       ? g_foc_current_cmd_motor_id
+       : 0U;
+}
+
+static float FOC_CurrentCmd_MilliToAmp(int16_t current_mA)
+{
+  return (float)current_mA * 0.001f;
+}
+
+static int16_t FOC_CurrentCmd_SignedIfSpeed(int16_t iq_mA)
+{
+  uint16_t speed_abs = g_foc_current_cmd_if_speed_rpm;
+
+  if (speed_abs > 32767U) {
+    speed_abs = 32767U;
+  }
+
+  if (iq_mA < 0) {
+    return -(int16_t)speed_abs;
+  }
+  if (iq_mA > 0) {
+    return (int16_t)speed_abs;
+  }
+  return 0;
+}
+
+static void FOC_CurrentCmd_ClearLiveCache(void)
+{
+  s_foc_current_cmd_live_prev_enable = 0U;
+  s_foc_current_cmd_last_motor_id = 0xFFU;
+  s_foc_current_cmd_last_use_if = 0xFFU;
+  s_foc_current_cmd_last_id_mA = 0;
+  s_foc_current_cmd_last_iq_mA = 0;
+  s_foc_current_cmd_last_if_speed_rpm = 0;
+  g_foc_current_cmd_live_active = 0U;
+  g_foc_current_cmd_applied_use_if = 0U;
+  g_foc_current_cmd_applied_id_mA = 0;
+  g_foc_current_cmd_applied_iq_mA = 0;
+  g_foc_current_cmd_applied_if_speed_rpm = 0;
+}
+
+static void FOC_CurrentCmd_ClearOtherModes(uint8_t motor_id)
+{
+  g_foc_test_case_select = FOC_TEST_CASE_STOP;
+  g_foc_test_case_applied = FOC_TEST_CASE_STOP;
+  g_foc_test_motor_id_applied = motor_id;
+  s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
+  s_foc_test_case_last_motor_id = motor_id;
+  g_foc_speed_api_test_enable = 0U;
+  g_foc_ext_api_test_enable = 0U;
+  FOC_AI_ClearAutoModes();
+}
+
+static FocError FOC_CurrentCmd_EnableIfNeeded(uint8_t motor_id)
+{
+  const FOC_Context_t *ctx = FOC_Core_GetContextByMotor(motor_id);
+
+  if (ctx->state == FOC_STATE_FAULT) {
+    return FOC_AI_MapFault(ctx->fault);
+  }
+
+  if ((g_foc_current_cmd_auto_enable != 0U) &&
+      (ctx->state != FOC_STATE_RUNNING)) {
+    return Foc_EnableFocControl(motor_id);
+  }
+
+  return FOC_SUCCESS;
+}
+
+static FocError FOC_CurrentCmd_ApplyLive(uint8_t motor_id)
+{
+  FocError result;
+  int16_t id_mA = g_foc_current_cmd_id_ref_mA;
+  int16_t iq_mA = g_foc_current_cmd_iq_ref_mA;
+  int16_t if_speed_rpm = FOC_CurrentCmd_SignedIfSpeed(iq_mA);
+  uint8_t use_if =
+      ((g_foc_current_cmd_use_if != 0U) && (iq_mA != 0)) ? 1U : 0U;
+  float id_a = FOC_CurrentCmd_MilliToAmp(id_mA);
+  float iq_a = FOC_CurrentCmd_MilliToAmp(iq_mA);
+
+  g_foc_current_cmd_id_a = id_a;
+  g_foc_current_cmd_iq_a = iq_a;
+
+  FOC_CurrentCmd_ClearOtherModes(motor_id);
+
+  result = FOC_CurrentCmd_EnableIfNeeded(motor_id);
+  if (result == FOC_SUCCESS) {
+    if (use_if != 0U) {
+      result = Foc_SetIFReference(motor_id, iq_a, (float)if_speed_rpm);
+    } else {
+      result = Foc_SetCurrentReference(motor_id, id_a, iq_a);
+    }
+  }
+
+  g_foc_current_cmd_live_active = (result == FOC_SUCCESS) ? 1U : 0U;
+  g_foc_current_cmd_applied_use_if = use_if;
+  g_foc_current_cmd_applied_id_mA = id_mA;
+  g_foc_current_cmd_applied_iq_mA = iq_mA;
+  g_foc_current_cmd_applied_if_speed_rpm = use_if ? if_speed_rpm : 0;
+
+  s_foc_current_cmd_live_prev_enable = 1U;
+  s_foc_current_cmd_last_motor_id = motor_id;
+  s_foc_current_cmd_last_use_if = g_foc_current_cmd_use_if;
+  s_foc_current_cmd_last_id_mA = id_mA;
+  s_foc_current_cmd_last_iq_mA = iq_mA;
+  s_foc_current_cmd_last_if_speed_rpm = if_speed_rpm;
+
+  return result;
+}
+
+static uint8_t FOC_CurrentCmd_LiveNeedsApply(uint8_t motor_id)
+{
+  int16_t if_speed_rpm = FOC_CurrentCmd_SignedIfSpeed(
+      g_foc_current_cmd_iq_ref_mA);
+
+  if (s_foc_current_cmd_live_prev_enable == 0U) {
+    return 1U;
+  }
+  if (motor_id != s_foc_current_cmd_last_motor_id) {
+    return 1U;
+  }
+  if (g_foc_current_cmd_use_if != s_foc_current_cmd_last_use_if) {
+    return 1U;
+  }
+  if (g_foc_current_cmd_id_ref_mA != s_foc_current_cmd_last_id_mA) {
+    return 1U;
+  }
+  if (g_foc_current_cmd_iq_ref_mA != s_foc_current_cmd_last_iq_mA) {
+    return 1U;
+  }
+  if (if_speed_rpm != s_foc_current_cmd_last_if_speed_rpm) {
+    return 1U;
+  }
+
+  return 0U;
+}
+
 static void FOC_CurrentCmd_UpdateMonitor(void)
 {
   const FOC_Context_t *ctx;
-  uint8_t motor_id = g_foc_current_cmd_motor_id;
+  uint8_t motor_id = FOC_CurrentCmd_GetMotorId();
 
   ctx = FOC_Core_GetContextByMotor(motor_id);
 
@@ -1461,25 +1617,29 @@ static void FOC_CurrentCmd_UpdateMonitor(void)
 static void FOC_CurrentCmd_Service(void)
 {
   FocError result = FOC_SUCCESS;
-  uint8_t motor_id = g_foc_current_cmd_motor_id;
+  uint8_t motor_id = FOC_CurrentCmd_GetMotorId();
   uint8_t has_cmd = 0U;
+
+  if (g_foc_current_cmd_live_enable != 0U) {
+    if ((g_foc_current_cmd_apply != 0U) ||
+        (FOC_CurrentCmd_LiveNeedsApply(motor_id) != 0U)) {
+      g_foc_current_cmd_apply = 0U;
+      result = FOC_CurrentCmd_ApplyLive(motor_id);
+      has_cmd = 1U;
+    }
+  } else if (s_foc_current_cmd_live_prev_enable != 0U) {
+    result = Foc_SetCurrentReference(motor_id, 0.0f, 0.0f);
+    has_cmd = 1U;
+    FOC_CurrentCmd_ClearLiveCache();
+  }
 
   if (g_foc_current_cmd_apply != 0U) {
     g_foc_current_cmd_apply = 0U;
     has_cmd = 1U;
 
-    g_foc_test_case_select = FOC_TEST_CASE_STOP;
-    g_foc_test_case_applied = FOC_TEST_CASE_STOP;
-    g_foc_test_motor_id_applied = motor_id;
-    s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
-    s_foc_test_case_last_motor_id = motor_id;
-    g_foc_speed_api_test_enable = 0U;
-    g_foc_ext_api_test_enable = 0U;
-    FOC_AI_ClearAutoModes();
+    FOC_CurrentCmd_ClearOtherModes(motor_id);
 
-    if (g_foc_current_cmd_auto_enable != 0U) {
-      result = Foc_EnableFocControl(motor_id);
-    }
+    result = FOC_CurrentCmd_EnableIfNeeded(motor_id);
 
     if (result == FOC_SUCCESS) {
       result = Foc_SetCurrentReference(motor_id,
@@ -1491,8 +1651,12 @@ static void FOC_CurrentCmd_Service(void)
   if (g_foc_current_cmd_disable != 0U) {
     g_foc_current_cmd_disable = 0U;
     has_cmd = 1U;
+    g_foc_current_cmd_live_enable = 0U;
     g_foc_current_cmd_id_a = 0.0f;
     g_foc_current_cmd_iq_a = 0.0f;
+    g_foc_current_cmd_id_ref_mA = 0;
+    g_foc_current_cmd_iq_ref_mA = 0;
+    FOC_CurrentCmd_ClearLiveCache();
     result = Foc_DisableFocControl(motor_id);
   }
 
