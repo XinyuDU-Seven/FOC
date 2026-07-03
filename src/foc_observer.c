@@ -845,8 +845,17 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      uint32_t no_edge_elapsed_us = 0U;
      float no_edge_limit_rpm = 0.0f;
      float startup_release_rpm = (float)g_foc_observer_startup_release_rpm;
+     float startup_release_err_rpm = FOC_STARTUP_PREDICT_RELEASE_ERR_RPM;
+     float release_blend_rate_rpm_s =
+         FOC_STARTUP_PREDICT_RELEASE_BLEND_RPM_PER_S;
+     float release_blend_done_rpm =
+         FOC_STARTUP_PREDICT_RELEASE_BLEND_DONE_RPM;
+     float speed_filtered_abs = FOC_FABS(ctx->speed_filtered);
+     float speed_ref_ctrl_abs = FOC_FABS(ctx->speed_ref_ctrl);
+     float startup_track_err_rpm = speed_ref_ctrl_abs - speed_filtered_abs;
      FOC_Dir_e hall_dir;
      uint8_t use_startup_ref_predict;
+     uint8_t startup_release_blend_active = 0U;
      uint8_t no_edge_overdue = FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
                                                                &no_edge_elapsed_us,
                                                                &no_edge_limit_rpm);
@@ -854,9 +863,24 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      if (startup_release_rpm < FOC_STARTUP_PREDICT_START_RPM) {
          startup_release_rpm = FOC_STARTUP_PREDICT_START_RPM;
      }
+     if (startup_release_err_rpm < 0.0f) {
+         startup_release_err_rpm = 0.0f;
+     }
+     if (startup_track_err_rpm < 0.0f) {
+         startup_track_err_rpm = 0.0f;
+     }
+     if (release_blend_rate_rpm_s < 0.0f) {
+         release_blend_rate_rpm_s = -release_blend_rate_rpm_s;
+     }
+     if (release_blend_done_rpm < 0.0f) {
+         release_blend_done_rpm = -release_blend_done_rpm;
+     }
      use_startup_ref_predict =
          ((ctx->hall_sector_dt_us == 0U) ||
-          (FOC_FABS(ctx->speed_filtered) < startup_release_rpm))
+          (speed_filtered_abs < startup_release_rpm) ||
+          ((speed_filtered_abs < FOC_STARTUP_PREDICT_MAX_RPM) &&
+           (speed_ref_ctrl_abs > startup_release_rpm) &&
+           (startup_track_err_rpm > startup_release_err_rpm)))
          ? 1U : 0U;
      g_foc_observer_startup_ref_active = 0U;
      g_foc_observer_startup_sync_active = 0U;
@@ -932,7 +956,30 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          speed_for_predict = s_startup_predict_speed_rpm;
          g_foc_observer_startup_ref_active = 1U;
      } else {
-         s_startup_predict_speed_rpm = speed_for_predict;
+         float release_target = speed_for_predict;
+         float release_delta = release_target - s_startup_predict_speed_rpm;
+         float release_step = release_blend_rate_rpm_s * dt;
+
+         if ((ctx->speed_ref > 0.0f) &&
+             (cur_sector != 0U) &&
+             (s_startup_predict_speed_rpm > 0.0f) &&
+             (release_step > 0.0f) &&
+             (FOC_FABS(release_delta) > release_blend_done_rpm)) {
+             if (release_delta > release_step) {
+                 s_startup_predict_speed_rpm += release_step;
+             } else if (release_delta < -release_step) {
+                 s_startup_predict_speed_rpm -= release_step;
+             } else {
+                 s_startup_predict_speed_rpm = release_target;
+             }
+             speed_for_predict = s_startup_predict_speed_rpm;
+             startup_release_blend_active = 1U;
+         } else {
+             s_startup_predict_speed_rpm = speed_for_predict;
+         }
+     }
+     if (startup_release_blend_active != 0U) {
+         g_foc_observer_startup_ref_active = 1U;
      }
      g_foc_observer_predict_speed_rpm =
          (uint16_t)((speed_for_predict > 65535.0f) ? 65535U : speed_for_predict);
