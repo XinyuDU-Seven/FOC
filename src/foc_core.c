@@ -1420,27 +1420,24 @@ static uint8_t FOC_SpeedStart_CloseReady(float speed_ref_ctrl)
          return 0U;
      }
 
-     return ((ctrl_fdb + deadband) >= speed_ref_ctrl) ? 1U : 0U;
+     return ((ctrl_fdb + deadband) >= release_rpm) ? 1U : 0U;
 }
 
 static float FOC_SpeedStart_ScaleHandoffIq(float iq,
                                            float speed_error,
                                            float speed_iq_ref_max)
 {
-     float overspeed_band = (float)g_foc_speed_start_handoff_overspeed_rpm;
+     float blend_band = (float)g_foc_speed_start_handoff_overspeed_rpm;
 
      iq = FOC_CLAMP(iq, 0.0f, speed_iq_ref_max);
-     if (speed_error < 0.0f) {
-         if (overspeed_band <= 0.0f) {
-             return 0.0f;
-         } else {
-             float overspeed = -speed_error;
-
-             if (overspeed >= overspeed_band) {
-                 return 0.0f;
-             }
-             iq *= (overspeed_band - overspeed) / overspeed_band;
-         }
+     if (speed_error <= 0.0f) {
+         return 0.0f;
+     }
+     if (blend_band <= 0.0f) {
+         return iq;
+     }
+     if (speed_error < blend_band) {
+         iq *= speed_error / blend_band;
      }
 
      return FOC_CLAMP(iq, 0.0f, speed_iq_ref_max);
@@ -1458,14 +1455,7 @@ static void FOC_SpeedStart_Close(float speed_error,
                                                 speed_error,
                                                 speed_iq_ref_max);
 
-     if ((s_ctx.pid_speed.ki > 0.0f) && (handoff_iq > 0.0f)) {
-         float p_term = s_ctx.pid_speed.kp * speed_error;
-
-         s_ctx.pid_speed.integral =
-             (handoff_iq - p_term) / s_ctx.pid_speed.ki;
-     } else {
-         s_ctx.pid_speed.integral = 0.0f;
-     }
+     s_ctx.pid_speed.integral = 0.0f;
      s_ctx.pid_speed.prev_error = speed_error;
      FOC_LowSpeedIqSlew_Prime(handoff_iq);
 
