@@ -2587,7 +2587,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_dyn_speed_start_on_max_ref = 0U;
     g_foc_dyn_speed_start_on_max_fdb = 0U;
 
-    g_foc_bidir_speed_period_ms = 8000U;
+    g_foc_bidir_speed_period_ms = 12000U;
     g_foc_bidir_speed_max_rpm = 1000U;
     g_foc_bidir_speed_step_enable = 3U;
     g_foc_bidir_speed_slew_enable = 0U;
@@ -2597,13 +2597,14 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_bidir_zero_cross_enable = 0U;
     g_foc_detail_log_enable = 1U;
     g_foc_detail_log_decim_ms = 2U;
-    g_foc_detail_log_zero_window_enable = 0U;
-    g_foc_detail_log_zero_post_ms = 0U;
+    g_foc_detail_log_trigger_rpm = 300U;
+    g_foc_detail_log_zero_window_enable = 1U;
+    g_foc_detail_log_zero_post_ms = 300U;
     g_foc_detail_log_zero_event_idx = 0xFFFFU;
     g_foc_detail_log_zero_event_count = 0U;
     g_foc_detail_log_zero_window_done = 0U;
     g_foc_detail_log_reset = 1U;
-    g_foc_detail_log_start_now = 1U;
+    g_foc_detail_log_start_now = 0U;
 
     g_foc_bidir_speed_enable = 1U;
     g_foc_bidir_speed_reset_stats = 1U;
