@@ -465,6 +465,20 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_soft_start_rpm =
 FOC_DEBUG_ROOT volatile uint16_t g_foc_bidir_zero_soft_scale_percent = 100U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_bidir_zero_soft_limited_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_bidir_zero_soft_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_smooth_brake_enable = 1U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_smooth_brake_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_entry_rpm = 180U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_release_rpm = 30U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_kd_mA_per_rpm = 6U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_min_mA = 180U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_max_mA = 1200U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_no_edge_count = 300U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_no_edge_mA = 120U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_i_decay_milli = 930U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_i_release_decay_milli = 850U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_smooth_brake_limit_mA = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_smooth_brake_limited_mA = 0;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_smooth_brake_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_enable =
     FOC_SPEED_DROP_FAULT_ENABLE;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_min_rpm = 600U;
@@ -878,6 +892,9 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
                                                float speed_dt);
 static float FOC_GetSpeedIqPositiveLimit(float speed_ref_ctrl,
                                          float speed_error);
+static void FOC_ResetSmoothBrakeDebug(void);
+static float FOC_ApplySmoothBrakeLimit(float iq_ref,
+                                       float speed_ref_ctrl);
 static void FOC_ResetSpeedDropFaultMonitor(void);
 static void FOC_CheckSpeedDropFault(void);
 static void FOC_ResetSpeedFdbDropFaultMonitor(void);
@@ -1936,12 +1953,20 @@ static void FOC_StartLog_Service(uint32_t now_us)
      FOC_StartLog_Record(now_us);
 }
 
+static void FOC_ResetSmoothBrakeDebug(void)
+{
+     g_foc_smooth_brake_active = 0U;
+     g_foc_smooth_brake_limit_mA = 0;
+     g_foc_smooth_brake_limited_mA = 0;
+}
+
  static void FOC_ResetSpeedPidDebug(void)
  {
      g_foc_speed_pid_err_rpm = 0;
      g_foc_speed_pid_iq_mA = 0;
      g_foc_speed_pid_i_mA = 0;
      g_foc_speed_iq_max_mA = 0U;
+     FOC_ResetSmoothBrakeDebug();
  }
 
  static void FOC_ResetSpeedRefRamp(void)
@@ -2531,6 +2556,112 @@ static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
 
      return s_speed_ref_ctrl;
  }
+
+static void FOC_DecaySmoothBrakeIntegral(uint16_t decay_milli)
+{
+     float decay;
+
+     if (decay_milli > 1000U) {
+         decay_milli = 1000U;
+     }
+     decay = (float)decay_milli * 0.001f;
+
+     if (s_ctx.pid_speed.integral < 0.0f) {
+         s_ctx.pid_speed.integral *= decay;
+         if ((s_ctx.pid_speed.ki > 0.0f) &&
+             (FOC_FABS(s_ctx.pid_speed.ki *
+                       s_ctx.pid_speed.integral) < 0.001f)) {
+             s_ctx.pid_speed.integral = 0.0f;
+         }
+     }
+}
+
+static float FOC_ApplySmoothBrakeLimit(float iq_ref,
+                                       float speed_ref_ctrl)
+{
+     float ref_abs = FOC_FABS(speed_ref_ctrl);
+     float ctrl_fdb_abs = FOC_FABS(s_ctx.speed_ctrl_fdb);
+     float raw_fdb_abs = FOC_FABS(s_ctx.speed_fdb);
+     float speed_abs = ctrl_fdb_abs;
+     float entry_rpm = (float)g_foc_smooth_brake_entry_rpm;
+     float release_rpm = (float)g_foc_smooth_brake_release_rpm;
+     float min_mA = (float)g_foc_smooth_brake_min_mA;
+     float max_mA = (float)g_foc_smooth_brake_max_mA;
+     float limit_mA;
+     float limit_a;
+     uint16_t decay_milli = g_foc_smooth_brake_i_decay_milli;
+
+     FOC_ResetSmoothBrakeDebug();
+
+     if (raw_fdb_abs > speed_abs) {
+         speed_abs = raw_fdb_abs;
+     }
+     if (ref_abs > speed_abs) {
+         speed_abs = ref_abs;
+     }
+
+     if ((g_foc_smooth_brake_enable == 0U) ||
+         (iq_ref >= 0.0f) ||
+         (entry_rpm < 1.0f) ||
+         (speed_abs > entry_rpm)) {
+         return iq_ref;
+     }
+
+     if (release_rpm < 1.0f) {
+         release_rpm = 1.0f;
+     }
+     if (min_mA < 0.0f) {
+         min_mA = 0.0f;
+     }
+     if (max_mA < min_mA) {
+         max_mA = min_mA;
+     }
+
+     limit_mA =
+         (float)g_foc_smooth_brake_kd_mA_per_rpm * speed_abs;
+     if (limit_mA < min_mA) {
+         limit_mA = min_mA;
+     }
+     if (limit_mA > max_mA) {
+         limit_mA = max_mA;
+     }
+
+     if (speed_abs <= release_rpm) {
+         limit_mA = min_mA;
+         decay_milli = g_foc_smooth_brake_i_release_decay_milli;
+     }
+     if ((g_foc_smooth_brake_no_edge_count > 0U) &&
+         (s_ctx.sector_no_change_count >=
+          g_foc_smooth_brake_no_edge_count)) {
+         float no_edge_mA = (float)g_foc_smooth_brake_no_edge_mA;
+
+         if (no_edge_mA < 0.0f) {
+             no_edge_mA = 0.0f;
+         }
+         if (limit_mA > no_edge_mA) {
+             limit_mA = no_edge_mA;
+         }
+         decay_milli = g_foc_smooth_brake_i_release_decay_milli;
+     }
+
+     FOC_DecaySmoothBrakeIntegral(decay_milli);
+
+     limit_a = limit_mA * 0.001f;
+     g_foc_smooth_brake_active = 1U;
+     g_foc_smooth_brake_limit_mA =
+         FOC_Log_ToI16(limit_mA, 1.0f);
+
+     if (iq_ref < -limit_a) {
+         g_foc_smooth_brake_limited_mA =
+             FOC_Log_ToI16((-limit_a) - iq_ref, 1000.0f);
+         if (g_foc_smooth_brake_count < 0xFFFFFFFFU) {
+             g_foc_smooth_brake_count++;
+         }
+         return -limit_a;
+     }
+
+     return iq_ref;
+}
 
  static float FOC_LimitRegenBrakingIq(float iq_ref)
  {
@@ -6339,6 +6470,15 @@ static void FOC_Prof_Reset(void)
                          g_foc_bidir_zero_brake_limited_count++;
                      }
                  }
+             }
+             if ((hall_travel_stall_blocked == 0U) &&
+                 (zero_output_held == 0U) &&
+                 (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
+                 (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
+                 speed_iq_ref = FOC_ApplySmoothBrakeLimit(speed_iq_ref,
+                                                          speed_ref_ctrl);
+             } else {
+                 FOC_ResetSmoothBrakeDebug();
              }
              s_speed_error_boost_prev_ref = speed_ref_ctrl;
 
