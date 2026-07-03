@@ -414,6 +414,7 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_soft_slew_mA_per_s = 2000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_ms = 260U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_slew_mA_per_s = 12000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_overspeed_rpm = 30U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_pid_iq_max_mA = 1800U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_max_rpm = 650U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_err_rpm = 120U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_track_hold_active = 0U;
@@ -1447,6 +1448,9 @@ static void FOC_SpeedStart_Close(float speed_error,
                                  float speed_iq_ref_max)
 {
      float handoff_iq = s_speed_start_iq_ref;
+     float pid_seed_iq;
+     float pid_seed_max;
+     float p_term;
 
      if (speed_iq_ref_max < 0.0f) {
          speed_iq_ref_max = 0.0f;
@@ -1455,7 +1459,21 @@ static void FOC_SpeedStart_Close(float speed_error,
                                                 speed_error,
                                                 speed_iq_ref_max);
 
-     s_ctx.pid_speed.integral = 0.0f;
+     pid_seed_iq = handoff_iq;
+     pid_seed_max = (float)g_foc_speed_start_handoff_pid_iq_max_mA * 0.001f;
+     if (pid_seed_max <= 0.0f) {
+         pid_seed_iq = 0.0f;
+     } else if (pid_seed_iq > pid_seed_max) {
+         pid_seed_iq = pid_seed_max;
+     }
+
+     p_term = s_ctx.pid_speed.kp * speed_error;
+     if ((s_ctx.pid_speed.ki > 0.0f) && (pid_seed_iq > p_term)) {
+         s_ctx.pid_speed.integral = (pid_seed_iq - p_term) /
+                                    s_ctx.pid_speed.ki;
+     } else {
+         s_ctx.pid_speed.integral = 0.0f;
+     }
      s_ctx.pid_speed.prev_error = speed_error;
      FOC_LowSpeedIqSlew_Prime(handoff_iq);
 
