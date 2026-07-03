@@ -411,6 +411,9 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_ccw_breakaway_iq_mA = 2000U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_hold_percent = 80U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_close_deadband_rpm = 5U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_soft_slew_mA_per_s = 2000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_max_rpm = 650U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_err_rpm = 120U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_track_hold_active = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_breakaway_boost_enable = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_boost_delay_ms = 30U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_boost_slew_mA_per_s = 20000U;
@@ -844,6 +847,7 @@ static void FOC_SpeedStart_ApplyBreakawayBoost(uint32_t elapsed_us,
                                                uint8_t moving);
 static float FOC_SpeedStart_HoldIq(float speed_iq_ref_max);
 static uint8_t FOC_SpeedStart_HoldActive(void);
+static uint8_t FOC_SpeedStart_TrackHoldActive(float speed_ref_ctrl);
 static uint8_t FOC_SpeedStart_CloseReady(float speed_ref_ctrl);
 static void FOC_SpeedStart_Close(float speed_error,
                                  float speed_iq_ref_max);
@@ -851,6 +855,7 @@ static float FOC_SpeedStart_SoftPidOutMax(float speed_iq_ref_max,
                                           float speed_dt);
 static float FOC_SpeedStart_ApplySoftRamp(float iq_ref,
                                           float speed_iq_ref_max,
+                                          float speed_ref_ctrl,
                                           float speed_dt);
 static float FOC_GetSpeedIqPositiveLimit(float speed_ref_ctrl,
                                          float speed_error);
@@ -1197,6 +1202,7 @@ static void FOC_SpeedStart_Reset(void)
      s_speed_start_iq_ref = 0.0f;
      s_speed_start_direction = s_ctx.direction;
      g_foc_speed_start_moving = 0U;
+     g_foc_speed_start_track_hold_active = 0U;
      g_foc_speed_start_breakaway_boost_mA = 0;
      FOC_SpeedStart_UpdateDebug();
 }
@@ -1370,6 +1376,27 @@ static uint8_t FOC_SpeedStart_HoldActive(void)
      return (FOC_SpeedStart_ReleaseReached() == 0U) ? 1U : 0U;
 }
 
+static uint8_t FOC_SpeedStart_TrackHoldActive(float speed_ref_ctrl)
+{
+     float max_rpm = (float)g_foc_speed_start_track_hold_max_rpm;
+     float err_rpm = (float)g_foc_speed_start_track_hold_err_rpm;
+     float ctrl_fdb = FOC_FABS(s_ctx.speed_ctrl_fdb);
+     uint8_t active = 0U;
+
+     if (err_rpm < 1.0f) {
+         err_rpm = 1.0f;
+     }
+     if ((s_speed_start_state == FOC_SPEED_START_STATE_SOFT_START) &&
+         (max_rpm >= 1.0f) &&
+         (ctrl_fdb <= max_rpm) &&
+         ((speed_ref_ctrl - ctrl_fdb) >= err_rpm)) {
+         active = 1U;
+     }
+
+     g_foc_speed_start_track_hold_active = active;
+     return active;
+}
+
 static uint8_t FOC_SpeedStart_CloseReady(float speed_ref_ctrl)
 {
      float release_rpm = FOC_SpeedStart_ReleaseRpm();
@@ -1413,6 +1440,7 @@ static void FOC_SpeedStart_Close(float speed_error,
 
      s_speed_start_state = FOC_SPEED_START_STATE_CLOSED;
      s_speed_start_iq_ref = 0.0f;
+     g_foc_speed_start_track_hold_active = 0U;
 }
 
 static void FOC_SpeedStart_BeginBreakaway(float speed_iq_ref_max)
@@ -1426,6 +1454,7 @@ static void FOC_SpeedStart_BeginBreakaway(float speed_iq_ref_max)
      FOC_LowSpeedIqSlew_Prime(s_speed_start_iq_ref);
      FOC_BidirZeroTransfer_ClearHandoff();
      g_foc_speed_start_moving = 0U;
+     g_foc_speed_start_track_hold_active = 0U;
      g_foc_speed_start_breakaway_boost_mA = 0;
      if (g_foc_speed_start_breakaway_count < 0xFFFFFFFFU) {
          g_foc_speed_start_breakaway_count++;
@@ -1442,6 +1471,7 @@ static void FOC_SpeedStart_BeginSoftStart(float speed_iq_ref_max)
          FOC_CLAMP(s_speed_start_iq_ref, 0.0f, speed_iq_ref_max);
      FOC_LowSpeedIqSlew_Prime(s_speed_start_iq_ref);
      FOC_PID_Reset(&s_ctx.pid_speed);
+     g_foc_speed_start_track_hold_active = 0U;
      if (g_foc_speed_start_soft_count < 0xFFFFFFFFU) {
          g_foc_speed_start_soft_count++;
      }
@@ -1570,6 +1600,7 @@ static float FOC_SpeedStart_SoftPidOutMax(float speed_iq_ref_max,
 
 static float FOC_SpeedStart_ApplySoftRamp(float iq_ref,
                                           float speed_iq_ref_max,
+                                          float speed_ref_ctrl,
                                           float speed_dt)
 {
      float step = FOC_SpeedStart_SoftStep(speed_dt);
@@ -1588,6 +1619,10 @@ static float FOC_SpeedStart_ApplySoftRamp(float iq_ref,
          if (max_iq < min_iq) {
              max_iq = min_iq;
          }
+     }
+     if ((FOC_SpeedStart_TrackHoldActive(speed_ref_ctrl) != 0U) &&
+         (min_iq < s_speed_start_iq_ref)) {
+         min_iq = s_speed_start_iq_ref;
      }
      iq_ref = FOC_CLAMP(iq_ref, 0.0f, speed_iq_ref_max);
      if (iq_ref > max_iq) {
@@ -6032,6 +6067,8 @@ static void FOC_Prof_Reset(void)
                  g_foc_speed_error_boost_mA = 0;
              } else {
                  if (speed_start_state == FOC_SPEED_START_STATE_SOFT_START) {
+                     uint8_t track_hold_active =
+                         FOC_SpeedStart_TrackHoldActive(speed_ref_ctrl);
                      float soft_out_min =
                          (FOC_SpeedStart_HoldActive() != 0U)
                          ? FOC_SpeedStart_HoldIq(speed_iq_ref_max)
@@ -6040,6 +6077,10 @@ static void FOC_Prof_Reset(void)
                          FOC_SpeedStart_SoftPidOutMax(speed_iq_ref_max,
                                                       speed_dt);
 
+                     if ((track_hold_active != 0U) &&
+                         (soft_out_min < s_speed_start_iq_ref)) {
+                         soft_out_min = s_speed_start_iq_ref;
+                     }
                      if (soft_out_max < soft_out_min) {
                          soft_out_max = soft_out_min;
                      }
@@ -6143,6 +6184,7 @@ static void FOC_Prof_Reset(void)
                  (speed_start_state == FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref = FOC_SpeedStart_ApplySoftRamp(speed_iq_ref,
                                                              speed_iq_ref_max,
+                                                             speed_ref_ctrl,
                                                              speed_dt);
              }
              if ((speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
