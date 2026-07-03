@@ -55,7 +55,7 @@ extern volatile int16_t  g_foc_hall_angle_offset_mrad;
 #define FOC_TEST_CASE_STOP              0U
 #define FOC_TEST_CASE_FIXED_SPEED       1U
 #define FOC_TEST_CASE_DYN_SPEED_CW      2U
-#define FOC_TEST_CASE_BIDIR_SWITCH      3U
+#define FOC_TEST_CASE_SIGNED_CURVE_1000 3U
 #define FOC_TEST_CASE_DYN_SPEED_CCW     4U
 #define FOC_TEST_CASE_IQ_START_SWEEP    5U
 
@@ -2576,73 +2576,36 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
     g_foc_dyn_speed_reset_stats = 1U;
 
-  }else if(test_case == FOC_TEST_CASE_BIDIR_SWITCH){
+  }else if(test_case == FOC_TEST_CASE_SIGNED_CURVE_1000){
 
+    FOC_TestCase_ClearAutoModes();
     Foc_EnableFocControl(unId);
 
     g_foc_dyn_speed_enable = 0U;
     g_foc_dyn_speed_reverse = 0U;
     g_foc_dyn_speed_reset_stats = 0U;
+    g_foc_dyn_speed_start_on_max_ref = 0U;
+    g_foc_dyn_speed_start_on_max_fdb = 0U;
 
-    g_foc_bidir_speed_period_ms = 4000U;
+    g_foc_bidir_speed_period_ms = 8000U;
     g_foc_bidir_speed_max_rpm = 1000U;
     g_foc_bidir_speed_step_enable = 3U;
     g_foc_bidir_speed_slew_enable = 0U;
     g_foc_bidir_speed_slew_rpm_per_s = 0U;
-    g_foc_zero_transfer_enable = 1U;
-    g_foc_zero_transfer_enter_rpm = 300U;
-    g_foc_zero_transfer_exit_rpm = 90U;
-    g_foc_zero_transfer_ms = 50U;
-    g_foc_zero_relaunch_ms = 90U;
-    g_foc_zero_relaunch_edge_max_us = 80000U;
-    g_foc_zero_handoff_ms = 90U;
-    g_foc_zero_hold_iq_mA = 350;
-    g_foc_zero_breakaway_iq_mA = 900;
-    g_foc_zero_iq_slew_mA_per_s = 14000U;
-    g_foc_zero_transfer_state = 0U;
-    g_foc_zero_signed_iq_cmd_mA = 0;
-    g_foc_zero_iq_ff_mA = 0;
-    g_foc_zero_ctrl_iq_raw_mA = 0;
-    g_foc_zero_pid_freeze_active = 0U;
-    g_foc_zero_direction_pending = 0;
-    g_foc_zero_transfer_elapsed_ms = 0U;
-    g_foc_zero_transfer_count = 0U;
-    g_foc_zero_transfer_start_reason = 0U;
-    g_foc_zero_transfer_raw_sign = 0;
-    g_foc_zero_transfer_prev_sign = 0;
-    g_foc_zero_transfer_raw_decreasing = 0U;
-    g_foc_zero_transfer_cmd_decreasing = 0U;
-    g_foc_zero_transfer_decel_to_zero = 0U;
-    g_foc_zero_transfer_raw_abs_rpm = 0U;
-    g_foc_zero_transfer_prev_cmd_abs_rpm = 0U;
-    g_foc_bidir_zero_soft_enable = 1U;
-    g_foc_bidir_zero_soft_start_rpm = 420U;
+    g_foc_zero_transfer_enable = 0U;
+    g_foc_bidir_zero_soft_enable = 0U;
+    g_foc_bidir_zero_cross_enable = 0U;
     g_foc_detail_log_enable = 1U;
     g_foc_detail_log_decim_ms = 2U;
-    g_foc_detail_log_trigger_rpm = 500U;
-    g_foc_detail_log_zero_window_enable = 1U;
-    g_foc_detail_log_zero_post_ms = 300U;
+    g_foc_detail_log_zero_window_enable = 0U;
+    g_foc_detail_log_zero_post_ms = 0U;
     g_foc_detail_log_zero_event_idx = 0xFFFFU;
     g_foc_detail_log_zero_event_count = 0U;
     g_foc_detail_log_zero_window_done = 0U;
     g_foc_detail_log_reset = 1U;
-    g_foc_bidir_zero_cross_enable = 0U;
-    g_foc_bidir_zero_speed_rpm = 120U;
-    g_foc_bidir_zero_confirm_ms = 50U;
-    g_foc_bidir_zero_hold_ms = 120U;
-    g_foc_bidir_zero_timeout_ms = 1200U;
-    g_foc_bidir_zero_approach_start_rpm = 1000U;
-    g_foc_bidir_zero_approach_slew_rpm_per_s = 2000U;
-    g_foc_bidir_zero_approach_brake_limit_mA = 300;
-    g_foc_bidir_zero_tail_start_rpm = 500U;
-    g_foc_bidir_zero_tail_slew_rpm_per_s = 700U;
-    g_foc_bidir_zero_tail_brake_limit_mA = 150;
-    g_foc_bidir_zero_tail_fdb_drop_rpm = 120U;
-    g_foc_bidir_zero_tail_fdb_lead_rpm = 120U;
-    g_foc_bidir_zero_tail_min_drive_mA = 700U;
-    g_foc_bidir_zero_tail_drive_deadband_rpm = 80U;
-    g_foc_bidir_speed_enable = 1U;
+    g_foc_detail_log_start_now = 1U;
 
+    g_foc_bidir_speed_enable = 1U;
     g_foc_bidir_speed_reset_stats = 1U;
 
   }else if(test_case == FOC_TEST_CASE_DYN_SPEED_CCW){
