@@ -411,6 +411,9 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_ccw_breakaway_iq_mA = 2000U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_hold_percent = 80U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_close_deadband_rpm = 5U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_soft_slew_mA_per_s = 2000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_ms = 260U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_slew_mA_per_s = 12000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_overspeed_rpm = 30U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_max_rpm = 650U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_err_rpm = 120U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_track_hold_active = 0U;
@@ -699,6 +702,7 @@ static uint8_t s_speed_start_state_store[FOC_CORE_MOTOR_COUNT] = {
 static uint32_t s_speed_start_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_speed_start_soft_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_speed_start_release_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint32_t s_speed_start_handoff_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static float s_speed_start_iq_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static FOC_Dir_e s_speed_start_direction_store[FOC_CORE_MOTOR_COUNT] = {
     FOC_DIR_CW,
@@ -729,6 +733,7 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_speed_start_elapsed_us         (s_speed_start_elapsed_us_store[s_foc_core_active_motor])
 #define s_speed_start_soft_elapsed_us    (s_speed_start_soft_elapsed_us_store[s_foc_core_active_motor])
 #define s_speed_start_release_elapsed_us (s_speed_start_release_elapsed_us_store[s_foc_core_active_motor])
+#define s_speed_start_handoff_elapsed_us (s_speed_start_handoff_elapsed_us_store[s_foc_core_active_motor])
 #define s_speed_start_iq_ref             (s_speed_start_iq_ref_store[s_foc_core_active_motor])
 #define s_speed_start_direction          (s_speed_start_direction_store[s_foc_core_active_motor])
 #define s_low_speed_iq_slew_ref          (s_low_speed_iq_slew_ref_store[s_foc_core_active_motor])
@@ -857,6 +862,10 @@ static float FOC_SpeedStart_ApplySoftRamp(float iq_ref,
                                           float speed_iq_ref_max,
                                           float speed_ref_ctrl,
                                           float speed_dt);
+static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
+                                               float speed_error,
+                                               float speed_iq_ref_max,
+                                               float speed_dt);
 static float FOC_GetSpeedIqPositiveLimit(float speed_ref_ctrl,
                                          float speed_error);
 static void FOC_ResetSpeedDropFaultMonitor(void);
@@ -1199,6 +1208,7 @@ static void FOC_SpeedStart_Reset(void)
      s_speed_start_elapsed_us = 0U;
      s_speed_start_soft_elapsed_us = 0U;
      s_speed_start_release_elapsed_us = 0U;
+     s_speed_start_handoff_elapsed_us = 0U;
      s_speed_start_iq_ref = 0.0f;
      s_speed_start_direction = s_ctx.direction;
      g_foc_speed_start_moving = 0U;
@@ -1413,19 +1423,40 @@ static uint8_t FOC_SpeedStart_CloseReady(float speed_ref_ctrl)
      return ((ctrl_fdb + deadband) >= speed_ref_ctrl) ? 1U : 0U;
 }
 
+static float FOC_SpeedStart_ScaleHandoffIq(float iq,
+                                           float speed_error,
+                                           float speed_iq_ref_max)
+{
+     float overspeed_band = (float)g_foc_speed_start_handoff_overspeed_rpm;
+
+     iq = FOC_CLAMP(iq, 0.0f, speed_iq_ref_max);
+     if (speed_error < 0.0f) {
+         if (overspeed_band <= 0.0f) {
+             return 0.0f;
+         } else {
+             float overspeed = -speed_error;
+
+             if (overspeed >= overspeed_band) {
+                 return 0.0f;
+             }
+             iq *= (overspeed_band - overspeed) / overspeed_band;
+         }
+     }
+
+     return FOC_CLAMP(iq, 0.0f, speed_iq_ref_max);
+}
+
 static void FOC_SpeedStart_Close(float speed_error,
                                  float speed_iq_ref_max)
 {
      float handoff_iq = s_speed_start_iq_ref;
-     float close_deadband = (float)g_foc_speed_start_close_deadband_rpm;
 
      if (speed_iq_ref_max < 0.0f) {
          speed_iq_ref_max = 0.0f;
      }
-     if (speed_error <= close_deadband) {
-         handoff_iq = 0.0f;
-     }
-     handoff_iq = FOC_CLAMP(handoff_iq, 0.0f, speed_iq_ref_max);
+     handoff_iq = FOC_SpeedStart_ScaleHandoffIq(handoff_iq,
+                                                speed_error,
+                                                speed_iq_ref_max);
 
      if ((s_ctx.pid_speed.ki > 0.0f) && (handoff_iq > 0.0f)) {
          float p_term = s_ctx.pid_speed.kp * speed_error;
@@ -1439,7 +1470,8 @@ static void FOC_SpeedStart_Close(float speed_error,
      FOC_LowSpeedIqSlew_Prime(handoff_iq);
 
      s_speed_start_state = FOC_SPEED_START_STATE_CLOSED;
-     s_speed_start_iq_ref = 0.0f;
+     s_speed_start_handoff_elapsed_us = 0U;
+     s_speed_start_iq_ref = handoff_iq;
      g_foc_speed_start_track_hold_active = 0U;
 }
 
@@ -1449,6 +1481,7 @@ static void FOC_SpeedStart_BeginBreakaway(float speed_iq_ref_max)
      s_speed_start_elapsed_us = 0U;
      s_speed_start_soft_elapsed_us = 0U;
      s_speed_start_release_elapsed_us = 0U;
+     s_speed_start_handoff_elapsed_us = 0U;
      s_speed_start_direction = s_ctx.direction;
      s_speed_start_iq_ref = FOC_SpeedStart_BreakawayIq(speed_iq_ref_max);
      FOC_LowSpeedIqSlew_Prime(s_speed_start_iq_ref);
@@ -1467,6 +1500,7 @@ static void FOC_SpeedStart_BeginSoftStart(float speed_iq_ref_max)
      s_speed_start_state = FOC_SPEED_START_STATE_SOFT_START;
      s_speed_start_soft_elapsed_us = 0U;
      s_speed_start_release_elapsed_us = 0U;
+     s_speed_start_handoff_elapsed_us = 0U;
      s_speed_start_iq_ref =
          FOC_CLAMP(s_speed_start_iq_ref, 0.0f, speed_iq_ref_max);
      FOC_LowSpeedIqSlew_Prime(s_speed_start_iq_ref);
@@ -1635,6 +1669,71 @@ static float FOC_SpeedStart_ApplySoftRamp(float iq_ref,
      FOC_LowSpeedIqSlew_Prime(s_speed_start_iq_ref);
      FOC_SpeedStart_UpdateDebug();
      return s_speed_start_iq_ref;
+}
+
+static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
+                                               float speed_error,
+                                               float speed_iq_ref_max,
+                                               float speed_dt)
+{
+     uint32_t handoff_max_us =
+         (uint32_t)g_foc_speed_start_handoff_ms * 1000U;
+     uint32_t elapsed_step_us;
+     float decay_step;
+     float floor_iq;
+
+     if ((s_speed_start_state != FOC_SPEED_START_STATE_CLOSED) ||
+         (s_speed_start_iq_ref <= 0.0f)) {
+         return iq_ref;
+     }
+     if ((handoff_max_us == 0U) || (speed_iq_ref_max <= 0.0f)) {
+         s_speed_start_iq_ref = 0.0f;
+         s_speed_start_handoff_elapsed_us = 0U;
+         FOC_SpeedStart_UpdateDebug();
+         return iq_ref;
+     }
+     if (speed_dt < 0.0f) {
+         speed_dt = 0.0f;
+     }
+
+     elapsed_step_us = (uint32_t)((speed_dt * 1000000.0f) + 0.5f);
+     if ((elapsed_step_us == 0U) && (speed_dt > 0.0f)) {
+         elapsed_step_us = 1U;
+     }
+     if ((0xFFFFFFFFU - s_speed_start_handoff_elapsed_us) >=
+         elapsed_step_us) {
+         s_speed_start_handoff_elapsed_us += elapsed_step_us;
+     } else {
+         s_speed_start_handoff_elapsed_us = 0xFFFFFFFFU;
+     }
+
+     if (s_speed_start_handoff_elapsed_us >= handoff_max_us) {
+         s_speed_start_iq_ref = 0.0f;
+         FOC_SpeedStart_UpdateDebug();
+         return iq_ref;
+     }
+
+     decay_step =
+         (float)g_foc_speed_start_handoff_slew_mA_per_s *
+         0.001f * speed_dt;
+     if (decay_step > 0.0f) {
+         if (s_speed_start_iq_ref > decay_step) {
+             s_speed_start_iq_ref -= decay_step;
+         } else {
+             s_speed_start_iq_ref = 0.0f;
+         }
+     }
+     s_speed_start_iq_ref =
+         FOC_CLAMP(s_speed_start_iq_ref, 0.0f, speed_iq_ref_max);
+     floor_iq = FOC_SpeedStart_ScaleHandoffIq(s_speed_start_iq_ref,
+                                              speed_error,
+                                              speed_iq_ref_max);
+
+     if (iq_ref < floor_iq) {
+         iq_ref = floor_iq;
+     }
+     FOC_SpeedStart_UpdateDebug();
+     return iq_ref;
 }
 
 static void FOC_StartLog_Reset(void)
@@ -6209,6 +6308,15 @@ static void FOC_Prof_Reset(void)
              } else {
                  g_foc_low_speed_iq_slew_active = 0U;
                  g_foc_low_speed_iq_slew_limited_mA = 0;
+             }
+             if ((hall_travel_stall_blocked == 0U) &&
+                 (zero_output_held == 0U) &&
+                 (speed_start_state == FOC_SPEED_START_STATE_CLOSED)) {
+                 speed_iq_ref =
+                     FOC_SpeedStart_ApplyClosedHandoff(speed_iq_ref,
+                                                       speed_error,
+                                                       speed_iq_ref_max,
+                                                       speed_dt);
              }
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
