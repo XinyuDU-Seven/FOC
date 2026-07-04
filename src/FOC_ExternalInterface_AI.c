@@ -2537,6 +2537,9 @@ static void FOC_TestCase_KeepSignedCurveDetailLog(void)
   g_foc_detail_log_enable = 1U;
   if (g_foc_detail_log_decim_ms < FOC_DETAIL_LOG_DECIM_SIGNED_CURVE_MS) {
     g_foc_detail_log_decim_ms = FOC_DETAIL_LOG_DECIM_SIGNED_CURVE_MS;
+    if ((g_foc_detail_log_active != 0U) || (g_foc_detail_log_idx != 0U)) {
+      g_foc_detail_log_reset = 1U;
+    }
   }
   g_foc_detail_log_trigger_rpm = g_foc_bidir_speed_max_rpm;
   g_foc_detail_log_zero_window_enable = 0U;
