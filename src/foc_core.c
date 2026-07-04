@@ -981,7 +981,6 @@ static void FOC_UpdateSpeedControlFeedback(void);
 static void FOC_PrimeSpeedPidFromIq(float pid_seed_iq, float speed_error);
 static void FOC_PureSpeedOpenLoopStart_Reset(void);
 static uint8_t FOC_PureSpeedOpenLoopStart_Service(uint32_t elapsed_us);
-static void FOC_PureSpeedOpenLoopStart_SyncObserver(void);
 static float FOC_PureSpeedOpenLoopStart_ApplyAngle(float theta_e_ctrl,
                                                    float dt);
 static float FOC_PureSpeedOpenLoopStart_Iq(float speed_iq_ref_max);
@@ -2224,44 +2223,6 @@ static void FOC_PureSpeedOpenLoopStart_Reset(void)
      FOC_PureSpeedOpenLoopStart_UpdateDebug();
 }
 
-static void FOC_PureSpeedOpenLoopStart_SyncObserver(void)
-{
-     float speed_abs;
-     float raw_abs;
-     float omega_e = 0.0f;
-     float target;
-
-     if (s_ctx.hall_sector.sector == 0U) {
-         return;
-     }
-
-     speed_abs = FOC_FABS(s_ctx.speed_ctrl_fdb);
-     raw_abs = FOC_FABS(s_ctx.speed_fdb);
-     if (raw_abs > speed_abs) {
-         speed_abs = raw_abs;
-     }
-
-     if ((s_ctx.hall_sector_dt_us != 0U) &&
-         (speed_abs > 1.0f) &&
-         (s_config.motor.pole_pairs > 0U)) {
-         omega_e = speed_abs * (FOC_2PI / 60.0f) *
-                   (float)s_config.motor.pole_pairs;
-         target =
-             FOC_Observer_HallEdgeSyncAngle(&s_ctx,
-                                            s_ctx.hall_sector.sector,
-                                            omega_e,
-                                            FOC_STARTUP_EDGE_SYNC_ADVANCE_MAX_RAD);
-     } else {
-         target = s_ctx.hall_sector.theta_e;
-     }
-
-     target = FOC_NormalizeAngle(target);
-     s_ctx.theta_e_predicted = target;
-     s_ctx.theta_e_prev = target;
-     s_pure_speed_ol_start_angle = target;
-     FOC_PureSpeedOpenLoopStart_UpdateDebug();
-}
-
 static uint8_t FOC_PureSpeedOpenLoopStart_CommandAllowed(void)
 {
      float min_ref = (float)g_foc_pure_speed_open_loop_start_min_ref_rpm;
@@ -2403,7 +2364,6 @@ static uint8_t FOC_PureSpeedOpenLoopStart_Service(uint32_t elapsed_us)
                         0xFFFFFFFFU) {
                  g_foc_pure_speed_open_loop_start_release_count++;
              }
-             FOC_PureSpeedOpenLoopStart_SyncObserver();
              s_pure_speed_ol_start_active = 0U;
              s_pure_speed_ol_start_release_pending = 1U;
              s_pure_speed_ol_start_done = 1U;
@@ -2439,6 +2399,7 @@ static float FOC_PureSpeedOpenLoopStart_ApplyAngle(float theta_e_ctrl,
      }
      s_pure_speed_ol_start_angle =
          FOC_NormalizeAngle(s_pure_speed_ol_start_angle);
+     s_ctx.theta_e_predicted = s_pure_speed_ol_start_angle;
      FOC_PureSpeedOpenLoopStart_UpdateDebug();
 
      return s_pure_speed_ol_start_angle;
@@ -7208,9 +7169,6 @@ static void FOC_Prof_Reset(void)
          theta_e_ctrl =
              FOC_PureSpeedOpenLoopStart_ApplyAngle(theta_e_ctrl,
                                                    observer_dt);
-     }
-     if (s_pure_speed_ol_start_release_pending != 0U) {
-         theta_e_ctrl = s_ctx.theta_e_predicted;
      }
 
      theta_e_ctrl = FOC_ApplyCurrentAngleTrim(theta_e_ctrl);
