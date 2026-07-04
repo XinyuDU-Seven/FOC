@@ -38,21 +38,25 @@ extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 /* 旧测试入口的速度给定，External正式控制前会置为-1以退出旧测试给定。 */
 extern volatile float speed_ref;
 extern volatile uint8_t g_foc_bidir_zero_soft_enable;
-extern volatile uint16_t g_foc_bidir_zero_soft_start_rpm;
 extern volatile uint8_t  g_foc_start_log_enable;
 extern volatile uint8_t  g_foc_start_log_reset;
 extern volatile uint16_t g_foc_speed_ref_ramp_up_rpm_per_s;
 extern volatile uint16_t g_foc_speed_ref_ramp_down_rpm_per_s;
+extern volatile uint8_t  g_foc_pure_speed_loop_enable;
+extern volatile uint8_t  g_foc_low_speed_torque_enable;
 extern volatile uint8_t  g_foc_low_speed_iq_slew_enable;
 extern volatile uint16_t g_foc_low_speed_iq_slew_max_rpm;
 extern volatile uint16_t g_foc_low_speed_iq_slew_up_mA_per_s;
 extern volatile uint16_t g_foc_low_speed_iq_slew_down_mA_per_s;
-extern volatile uint16_t g_foc_lift_current_limit_base_mA;
-extern volatile uint16_t g_foc_lift_current_limit_boost_mA;
-extern volatile uint16_t g_foc_lift_start_overload_iq_mA;
-extern volatile uint16_t g_foc_speed_start_breakaway_boost_max_iq_mA;
+extern volatile uint8_t  g_foc_speed_start_enable;
+extern volatile uint8_t  g_foc_speed_start_breakaway_boost_enable;
+extern volatile uint8_t  g_foc_lift_current_limit_enable;
+extern volatile uint8_t  g_foc_lift_start_overload_enable;
+extern volatile uint8_t  g_foc_lift_start_angle_search_enable;
 extern volatile uint8_t  g_foc_speed_start_unstuck_enable;
-extern volatile uint16_t g_foc_speed_start_unstuck_max_iq_mA;
+extern volatile uint8_t  g_foc_bidir_decel_hold_enable;
+extern volatile uint8_t  g_foc_smooth_brake_enable;
+extern volatile uint8_t  g_foc_no_edge_decel_coast_enable;
 extern volatile int16_t  g_foc_hall_angle_offset_mrad;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
@@ -71,45 +75,46 @@ static void FOC_IqStartTest_ResetRuntime(void);
 
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_up_rpm_per_s = 2000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_down_rpm_per_s = 1200U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_max_rpm = 600U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_up_mA_per_s = 4000U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_down_mA_per_s = 10000U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_limit_mA = 10000U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_unstuck_iq_max_mA = 10000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_max_rpm = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_up_mA_per_s = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_down_mA_per_s = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_limit_mA = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_unstuck_iq_max_mA = 0U;
+
+static void FOC_TestCase_DisableIqAssists(void)
+{
+  g_foc_pure_speed_loop_enable = 1U;
+  g_foc_low_speed_torque_enable = 0U;
+  g_foc_low_speed_iq_slew_enable = 0U;
+  g_foc_low_speed_iq_slew_max_rpm = 0U;
+  g_foc_low_speed_iq_slew_up_mA_per_s = 0U;
+  g_foc_low_speed_iq_slew_down_mA_per_s = 0U;
+  g_foc_speed_start_enable = 0U;
+  g_foc_speed_start_breakaway_boost_enable = 0U;
+  g_foc_speed_start_unstuck_enable = 0U;
+  g_foc_lift_current_limit_enable = 0U;
+  g_foc_lift_start_overload_enable = 0U;
+  g_foc_lift_start_angle_search_enable = 0U;
+  g_foc_bidir_decel_hold_enable = 0U;
+  g_foc_bidir_zero_soft_enable = 0U;
+  g_foc_smooth_brake_enable = 0U;
+  g_foc_no_edge_decel_coast_enable = 0U;
+}
 
 static void FOC_TestCase_ClearFixedStartupLimits(void)
 {
   g_foc_speed_ref_ramp_up_rpm_per_s = 0U;
   g_foc_speed_ref_ramp_down_rpm_per_s = 0U;
-  g_foc_low_speed_iq_slew_enable = 0U;
-  g_foc_low_speed_iq_slew_max_rpm = 0U;
-  g_foc_low_speed_iq_slew_up_mA_per_s = 0U;
-  g_foc_low_speed_iq_slew_down_mA_per_s = 0U;
+  FOC_TestCase_DisableIqAssists();
 }
 
 static void FOC_TestCase_ApplyFixedStartupLimits(void)
 {
-  g_foc_lift_current_limit_base_mA = g_foc_testcase1_iq_limit_mA;
-  g_foc_lift_current_limit_boost_mA = g_foc_testcase1_iq_limit_mA;
-  g_foc_lift_start_overload_iq_mA = g_foc_testcase1_iq_limit_mA;
-  g_foc_speed_start_breakaway_boost_max_iq_mA =
-      g_foc_testcase1_iq_limit_mA;
-  g_foc_speed_start_unstuck_enable = 1U;
-  g_foc_speed_start_unstuck_max_iq_mA =
-      g_foc_testcase1_unstuck_iq_max_mA;
+  FOC_TestCase_DisableIqAssists();
   g_foc_speed_ref_ramp_up_rpm_per_s =
       g_foc_testcase1_start_ramp_up_rpm_per_s;
   g_foc_speed_ref_ramp_down_rpm_per_s =
       g_foc_testcase1_start_ramp_down_rpm_per_s;
-  g_foc_low_speed_iq_slew_max_rpm = g_foc_testcase1_iq_slew_max_rpm;
-  g_foc_low_speed_iq_slew_up_mA_per_s =
-      g_foc_testcase1_iq_slew_up_mA_per_s;
-  g_foc_low_speed_iq_slew_down_mA_per_s =
-      g_foc_testcase1_iq_slew_down_mA_per_s;
-  g_foc_low_speed_iq_slew_enable =
-      ((g_foc_low_speed_iq_slew_max_rpm != 0U) &&
-       ((g_foc_low_speed_iq_slew_up_mA_per_s != 0U) ||
-        (g_foc_low_speed_iq_slew_down_mA_per_s != 0U))) ? 1U : 0U;
 }
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
