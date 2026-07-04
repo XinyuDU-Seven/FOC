@@ -73,7 +73,7 @@ extern volatile int16_t  g_foc_hall_angle_offset_mrad;
 
 static void FOC_IqStartTest_ResetRuntime(void);
 
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_up_rpm_per_s = 2000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_up_rpm_per_s = 1000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_down_rpm_per_s = 1200U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_max_rpm = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_up_mA_per_s = 0U;
@@ -2011,7 +2011,7 @@ void Foc_Init_AI(void)
   config.current_q_pid.out_max = 10.0f;
   config.current_q_pid.out_min = -10.0f;
 
-  config.speed_pid.kp = 0.0052f;
+  config.speed_pid.kp = 0.0048f;
   config.speed_pid.ki = 0.0025f;
   config.speed_pid.kd = 0.0f;
   config.speed_pid.out_max = config.motor.max_current_a;
