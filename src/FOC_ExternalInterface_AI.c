@@ -1976,7 +1976,7 @@ void Foc_Init_AI(void)
   config.motor.ls_q = 0.00007f;
   config.motor.v_bus = 12.0f;
   config.motor.max_speed_rpm = 4000.0f;
-  config.motor.max_current_a = 5.0f;
+  config.motor.max_current_a = 6.0f;
 
   config.current_d_pid.kp = 0.25f;
   config.current_d_pid.ki = 60.0f;
