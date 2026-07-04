@@ -154,6 +154,9 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_valid_edge_coun
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_recovery_sync_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_sync_step_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_sync_diff_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_low_speed_edge_sync_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_low_speed_edge_sync_count = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_low_speed_edge_sync_step_max_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_pre_edge_clamp_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_startup_pre_edge_clamp_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_startup_pre_edge_clamp_step_mrad = 0;
@@ -611,6 +614,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_startup_sync_boost_active = 0U;
      g_foc_observer_startup_sync_edge_count = 0U;
      g_foc_observer_startup_valid_edge_count = 0U;
+     g_foc_observer_low_speed_edge_sync_active = 0U;
+     g_foc_observer_low_speed_edge_sync_count = 0U;
+     g_foc_observer_low_speed_edge_sync_step_max_mrad = 0;
      g_foc_observer_startup_pre_edge_clamp_active = 0U;
      g_foc_observer_startup_pre_edge_clamp_count = 0U;
      g_foc_observer_startup_pre_edge_clamp_step_mrad = 0;
@@ -971,6 +977,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_recovery_sync_active = 0U;
      g_foc_observer_sync_step_mrad = 0;
      g_foc_observer_sync_diff_mrad = 0;
+     g_foc_observer_low_speed_edge_sync_active = 0U;
+     g_foc_observer_low_speed_edge_sync_step_max_mrad = 0;
      g_foc_observer_startup_pre_edge_clamp_active = 0U;
      g_foc_observer_startup_pre_edge_clamp_step_mrad = 0;
      g_foc_observer_startup_pre_edge_clamp_diff_mrad = 0;
@@ -1244,6 +1252,28 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
              g_foc_observer_resync_count++;
              g_foc_observer_resync_diff_mrad = (int16_t)(diff * 1000.0f);
          }
+
+#if FOC_LOW_SPEED_EDGE_SYNC_ENABLE
+         if ((diff_abs <= FOC_ANGLE_SYNC_RESYNC_DIFF_RAD) &&
+             (speed_filtered_abs <= FOC_LOW_SPEED_EDGE_SYNC_MAX_RPM)) {
+             float low_speed_step_max = FOC_LOW_SPEED_EDGE_SYNC_STEP_MAX_RAD;
+
+             if (low_speed_step_max < 0.0f) {
+                 low_speed_step_max = -low_speed_step_max;
+             }
+             if (low_speed_step_max > 0.0f) {
+                 if ((sync_step_max <= 0.0f) ||
+                     (low_speed_step_max < sync_step_max)) {
+                     sync_step_max = low_speed_step_max;
+                 }
+                 g_foc_observer_low_speed_edge_sync_active = 1U;
+                 g_foc_observer_low_speed_edge_sync_count++;
+                 g_foc_observer_low_speed_edge_sync_step_max_mrad =
+                     (int16_t)(sync_step_max * 1000.0f);
+             }
+         }
+#endif
+
          if (sync_factor > 1.0f) {
              sync_factor = 1.0f;
          } else if (sync_factor < 0.0f) {
