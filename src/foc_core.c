@@ -479,6 +479,10 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_smooth_brake_i_release_decay_milli = 850U
 FOC_DEBUG_ROOT volatile int16_t  g_foc_smooth_brake_limit_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_smooth_brake_limited_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_smooth_brake_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_no_edge_decel_coast_enable = 1U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_no_edge_decel_coast_active = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_no_edge_decel_coast_limited_mA = 0;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_no_edge_decel_coast_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_drop_fault_enable =
     FOC_SPEED_DROP_FAULT_ENABLE;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_drop_fault_ref_min_rpm = 600U;
@@ -895,6 +899,8 @@ static float FOC_GetSpeedIqPositiveLimit(float speed_ref_ctrl,
 static void FOC_ResetSmoothBrakeDebug(void);
 static float FOC_ApplySmoothBrakeLimit(float iq_ref,
                                        float speed_ref_ctrl);
+static float FOC_ApplyNoEdgeDecelCoastLimit(float iq_ref,
+                                            float speed_ref_ctrl);
 static void FOC_ResetSpeedDropFaultMonitor(void);
 static void FOC_CheckSpeedDropFault(void);
 static void FOC_ResetSpeedFdbDropFaultMonitor(void);
@@ -1264,6 +1270,11 @@ static uint8_t FOC_SpeedStart_IsNearZero(void)
 
      if (near_zero < 1.0f) {
          near_zero = 1.0f;
+     }
+
+     if ((s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) &&
+         (FOC_FABS(s_ctx.speed_fdb) <= near_zero)) {
+         return 1U;
      }
 
      return ((FOC_FABS(s_ctx.speed_fdb) <= near_zero) &&
@@ -1958,6 +1969,8 @@ static void FOC_ResetSmoothBrakeDebug(void)
      g_foc_smooth_brake_active = 0U;
      g_foc_smooth_brake_limit_mA = 0;
      g_foc_smooth_brake_limited_mA = 0;
+     g_foc_no_edge_decel_coast_active = 0U;
+     g_foc_no_edge_decel_coast_limited_mA = 0;
 }
 
  static void FOC_ResetSpeedPidDebug(void)
@@ -2665,6 +2678,60 @@ static float FOC_ApplySmoothBrakeLimit(float iq_ref,
          return -limit_a;
      }
 
+     return iq_ref;
+}
+
+static float FOC_ApplyNoEdgeDecelCoastLimit(float iq_ref,
+                                            float speed_ref_ctrl)
+{
+     float target_abs = FOC_FABS(s_ctx.speed_ref);
+     float ctrl_abs = FOC_FABS(speed_ref_ctrl);
+     uint16_t no_edge_count = g_foc_smooth_brake_no_edge_count;
+
+     if ((g_foc_no_edge_decel_coast_enable == 0U) ||
+         (g_foc_smooth_brake_enable == 0U) ||
+         (no_edge_count == 0U) ||
+         (s_ctx.sector_no_change_count < no_edge_count) ||
+         ((ctrl_abs - target_abs) <= 0.5f)) {
+         g_foc_no_edge_decel_coast_active = 0U;
+         g_foc_no_edge_decel_coast_limited_mA = 0;
+         return iq_ref;
+     }
+
+     g_foc_no_edge_decel_coast_active = 1U;
+
+     if (s_ctx.pid_speed.integral > 0.0f) {
+         uint16_t decay_milli =
+             g_foc_smooth_brake_i_release_decay_milli;
+         float decay;
+
+         if (decay_milli > 1000U) {
+             decay_milli = 1000U;
+         }
+         decay = (float)decay_milli * 0.001f;
+         s_ctx.pid_speed.integral *= decay;
+         if ((s_ctx.pid_speed.ki > 0.0f) &&
+             (FOC_FABS(s_ctx.pid_speed.ki *
+                       s_ctx.pid_speed.integral) < 0.001f)) {
+             s_ctx.pid_speed.integral = 0.0f;
+         }
+     }
+
+     if (iq_ref > 0.0f) {
+         g_foc_no_edge_decel_coast_limited_mA =
+             FOC_Log_ToI16(iq_ref, 1000.0f);
+         if (g_foc_no_edge_decel_coast_count < 0xFFFFFFFFU) {
+             g_foc_no_edge_decel_coast_count++;
+         }
+         g_foc_low_speed_torque_active = 0U;
+         g_foc_low_speed_torque_applied_mA = 0;
+         g_foc_bidir_decel_hold_active = 0U;
+         g_foc_bidir_decel_hold_applied_mA = 0;
+         FOC_LowSpeedIqSlew_Prime(0.0f);
+         return 0.0f;
+     }
+
+     g_foc_no_edge_decel_coast_limited_mA = 0;
      return iq_ref;
 }
 
@@ -6551,6 +6618,17 @@ static void FOC_Prof_Reset(void)
                                                        speed_error,
                                                        speed_iq_ref_max,
                                                        speed_dt);
+             }
+             if ((hall_travel_stall_blocked == 0U) &&
+                 (zero_output_held == 0U) &&
+                 (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
+                 (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
+                 speed_iq_ref =
+                     FOC_ApplyNoEdgeDecelCoastLimit(speed_iq_ref,
+                                                    speed_ref_ctrl);
+             } else {
+                 g_foc_no_edge_decel_coast_active = 0U;
+                 g_foc_no_edge_decel_coast_limited_mA = 0;
              }
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
