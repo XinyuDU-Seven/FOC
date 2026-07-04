@@ -1479,9 +1479,9 @@ FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset,
 
   return FOC_INPUT_PARAMETER_INVALID;
 }
-float gfSpeedTarget = 0;
+FOC_AI_DEBUG_ROOT volatile float gfSpeedTarget = 0.0f;
 
-uint8_t gunCtrl = 0;
+FOC_AI_DEBUG_ROOT volatile uint8_t gunCtrl = 0U;
 
 static void FOC_TestCase_ClearAutoModes(void)
 {
@@ -1509,12 +1509,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
   }else if(test_case == FOC_TEST_CASE_FIXED_SPEED){
 
-    const FOC_Context_t *ctx = FOC_Core_GetContext();
-    float fixed_ref = ctx->speed_ref;
-
-    if ((fixed_ref > 0.0f) && (ctx->direction == FOC_DIR_CCW)) {
-      fixed_ref = -fixed_ref;
-    }
+    float fixed_ref = gfSpeedTarget;
 
     FOC_TestCase_ClearAutoModes();
     g_foc_dyn_speed_start_on_max_ref = 0U;
