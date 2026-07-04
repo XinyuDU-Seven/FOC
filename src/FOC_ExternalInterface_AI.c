@@ -57,6 +57,8 @@ extern volatile int16_t  g_foc_hall_angle_offset_mrad;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
 #define FOC_DETAIL_LOG_SIZE    512U
+#define FOC_DETAIL_LOG_DECIM_FAST_MS          2U
+#define FOC_DETAIL_LOG_DECIM_SIGNED_CURVE_MS 12U
 
 #define FOC_TEST_CASE_STOP              0U
 #define FOC_TEST_CASE_FIXED_SPEED       1U
@@ -157,7 +159,8 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_armed = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_active = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_stop = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_idx = 0U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_decim_ms = 2U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_decim_ms =
+    FOC_DETAIL_LOG_DECIM_FAST_MS;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_trigger_rpm = 300U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_trigger_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_zero_window_enable = 1U;
@@ -2518,7 +2521,7 @@ static void FOC_TestCase_PrepareFixedSpeedDetailLog(void)
   g_foc_start_log_reset = 1U;
 
   g_foc_detail_log_enable = 1U;
-  g_foc_detail_log_decim_ms = 2U;
+  g_foc_detail_log_decim_ms = FOC_DETAIL_LOG_DECIM_FAST_MS;
   g_foc_detail_log_zero_window_enable = 0U;
   g_foc_detail_log_zero_post_ms = 0U;
   g_foc_detail_log_zero_event_idx = 0xFFFFU;
@@ -2612,10 +2615,10 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     g_foc_bidir_zero_soft_enable = 0U;
     g_foc_bidir_zero_cross_enable = 0U;
     g_foc_detail_log_enable = 1U;
-    g_foc_detail_log_decim_ms = 2U;
-    g_foc_detail_log_trigger_rpm = 300U;
-    g_foc_detail_log_zero_window_enable = 1U;
-    g_foc_detail_log_zero_post_ms = 300U;
+    g_foc_detail_log_decim_ms = FOC_DETAIL_LOG_DECIM_SIGNED_CURVE_MS;
+    g_foc_detail_log_trigger_rpm = g_foc_bidir_speed_max_rpm;
+    g_foc_detail_log_zero_window_enable = 0U;
+    g_foc_detail_log_zero_post_ms = 0U;
     g_foc_detail_log_zero_event_idx = 0xFFFFU;
     g_foc_detail_log_zero_event_count = 0U;
     g_foc_detail_log_zero_window_done = 0U;
