@@ -435,6 +435,9 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_breakaway_boost_enable = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_boost_delay_ms = 10U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_boost_slew_mA_per_s = 30000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_boost_max_iq_mA = 6000U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_unstuck_enable = 1U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_unstuck_max_iq_mA = 10000U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_unstuck_active = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_start_breakaway_boost_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_start_breakaway_boost_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_elapsed_ms = 0U;
@@ -909,6 +912,8 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
                                       uint8_t zero_speed_pid_frozen,
                                       uint8_t zero_output_held);
 static float FOC_SpeedStart_BreakawayIq(float speed_iq_ref_max);
+static float FOC_SpeedStart_UnstuckIqMax(float speed_iq_ref_max);
+static float FOC_SpeedStart_EffectiveIqMax(float speed_iq_ref_max);
 static void FOC_SpeedStart_ApplyBreakawayBoost(uint32_t elapsed_us,
                                                float speed_iq_ref_max,
                                                uint8_t moving);
@@ -1287,6 +1292,7 @@ static void FOC_SpeedStart_Reset(void)
      g_foc_speed_start_moving = 0U;
      g_foc_speed_start_track_hold_active = 0U;
      g_foc_speed_start_breakaway_boost_mA = 0;
+     g_foc_speed_start_unstuck_active = 0U;
      FOC_SpeedStart_UpdateDebug();
 }
 
@@ -1356,6 +1362,42 @@ static float FOC_SpeedStart_BreakawayIq(float speed_iq_ref_max)
      return FOC_CLAMP(iq, 0.0f, speed_iq_ref_max);
 }
 
+static float FOC_SpeedStart_UnstuckIqMax(float speed_iq_ref_max)
+{
+     float max_iq =
+         (float)g_foc_speed_start_unstuck_max_iq_mA * 0.001f;
+
+     if (speed_iq_ref_max < 0.0f) {
+         speed_iq_ref_max = 0.0f;
+     }
+     if ((g_foc_speed_start_unstuck_enable == 0U) ||
+         (max_iq <= 0.0f)) {
+         return speed_iq_ref_max;
+     }
+     if (max_iq < speed_iq_ref_max) {
+         max_iq = speed_iq_ref_max;
+     }
+
+     return max_iq;
+}
+
+static float FOC_SpeedStart_EffectiveIqMax(float speed_iq_ref_max)
+{
+     float max_iq = speed_iq_ref_max;
+
+     if ((s_speed_start_state == FOC_SPEED_START_STATE_BREAKAWAY) ||
+         (s_speed_start_state == FOC_SPEED_START_STATE_SOFT_START) ||
+         ((s_speed_start_state == FOC_SPEED_START_STATE_CLOSED) &&
+          (s_speed_start_iq_ref > 0.0f))) {
+         max_iq = FOC_SpeedStart_UnstuckIqMax(speed_iq_ref_max);
+         if (max_iq < s_speed_start_iq_ref) {
+             max_iq = s_speed_start_iq_ref;
+         }
+     }
+
+     return max_iq;
+}
+
 static void FOC_SpeedStart_ApplyBreakawayBoost(uint32_t elapsed_us,
                                                float speed_iq_ref_max,
                                                uint8_t moving)
@@ -1366,6 +1408,9 @@ static void FOC_SpeedStart_ApplyBreakawayBoost(uint32_t elapsed_us,
      uint32_t delay_us =
          (uint32_t)g_foc_speed_start_breakaway_boost_delay_ms * 1000U;
      float step;
+     uint8_t unstuck_active =
+         ((g_foc_speed_start_unstuck_enable != 0U) &&
+          (moving == 0U)) ? 1U : 0U;
 
      if (speed_iq_ref_max < 0.0f) {
          speed_iq_ref_max = 0.0f;
@@ -1376,10 +1421,14 @@ static void FOC_SpeedStart_ApplyBreakawayBoost(uint32_t elapsed_us,
      if (max_iq > speed_iq_ref_max) {
          max_iq = speed_iq_ref_max;
      }
+     if (unstuck_active != 0U) {
+         max_iq = FOC_SpeedStart_UnstuckIqMax(speed_iq_ref_max);
+     }
 
      if (s_speed_start_iq_ref < base_iq) {
          s_speed_start_iq_ref = base_iq;
      }
+     g_foc_speed_start_unstuck_active = unstuck_active;
      if ((g_foc_speed_start_breakaway_boost_enable == 0U) ||
          (moving != 0U) ||
          (s_speed_start_elapsed_us < delay_us) ||
@@ -1645,9 +1694,11 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
          FOC_SpeedStart_ApplyBreakawayBoost(elapsed_us,
                                             speed_iq_ref_max,
                                             moving);
-         if ((breakaway_us == 0U) ||
-             (s_speed_start_elapsed_us >= breakaway_us)) {
-             FOC_SpeedStart_BeginSoftStart(speed_iq_ref_max);
+         if ((moving != 0U) &&
+             ((breakaway_us == 0U) ||
+              (s_speed_start_elapsed_us >= breakaway_us))) {
+             FOC_SpeedStart_BeginSoftStart(
+                 FOC_SpeedStart_EffectiveIqMax(speed_iq_ref_max));
          }
      } else if (s_speed_start_state == FOC_SPEED_START_STATE_SOFT_START) {
          uint32_t soft_us = (uint32_t)g_foc_speed_start_soft_ms * 1000U;
@@ -1681,7 +1732,8 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
               ((soft_us == 0U) ||
                (s_speed_start_soft_elapsed_us >= soft_us)))) {
              FOC_SpeedStart_Close(speed_ref_ctrl - s_ctx.speed_ctrl_fdb,
-                                  speed_iq_ref_max);
+                                  FOC_SpeedStart_EffectiveIqMax(
+                                      speed_iq_ref_max));
          }
      }
 
@@ -6698,6 +6750,8 @@ static void FOC_Prof_Reset(void)
                                         hall_travel_stall_blocked,
                                         zero_speed_pid_frozen,
                                         zero_output_held);
+             speed_iq_ref_max = FOC_SpeedStart_EffectiveIqMax(
+                 speed_iq_ref_max);
 
              s_speed_loop_accum_us = 0U;
              s_ctx.speed_loop_counter = 0U;
