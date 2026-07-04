@@ -426,7 +426,7 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_track_hold_active = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_breakaway_boost_enable = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_boost_delay_ms = 10U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_boost_slew_mA_per_s = 30000U;
-FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_boost_max_iq_mA = 5000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_boost_max_iq_mA = 6000U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_start_breakaway_boost_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_start_breakaway_boost_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_elapsed_ms = 0U;
@@ -443,6 +443,13 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_current_limit_max_rpm = 600U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_current_limit_err_rpm = 500U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_current_limit_active = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_lift_current_limit_extra_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_start_overload_enable = 1U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_start_overload_iq_mA = 6000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_start_overload_max_ms = 450U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_start_overload_max_rpm = 20U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_start_overload_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_start_overload_elapsed_ms = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_lift_start_overload_extra_mA = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_decel_hold_enable =
     FOC_BIDIR_DECEL_HOLD_ENABLE;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_decel_hold_active = 0U;
@@ -896,6 +903,12 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
                                                float speed_dt);
 static float FOC_GetSpeedIqPositiveLimit(float speed_ref_ctrl,
                                          float speed_error);
+static void FOC_ResetLiftCurrentLimitDebug(void);
+static uint32_t FOC_LiftStartElapsedUs(float speed_ref_ctrl);
+static float FOC_ApplyLiftStartOverloadLimit(float limit,
+                                             float base_limit,
+                                             float speed_ref_ctrl,
+                                             FOC_Dir_e lift_dir);
 static void FOC_ResetSmoothBrakeDebug(void);
 static float FOC_ApplySmoothBrakeLimit(float iq_ref,
                                        float speed_ref_ctrl);
@@ -2009,8 +2022,7 @@ static void FOC_ResetSmoothBrakeDebug(void)
      g_foc_low_speed_torque_applied_mA = 0;
      g_foc_low_speed_iq_slew_active = 0U;
      g_foc_low_speed_iq_slew_limited_mA = 0;
-     g_foc_lift_current_limit_active = 0U;
-     g_foc_lift_current_limit_extra_mA = 0;
+     FOC_ResetLiftCurrentLimitDebug();
      g_foc_bidir_decel_hold_active = 0U;
      g_foc_bidir_decel_hold_applied_mA = 0;
      g_foc_bidir_decel_hold_raw_err_rpm = 0;
@@ -2130,8 +2142,7 @@ static void FOC_ApplyHallTravelStallCurrentCut(uint8_t reset_pid)
     g_foc_low_speed_torque_applied_mA = 0;
     g_foc_low_speed_iq_slew_active = 0U;
     g_foc_low_speed_iq_slew_limited_mA = 0;
-    g_foc_lift_current_limit_active = 0U;
-    g_foc_lift_current_limit_extra_mA = 0;
+    FOC_ResetLiftCurrentLimitDebug();
     FOC_SpeedStart_Reset();
 
     if (reset_pid != 0U) {
@@ -2822,6 +2833,88 @@ static float FOC_ApplyNoEdgeDecelCoastLimit(float iq_ref,
      return iq_ref;
  }
 
+static void FOC_ResetLiftCurrentLimitDebug(void)
+{
+     g_foc_lift_current_limit_active = 0U;
+     g_foc_lift_current_limit_extra_mA = 0;
+     g_foc_lift_start_overload_active = 0U;
+     g_foc_lift_start_overload_elapsed_ms = 0U;
+     g_foc_lift_start_overload_extra_mA = 0;
+}
+
+static uint32_t FOC_LiftStartElapsedUs(float speed_ref_ctrl)
+{
+     uint32_t breakaway_us =
+         (uint32_t)g_foc_speed_start_breakaway_ms * 1000U;
+
+     if (s_speed_start_state == FOC_SPEED_START_STATE_BREAKAWAY) {
+         return s_speed_start_elapsed_us;
+     }
+     if (s_speed_start_state == FOC_SPEED_START_STATE_SOFT_START) {
+         if ((0xFFFFFFFFU - breakaway_us) >=
+             s_speed_start_soft_elapsed_us) {
+             return breakaway_us + s_speed_start_soft_elapsed_us;
+         }
+         return 0xFFFFFFFFU;
+     }
+     if ((s_speed_start_state == FOC_SPEED_START_STATE_IDLE) &&
+         (FOC_SpeedStart_CommandActive(speed_ref_ctrl) != 0U) &&
+         (FOC_SpeedStart_IsNearZero() != 0U)) {
+         return 0U;
+     }
+
+     return 0xFFFFFFFFU;
+}
+
+static float FOC_ApplyLiftStartOverloadLimit(float limit,
+                                             float base_limit,
+                                             float speed_ref_ctrl,
+                                             FOC_Dir_e lift_dir)
+{
+     float overload_limit =
+         (float)g_foc_lift_start_overload_iq_mA * 0.001f;
+     float max_rpm = (float)g_foc_lift_start_overload_max_rpm;
+     uint32_t elapsed_us;
+     uint32_t max_us;
+     uint32_t elapsed_ms;
+
+     if ((g_foc_lift_start_overload_enable == 0U) ||
+         (g_foc_lift_start_overload_max_ms == 0U) ||
+         (overload_limit <= limit) ||
+         (s_ctx.direction != lift_dir) ||
+         (speed_ref_ctrl < 1.0f) ||
+         (FOC_HallTravelStallTorqueBlocked() != 0U)) {
+         return limit;
+     }
+     if (max_rpm < 1.0f) {
+         max_rpm = 1.0f;
+     }
+     if ((FOC_FABS(s_ctx.speed_fdb) > max_rpm) ||
+         (FOC_FABS(s_ctx.speed_ctrl_fdb) > max_rpm)) {
+         return limit;
+     }
+
+     elapsed_us = FOC_LiftStartElapsedUs(speed_ref_ctrl);
+     max_us = (uint32_t)g_foc_lift_start_overload_max_ms * 1000U;
+     if ((elapsed_us == 0xFFFFFFFFU) || (elapsed_us > max_us)) {
+         return limit;
+     }
+
+     elapsed_ms = elapsed_us / 1000U;
+     if (elapsed_ms > 0xFFFFU) {
+         elapsed_ms = 0xFFFFU;
+     }
+     g_foc_lift_current_limit_active = 1U;
+     g_foc_lift_current_limit_extra_mA =
+         FOC_Log_ToI16(overload_limit - base_limit, 1000.0f);
+     g_foc_lift_start_overload_active = 1U;
+     g_foc_lift_start_overload_elapsed_ms = (uint16_t)elapsed_ms;
+     g_foc_lift_start_overload_extra_mA =
+         FOC_Log_ToI16(overload_limit - limit, 1000.0f);
+
+     return overload_limit;
+}
+
  static float FOC_GetSpeedIqPositiveLimit(float speed_ref_ctrl,
                                           float speed_error)
  {
@@ -2829,14 +2922,14 @@ static float FOC_ApplyNoEdgeDecelCoastLimit(float iq_ref,
          (float)g_foc_lift_current_limit_base_mA * 0.001f;
      float boost_limit =
          (float)g_foc_lift_current_limit_boost_mA * 0.001f;
+     float limit;
      float max_rpm = (float)g_foc_lift_current_limit_max_rpm;
      float err_rpm = (float)g_foc_lift_current_limit_err_rpm;
      FOC_Dir_e lift_dir =
          (g_foc_lift_current_limit_dir > FOC_DIR_CCW) ?
          FOC_DIR_CW : (FOC_Dir_e)g_foc_lift_current_limit_dir;
 
-     g_foc_lift_current_limit_active = 0U;
-     g_foc_lift_current_limit_extra_mA = 0;
+     FOC_ResetLiftCurrentLimitDebug();
 
      if (base_limit <= 0.0f) {
          base_limit = s_ctx.pid_speed.out_max;
@@ -2851,6 +2944,7 @@ static float FOC_ApplyNoEdgeDecelCoastLimit(float iq_ref,
          err_rpm = 1.0f;
      }
 
+     limit = base_limit;
      if ((g_foc_lift_current_limit_enable != 0U) &&
          (s_ctx.direction == lift_dir) &&
          (speed_ref_ctrl >= 1.0f) &&
@@ -2859,10 +2953,13 @@ static float FOC_ApplyNoEdgeDecelCoastLimit(float iq_ref,
          g_foc_lift_current_limit_active = 1U;
          g_foc_lift_current_limit_extra_mA =
              FOC_Log_ToI16(boost_limit - base_limit, 1000.0f);
-         return boost_limit;
+         limit = boost_limit;
      }
 
-     return base_limit;
+     return FOC_ApplyLiftStartOverloadLimit(limit,
+                                            base_limit,
+                                            speed_ref_ctrl,
+                                            lift_dir);
  }
 
 static float FOC_ApplyLowSpeedIqSlew(float iq_ref,
@@ -6576,8 +6673,7 @@ static void FOC_Prof_Reset(void)
                  g_foc_bidir_zero_soft_active = 0U;
                  g_foc_bidir_zero_soft_scale_percent = 100U;
                  g_foc_bidir_zero_soft_limited_mA = 0;
-                 g_foc_lift_current_limit_active = 0U;
-                 g_foc_lift_current_limit_extra_mA = 0;
+                 FOC_ResetLiftCurrentLimitDebug();
              }
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
@@ -6659,8 +6755,7 @@ static void FOC_Prof_Reset(void)
          g_foc_low_speed_torque_applied_mA = 0;
          g_foc_low_speed_iq_slew_active = 0U;
          g_foc_low_speed_iq_slew_limited_mA = 0;
-         g_foc_lift_current_limit_active = 0U;
-         g_foc_lift_current_limit_extra_mA = 0;
+         FOC_ResetLiftCurrentLimitDebug();
          g_foc_bidir_decel_hold_active = 0U;
          g_foc_bidir_decel_hold_applied_mA = 0;
          g_foc_bidir_decel_hold_raw_err_rpm = 0;
@@ -7057,8 +7152,7 @@ int FOC_Core_SetCurrentRef(float id, float iq)
      g_foc_bidir_zero_soft_active = 0U;
      g_foc_bidir_zero_soft_scale_percent = 100U;
      g_foc_bidir_zero_soft_limited_mA = 0;
-     g_foc_lift_current_limit_active = 0U;
-     g_foc_lift_current_limit_extra_mA = 0;
+     FOC_ResetLiftCurrentLimitDebug();
      FOC_BidirZeroTransfer_Reset();
 
      s_ctx.id_ref = id;
@@ -7155,8 +7249,7 @@ int FOC_Core_SetIFRef(float iq, float rpm)
      g_foc_bidir_zero_soft_active = 0U;
      g_foc_bidir_zero_soft_scale_percent = 100U;
      g_foc_bidir_zero_soft_limited_mA = 0;
-     g_foc_lift_current_limit_active = 0U;
-     g_foc_lift_current_limit_extra_mA = 0;
+     FOC_ResetLiftCurrentLimitDebug();
      FOC_BidirZeroTransfer_Reset();
 
      if (signed_iq < 0.0f) {
