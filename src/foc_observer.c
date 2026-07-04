@@ -141,6 +141,16 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_speed_limit_rpm
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_decay_min_speed_rpm =
     FOC_HALL_NO_EDGE_DECAY_MIN_SPEED_RPM;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_no_edge_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_no_edge_soft_stop_enable =
+    FOC_HALL_NO_EDGE_SOFT_STOP_ENABLE;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_soft_stop_decay_rpm_per_s =
+    FOC_HALL_NO_EDGE_SOFT_STOP_DECAY_RPM_PER_S;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_soft_stop_min_rpm =
+    FOC_HALL_NO_EDGE_SOFT_STOP_MIN_RPM;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_soft_stop_max_us =
+    FOC_HALL_NO_EDGE_SOFT_STOP_MAX_US;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_soft_stop_count = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_soft_stop_rpm = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_resync_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_resync_diff_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_ref_active = 0U;
@@ -517,6 +527,86 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
     return 1U;
 }
 
+static uint8_t FOC_Observer_ApplyNoEdgeSoftStop(FOC_Context_t *ctx,
+                                                float *speed_rpm,
+                                                float dt,
+                                                uint32_t elapsed_us,
+                                                float speed_limit_rpm)
+{
+    float speed_abs;
+    float decay_rate;
+    float decay_step;
+    float min_rpm;
+    float max_elapsed_us;
+
+    if ((ctx == 0) ||
+        (speed_rpm == 0) ||
+        (g_foc_observer_no_edge_soft_stop_enable == 0U)) {
+        return 0U;
+    }
+
+    max_elapsed_us = (float)g_foc_observer_no_edge_soft_stop_max_us;
+    if ((max_elapsed_us > 0.0f) &&
+        ((float)elapsed_us >= max_elapsed_us)) {
+        return 0U;
+    }
+
+    speed_abs = ctx->speed_filtered;
+    if (speed_abs < 0.0f) {
+        speed_abs = -speed_abs;
+    }
+    if (*speed_rpm < 0.0f) {
+        float raw_abs = -*speed_rpm;
+
+        if (raw_abs > speed_abs) {
+            speed_abs = raw_abs;
+        }
+    } else if (*speed_rpm > speed_abs) {
+        speed_abs = *speed_rpm;
+    }
+    if ((speed_limit_rpm > 0.0f) && (speed_limit_rpm < speed_abs)) {
+        speed_abs = speed_limit_rpm;
+    }
+
+    min_rpm = (float)g_foc_observer_no_edge_soft_stop_min_rpm;
+    if (min_rpm < 0.0f) {
+        min_rpm = 0.0f;
+    }
+    if (speed_abs <= min_rpm) {
+        return 0U;
+    }
+
+    decay_rate =
+        (float)g_foc_observer_no_edge_soft_stop_decay_rpm_per_s;
+    if (decay_rate < 1.0f) {
+        decay_rate = 1.0f;
+    }
+    if (dt <= 0.0f) {
+        dt = FOC_CONTROL_PERIOD_S;
+    }
+    decay_step = decay_rate * dt;
+    if (decay_step < 0.05f) {
+        decay_step = 0.05f;
+    }
+
+    if ((speed_abs - min_rpm) <= decay_step) {
+        return 0U;
+    }
+
+    speed_abs -= decay_step;
+    *speed_rpm = speed_abs;
+    ctx->speed_raw = speed_abs;
+    ctx->speed_filtered = speed_abs;
+    g_foc_observer_no_edge_active = 1U;
+    g_foc_observer_no_edge_soft_stop_rpm =
+        (uint16_t)((speed_abs > 65535.0f) ? 65535U : speed_abs);
+    if (g_foc_observer_no_edge_soft_stop_count < 0xFFFFFFFFU) {
+        g_foc_observer_no_edge_soft_stop_count++;
+    }
+
+    return 1U;
+}
+
  /* ===================================================================
 
   *  观测器初始化
@@ -750,15 +840,15 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
         /* 无扇区跳变：保持上次跳变计算的速度，只有超过阈值周期时才衰减 */
 
+        uint32_t no_edge_elapsed_us = 0U;
+        float no_edge_limit_rpm = 0.0f;
+
         ctx->sector_no_change_count++;
 
         {
             uint32_t ts_now = FOC_HAL_GetTimestampUs();
             uint32_t stop_timeout_us = ctx->hall_sector_dt_us *
                                        FOC_HALL_STOP_TIMEOUT_RATIO;
-            uint32_t no_edge_elapsed_us = 0U;
-            float no_edge_limit_rpm = 0.0f;
-
             if (FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
                                            &no_edge_elapsed_us,
                                            &no_edge_limit_rpm) != 0U) {
@@ -789,6 +879,19 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
         if (ctx->sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
 
             /* 长时间无跳变，电机已停止，速度衰减到零 */
+
+            if (no_edge_elapsed_us == 0U) {
+                no_edge_elapsed_us = FOC_HAL_GetTimestampUs() -
+                                     ctx->timestamp_prev;
+            }
+            if (FOC_Observer_ApplyNoEdgeSoftStop(ctx,
+                                                 &speed_rpm,
+                                                 dt,
+                                                 no_edge_elapsed_us,
+                                                 no_edge_limit_rpm) != 0U) {
+                ctx->hall_sector_prev = cur_sector;
+                return ctx->speed_filtered;
+            }
 
             speed_rpm = 0.0f;
             ctx->speed_raw = 0.0f;

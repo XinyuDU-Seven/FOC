@@ -2590,6 +2590,7 @@ static float FOC_ApplySmoothBrakeLimit(float iq_ref,
      float limit_mA;
      float limit_a;
      uint16_t decay_milli = g_foc_smooth_brake_i_decay_milli;
+     uint8_t no_edge_brake;
 
      FOC_ResetSmoothBrakeDebug();
 
@@ -2599,11 +2600,17 @@ static float FOC_ApplySmoothBrakeLimit(float iq_ref,
      if (ref_abs > speed_abs) {
          speed_abs = ref_abs;
      }
+     no_edge_brake =
+         ((g_foc_smooth_brake_no_edge_count > 0U) &&
+          (s_ctx.sector_no_change_count >=
+           g_foc_smooth_brake_no_edge_count))
+         ? 1U
+         : 0U;
 
      if ((g_foc_smooth_brake_enable == 0U) ||
          (iq_ref >= 0.0f) ||
          (entry_rpm < 1.0f) ||
-         (speed_abs > entry_rpm)) {
+         ((no_edge_brake == 0U) && (speed_abs > entry_rpm))) {
          return iq_ref;
      }
 
@@ -2630,9 +2637,7 @@ static float FOC_ApplySmoothBrakeLimit(float iq_ref,
          limit_mA = min_mA;
          decay_milli = g_foc_smooth_brake_i_release_decay_milli;
      }
-     if ((g_foc_smooth_brake_no_edge_count > 0U) &&
-         (s_ctx.sector_no_change_count >=
-          g_foc_smooth_brake_no_edge_count)) {
+     if (no_edge_brake != 0U) {
          float no_edge_mA = (float)g_foc_smooth_brake_no_edge_mA;
 
          if (no_edge_mA < 0.0f) {
