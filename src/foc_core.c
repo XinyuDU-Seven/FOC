@@ -2364,6 +2364,27 @@ static void FOC_UpdateHallTravelStallGuard(void)
         current_abs = s_ctx.current_peak;
     }
 
+    /* Before two startup Hall edges, speed feedback is not yet trustworthy.
+     * Do not let the travel guard cut torque during that bootstrap window.
+     */
+    if ((s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
+        (g_foc_pure_speed_loop_enable != 0U) &&
+        (FOC_PureSpeedStartupLockActive(s_speed_ref_ctrl) != 0U)) {
+        if ((s_hall_travel_stall_active != 0U) &&
+            (s_hall_travel_stall_transient == 0U)) {
+            FOC_ApplyHallTravelStallCurrentCut(0U);
+        } else {
+            s_hall_travel_stall_active = 0U;
+            s_hall_travel_stall_counter = 0U;
+            s_hall_travel_stall_dir = 0;
+            s_hall_travel_stall_transient = 0U;
+            FOC_ResetHallTravelStallWindow(command_sign);
+            FOC_ResetHallTravelStallCommand(command_sign);
+        }
+        FOC_UpdateHallTravelStallDebug();
+        return;
+    }
+
     if (command_sign == 0) {
         FOC_ResetHallTravelStallWindow(0);
         FOC_ResetHallTravelStallCommand(0);
