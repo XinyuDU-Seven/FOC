@@ -337,13 +337,17 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_count_threshold =
     FOC_HALL_TRAVEL_STALL_COUNT_THRESHOLD;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_max_dir_counts =
     FOC_HALL_TRAVEL_STALL_MAX_DIR_COUNTS;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_min_command_counts =
+    FOC_HALL_TRAVEL_STALL_MIN_COMMAND_COUNTS;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_travel_stall_active[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_counter[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile int8_t   g_foc_hall_travel_stall_dir[FOC_CORE_MOTOR_COUNT] = {0, 0};
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_travel_stall_transient[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_suppressed_delta[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_travel_freeze_count[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_stall_window_start[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_stall_window_progress[FOC_CORE_MOTOR_COUNT] = {0, 0};
+FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_stall_command_progress[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static uint32_t s_foc_hall_history_delta_us[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
 static uint8_t  s_foc_hall_history_raw[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
 static uint64_t s_foc_hall_history_count[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
@@ -355,10 +359,14 @@ static int32_t  s_foc_hall_last_delta[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static uint8_t  s_foc_hall_travel_stall_active_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint16_t s_foc_hall_travel_stall_counter_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static int8_t   s_foc_hall_travel_stall_dir_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
+static uint8_t  s_foc_hall_travel_stall_transient_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static int32_t  s_foc_hall_travel_suppressed_delta_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int32_t  s_foc_hall_travel_stall_window_start_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int8_t   s_foc_hall_travel_stall_window_dir_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int32_t  s_foc_hall_travel_stall_window_progress_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
+static int32_t  s_foc_hall_travel_stall_command_start_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
+static int8_t   s_foc_hall_travel_stall_command_dir_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
+static int32_t  s_foc_hall_travel_stall_command_progress_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_pid_err_rpm = 0;
@@ -450,6 +458,18 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_start_overload_max_rpm = 20U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_start_overload_active = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_start_overload_elapsed_ms = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_lift_start_overload_extra_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_start_angle_search_enable =
+    FOC_LIFT_START_ANGLE_SEARCH_ENABLE;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_start_angle_search_delay_ms =
+    FOC_LIFT_START_ANGLE_SEARCH_DELAY_MS;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_start_angle_search_period_ms =
+    FOC_LIFT_START_ANGLE_SEARCH_PERIOD_MS;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_lift_start_angle_search_amp_mrad =
+    FOC_LIFT_START_ANGLE_SEARCH_AMP_MRAD;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_lift_start_angle_search_max_rpm =
+    FOC_LIFT_START_ANGLE_SEARCH_MAX_RPM;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_lift_start_angle_search_active = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_lift_start_angle_search_offset_mrad = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_decel_hold_enable =
     FOC_BIDIR_DECEL_HOLD_ENABLE;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_bidir_decel_hold_active = 0U;
@@ -777,11 +797,18 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_hall_travel_stall_active       (s_foc_hall_travel_stall_active_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_counter      (s_foc_hall_travel_stall_counter_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_dir          (s_foc_hall_travel_stall_dir_store[s_foc_core_active_motor])
+#define s_hall_travel_stall_transient    (s_foc_hall_travel_stall_transient_store[s_foc_core_active_motor])
 #define s_hall_travel_suppressed_delta   (s_foc_hall_travel_suppressed_delta_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_window_start (s_foc_hall_travel_stall_window_start_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_window_dir   (s_foc_hall_travel_stall_window_dir_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_window_progress \
     (s_foc_hall_travel_stall_window_progress_store[s_foc_core_active_motor])
+#define s_hall_travel_stall_command_start \
+    (s_foc_hall_travel_stall_command_start_store[s_foc_core_active_motor])
+#define s_hall_travel_stall_command_dir \
+    (s_foc_hall_travel_stall_command_dir_store[s_foc_core_active_motor])
+#define s_hall_travel_stall_command_progress \
+    (s_foc_hall_travel_stall_command_progress_store[s_foc_core_active_motor])
 static uint8_t s_dyn_speed_prev_enable = 0U;
 static uint32_t s_dyn_speed_start_us = 0U;
 static uint32_t s_dyn_log_last_us = 0U;
@@ -1884,6 +1911,9 @@ static void FOC_StartLog_Record(uint32_t now_us)
      if (s_ctx.fault != FOC_FAULT_NONE) {
          flags |= 0x40U;
      }
+     if (g_foc_lift_start_angle_search_active != 0U) {
+         flags |= 0x80U;
+     }
 
      g_foc_start_log_valid[idx] = 0U;
      g_foc_start_log_motor_id[idx] = s_foc_core_active_motor;
@@ -2069,6 +2099,14 @@ static void FOC_ResetHallTravelStallWindow(int8_t command_sign)
     s_hall_travel_stall_window_progress = 0;
 }
 
+static void FOC_ResetHallTravelStallCommand(int8_t command_sign)
+{
+    s_hall_travel_stall_command_start =
+        g_foc_hall_travel_count[s_foc_core_active_motor];
+    s_hall_travel_stall_command_dir = command_sign;
+    s_hall_travel_stall_command_progress = 0;
+}
+
 static void FOC_RollBackHallTravelStallWindow(int8_t command_sign)
 {
     int32_t progress = s_hall_travel_stall_window_progress;
@@ -2108,12 +2146,16 @@ static void FOC_UpdateHallTravelStallDebug(void)
     g_foc_hall_travel_stall_active[motor] = s_hall_travel_stall_active;
     g_foc_hall_travel_stall_counter[motor] = s_hall_travel_stall_counter;
     g_foc_hall_travel_stall_dir[motor] = s_hall_travel_stall_dir;
+    g_foc_hall_travel_stall_transient[motor] =
+        s_hall_travel_stall_transient;
     g_foc_hall_travel_suppressed_delta[motor] =
         s_hall_travel_suppressed_delta;
     g_foc_hall_travel_stall_window_start[motor] =
         s_hall_travel_stall_window_start;
     g_foc_hall_travel_stall_window_progress[motor] =
         s_hall_travel_stall_window_progress;
+    g_foc_hall_travel_stall_command_progress[motor] =
+        s_hall_travel_stall_command_progress;
 }
 
 static void FOC_ResetHallTravelStallGuard(uint8_t clear_suppressed)
@@ -2123,7 +2165,9 @@ static void FOC_ResetHallTravelStallGuard(uint8_t clear_suppressed)
     s_hall_travel_stall_active = 0U;
     s_hall_travel_stall_counter = 0U;
     s_hall_travel_stall_dir = 0;
+    s_hall_travel_stall_transient = 0U;
     FOC_ResetHallTravelStallWindow(0);
+    FOC_ResetHallTravelStallCommand(0);
     if (clear_suppressed != 0U) {
         s_hall_travel_suppressed_delta = 0;
         if (motor < FOC_CORE_MOTOR_COUNT) {
@@ -2165,7 +2209,10 @@ static void FOC_UpdateHallTravelStallGuard(void)
     uint16_t max_dir_counts = g_foc_hall_travel_stall_max_dir_counts;
     int8_t command_sign = FOC_HallTravelCommandSign();
     uint8_t was_active = s_hall_travel_stall_active;
+    uint16_t min_command_counts =
+        g_foc_hall_travel_stall_min_command_counts;
     uint8_t low_progress = 0U;
+    uint8_t persistent_stall_allowed = 0U;
     uint8_t condition = 0U;
     uint8_t keep_latched = 0U;
 
@@ -2178,6 +2225,16 @@ static void FOC_UpdateHallTravelStallGuard(void)
 
     if (command_sign == 0) {
         FOC_ResetHallTravelStallWindow(0);
+        FOC_ResetHallTravelStallCommand(0);
+        if ((s_hall_travel_stall_active != 0U) &&
+            (s_hall_travel_stall_transient != 0U)) {
+            s_hall_travel_stall_active = 0U;
+            s_hall_travel_stall_counter = 0U;
+            s_hall_travel_stall_dir = 0;
+            s_hall_travel_stall_transient = 0U;
+            FOC_UpdateHallTravelStallDebug();
+            return;
+        }
         /* Keep the hard-stop latch across neutral so repeated same-direction
          * button presses do not re-apply torque at the mechanical limit.
          */
@@ -2189,12 +2246,29 @@ static void FOC_UpdateHallTravelStallGuard(void)
             FOC_UpdateHallTravelStallDebug();
             return;
         }
-    } else if (s_hall_travel_stall_window_dir != command_sign) {
-        FOC_ResetHallTravelStallWindow(command_sign);
     } else {
-        s_hall_travel_stall_window_progress =
-            FOC_HallTravelCommandProgress(s_hall_travel_stall_window_start,
-                                          command_sign);
+        if (s_hall_travel_stall_command_dir != command_sign) {
+            FOC_ResetHallTravelStallCommand(command_sign);
+        } else {
+            s_hall_travel_stall_command_progress =
+                FOC_HallTravelCommandProgress(
+                    s_hall_travel_stall_command_start,
+                    command_sign);
+        }
+        if ((min_command_counts == 0U) ||
+            (s_hall_travel_stall_command_progress >=
+             (int32_t)min_command_counts)) {
+            persistent_stall_allowed = 1U;
+        }
+
+        if (s_hall_travel_stall_window_dir != command_sign) {
+            FOC_ResetHallTravelStallWindow(command_sign);
+        } else {
+            s_hall_travel_stall_window_progress =
+                FOC_HallTravelCommandProgress(
+                    s_hall_travel_stall_window_start,
+                    command_sign);
+        }
     }
 
     if (max_dir_counts != 0U) {
@@ -2264,16 +2338,24 @@ static void FOC_UpdateHallTravelStallGuard(void)
         if (s_hall_travel_stall_counter >= threshold) {
             s_hall_travel_stall_active = 1U;
             s_hall_travel_stall_dir = command_sign;
-            if (was_active == 0U) {
+            if (persistent_stall_allowed != 0U) {
+                s_hall_travel_stall_transient = 0U;
+            } else {
+                s_hall_travel_stall_transient = 1U;
+            }
+            if ((was_active == 0U) &&
+                (persistent_stall_allowed != 0U)) {
                 FOC_RollBackHallTravelStallWindow(command_sign);
             }
         } else {
             s_hall_travel_stall_active = 0U;
+            s_hall_travel_stall_transient = 0U;
         }
     } else {
         s_hall_travel_stall_active = 0U;
         s_hall_travel_stall_counter = 0U;
         s_hall_travel_stall_dir = 0;
+        s_hall_travel_stall_transient = 0U;
     }
 
     if (s_hall_travel_stall_active != 0U) {
@@ -4680,7 +4762,87 @@ static void FOC_DynSpeed_ServiceMetrics(void)
  {
      s_current_angle_trim_rad = 0.0f;
      g_foc_current_angle_trim_mrad = 0;
+     g_foc_lift_start_angle_search_active = 0U;
+     g_foc_lift_start_angle_search_offset_mrad = 0;
  }
+
+static float FOC_LiftStartAngleSearchOffset(void)
+{
+     FOC_Dir_e lift_dir =
+         (g_foc_lift_current_limit_dir > FOC_DIR_CCW) ?
+         FOC_DIR_CW : (FOC_Dir_e)g_foc_lift_current_limit_dir;
+     float speed_ref_abs = FOC_FABS(s_speed_ref_ctrl);
+     float max_rpm = (float)g_foc_lift_start_angle_search_max_rpm;
+     float move_rpm = (float)g_foc_speed_start_move_rpm;
+     float amp_rad;
+     float phase;
+     float offset_scale;
+     uint32_t elapsed_us;
+     uint32_t delay_us;
+     uint32_t period_us;
+     uint32_t active_us;
+     uint32_t phase_us;
+
+     g_foc_lift_start_angle_search_active = 0U;
+     g_foc_lift_start_angle_search_offset_mrad = 0;
+
+     if ((g_foc_lift_start_angle_search_enable == 0U) ||
+         (s_ctx.direction != lift_dir) ||
+         (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED) ||
+         (FOC_HallTravelStallTorqueBlocked() != 0U) ||
+         (FOC_SpeedStart_CommandActive(speed_ref_abs) == 0U) ||
+         ((s_speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
+          (s_speed_start_state != FOC_SPEED_START_STATE_SOFT_START))) {
+         return 0.0f;
+     }
+
+     if (max_rpm < 1.0f) {
+         max_rpm = 1.0f;
+     }
+     if (move_rpm < 1.0f) {
+         move_rpm = 1.0f;
+     }
+     if ((FOC_FABS(s_ctx.speed_fdb) > max_rpm) ||
+         (FOC_FABS(s_ctx.speed_ctrl_fdb) > max_rpm) ||
+         (FOC_FABS(s_ctx.speed_fdb) >= move_rpm) ||
+         (FOC_FABS(s_ctx.speed_ctrl_fdb) >= move_rpm)) {
+         return 0.0f;
+     }
+
+     elapsed_us = FOC_LiftStartElapsedUs(speed_ref_abs);
+     delay_us = (uint32_t)g_foc_lift_start_angle_search_delay_ms * 1000U;
+     if ((elapsed_us == 0xFFFFFFFFU) || (elapsed_us < delay_us)) {
+         return 0.0f;
+     }
+
+     period_us = (uint32_t)g_foc_lift_start_angle_search_period_ms * 1000U;
+     if (period_us < 20000U) {
+         period_us = 20000U;
+     }
+     amp_rad = (float)g_foc_lift_start_angle_search_amp_mrad * 0.001f;
+     if (amp_rad < 0.0f) {
+         amp_rad = -amp_rad;
+     }
+     if (amp_rad > (FOC_PI / 3.0f)) {
+         amp_rad = FOC_PI / 3.0f;
+     }
+
+     active_us = elapsed_us - delay_us;
+     phase_us = active_us % period_us;
+     phase = (float)phase_us / (float)period_us;
+     if (phase < 0.25f) {
+         offset_scale = phase * 4.0f;
+     } else if (phase < 0.75f) {
+         offset_scale = 2.0f - (phase * 4.0f);
+     } else {
+         offset_scale = (phase * 4.0f) - 4.0f;
+     }
+
+     g_foc_lift_start_angle_search_active = 1U;
+     g_foc_lift_start_angle_search_offset_mrad =
+         FOC_Log_ToI16(amp_rad * offset_scale, 1000.0f);
+     return amp_rad * offset_scale;
+}
 
 static float FOC_ApplyCurrentAngleTrim(float theta_ctrl)
 {
@@ -4697,6 +4859,7 @@ static float FOC_ApplyCurrentAngleTrim(float theta_ctrl)
              g_foc_cw_angle_offset_mrad;
      }
      offset_rad += (float)offset_mrad * 0.001f;
+     offset_rad += FOC_LiftStartAngleSearchOffset();
 
 #if FOC_CURRENT_ANGLE_TRIM_ENABLE
      offset_rad += s_current_angle_trim_rad;
@@ -5871,17 +6034,23 @@ static void FOC_Prof_Reset(void)
          s_foc_hall_travel_stall_active_store[motor] = 0U;
          s_foc_hall_travel_stall_counter_store[motor] = 0U;
          s_foc_hall_travel_stall_dir_store[motor] = 0;
+         s_foc_hall_travel_stall_transient_store[motor] = 0U;
          s_foc_hall_travel_suppressed_delta_store[motor] = 0;
          s_foc_hall_travel_stall_window_start_store[motor] = 0;
          s_foc_hall_travel_stall_window_dir_store[motor] = 0;
          s_foc_hall_travel_stall_window_progress_store[motor] = 0;
+         s_foc_hall_travel_stall_command_start_store[motor] = 0;
+         s_foc_hall_travel_stall_command_dir_store[motor] = 0;
+         s_foc_hall_travel_stall_command_progress_store[motor] = 0;
          g_foc_hall_travel_stall_active[motor] = 0U;
          g_foc_hall_travel_stall_counter[motor] = 0U;
          g_foc_hall_travel_stall_dir[motor] = 0;
+         g_foc_hall_travel_stall_transient[motor] = 0U;
          g_foc_hall_travel_suppressed_delta[motor] = 0;
          g_foc_hall_travel_freeze_count[motor] = 0U;
          g_foc_hall_travel_stall_window_start[motor] = 0;
          g_foc_hall_travel_stall_window_progress[motor] = 0;
+         g_foc_hall_travel_stall_command_progress[motor] = 0;
      }
 
      FOC_Core_SelectMotor(0U);
@@ -7020,19 +7189,26 @@ int FOC_Core_WriteHallTravelOffset(uint8_t motor_id,
      s_foc_hall_travel_stall_active_store[motor_id] = 0U;
      s_foc_hall_travel_stall_counter_store[motor_id] = 0U;
      s_foc_hall_travel_stall_dir_store[motor_id] = 0;
+     s_foc_hall_travel_stall_transient_store[motor_id] = 0U;
      s_foc_hall_travel_suppressed_delta_store[motor_id] = 0;
      s_foc_hall_travel_stall_window_start_store[motor_id] =
          g_foc_hall_travel_count[motor_id];
      s_foc_hall_travel_stall_window_dir_store[motor_id] = 0;
      s_foc_hall_travel_stall_window_progress_store[motor_id] = 0;
+     s_foc_hall_travel_stall_command_start_store[motor_id] =
+         g_foc_hall_travel_count[motor_id];
+     s_foc_hall_travel_stall_command_dir_store[motor_id] = 0;
+     s_foc_hall_travel_stall_command_progress_store[motor_id] = 0;
      g_foc_hall_travel_stall_active[motor_id] = 0U;
      g_foc_hall_travel_stall_counter[motor_id] = 0U;
      g_foc_hall_travel_stall_dir[motor_id] = 0;
+     g_foc_hall_travel_stall_transient[motor_id] = 0U;
      g_foc_hall_travel_suppressed_delta[motor_id] = 0;
      g_foc_hall_travel_freeze_count[motor_id] = 0U;
      g_foc_hall_travel_stall_window_start[motor_id] =
          g_foc_hall_travel_count[motor_id];
      g_foc_hall_travel_stall_window_progress[motor_id] = 0;
+     g_foc_hall_travel_stall_command_progress[motor_id] = 0;
      *hall_states_offset = hall_position;
      FOC_HAL_ExitCritical();
 
