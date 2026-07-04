@@ -385,6 +385,28 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_ccw_accel_hold_release_percent =
 FOC_DEBUG_ROOT volatile uint16_t g_foc_ccw_accel_hold_iq_mA =
     FOC_CCW_ACCEL_HOLD_IQ_MA;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_accel_hold_applied_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_pure_speed_open_loop_start_enable =
+    FOC_PURE_SPEED_OPEN_LOOP_START_ENABLE;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_pure_speed_open_loop_start_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_open_loop_start_min_ref_rpm =
+    FOC_PURE_SPEED_OPEN_LOOP_START_MIN_REF_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_open_loop_start_rpm =
+    FOC_PURE_SPEED_OPEN_LOOP_START_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_open_loop_start_iq_mA =
+    FOC_PURE_SPEED_OPEN_LOOP_START_IQ_MA;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_open_loop_start_release_rpm =
+    FOC_PURE_SPEED_OPEN_LOOP_START_RELEASE_RPM;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_pure_speed_open_loop_start_edge_count =
+    FOC_PURE_SPEED_OPEN_LOOP_START_EDGE_COUNT;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_open_loop_start_max_ms =
+    FOC_PURE_SPEED_OPEN_LOOP_START_MAX_MS;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_open_loop_start_elapsed_ms = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_pure_speed_open_loop_start_edges = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_pure_speed_open_loop_start_iq_ref_mA = 0;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_open_loop_start_theta = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_pure_speed_open_loop_start_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_pure_speed_open_loop_start_release_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_pure_speed_open_loop_start_timeout_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_startup_speed_lock_active = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_startup_speed_lock_edge_count = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_startup_speed_lock_iq_mA = 0;
@@ -765,6 +787,17 @@ static uint16_t s_recovery_zero_vector_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U,
 static uint16_t s_recovery_zero_vector_min_cycles_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_speed_loop_accum_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint8_t s_startup_speed_lock_active_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t s_pure_speed_ol_start_active_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t s_pure_speed_ol_start_release_pending_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t s_pure_speed_ol_start_done_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t s_pure_speed_ol_start_edges_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t s_pure_speed_ol_start_last_sector_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint32_t s_pure_speed_ol_start_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static float s_pure_speed_ol_start_angle_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+static FOC_Dir_e s_pure_speed_ol_start_direction_store[FOC_CORE_MOTOR_COUNT] = {
+    FOC_DIR_CW,
+    FOC_DIR_CW
+};
 static uint16_t s_speed_drop_prev_abs_ref_rpm_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint16_t s_speed_drop_bidir_no_edge_holdoff_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint16_t s_speed_fdb_drop_peak_rpm_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
@@ -803,6 +836,22 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_recovery_zero_vector_min_cycles (s_recovery_zero_vector_min_cycles_store[s_foc_core_active_motor])
 #define s_speed_loop_accum_us            (s_speed_loop_accum_us_store[s_foc_core_active_motor])
 #define s_startup_speed_lock_active      (s_startup_speed_lock_active_store[s_foc_core_active_motor])
+#define s_pure_speed_ol_start_active \
+    (s_pure_speed_ol_start_active_store[s_foc_core_active_motor])
+#define s_pure_speed_ol_start_release_pending \
+    (s_pure_speed_ol_start_release_pending_store[s_foc_core_active_motor])
+#define s_pure_speed_ol_start_done \
+    (s_pure_speed_ol_start_done_store[s_foc_core_active_motor])
+#define s_pure_speed_ol_start_edges \
+    (s_pure_speed_ol_start_edges_store[s_foc_core_active_motor])
+#define s_pure_speed_ol_start_last_sector \
+    (s_pure_speed_ol_start_last_sector_store[s_foc_core_active_motor])
+#define s_pure_speed_ol_start_elapsed_us \
+    (s_pure_speed_ol_start_elapsed_us_store[s_foc_core_active_motor])
+#define s_pure_speed_ol_start_angle \
+    (s_pure_speed_ol_start_angle_store[s_foc_core_active_motor])
+#define s_pure_speed_ol_start_direction \
+    (s_pure_speed_ol_start_direction_store[s_foc_core_active_motor])
 #define s_speed_drop_prev_abs_ref_rpm    (s_speed_drop_prev_abs_ref_rpm_store[s_foc_core_active_motor])
 #define s_speed_drop_bidir_no_edge_holdoff (s_speed_drop_bidir_no_edge_holdoff_store[s_foc_core_active_motor])
 #define s_speed_fdb_drop_peak_rpm        (s_speed_fdb_drop_peak_rpm_store[s_foc_core_active_motor])
@@ -930,6 +979,11 @@ static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
 static void FOC_UpdateCurrentAngleTrim(float dt);
 static void FOC_UpdateSpeedControlFeedback(void);
 static void FOC_PrimeSpeedPidFromIq(float pid_seed_iq, float speed_error);
+static void FOC_PureSpeedOpenLoopStart_Reset(void);
+static uint8_t FOC_PureSpeedOpenLoopStart_Service(uint32_t elapsed_us);
+static float FOC_PureSpeedOpenLoopStart_ApplyAngle(float theta_e_ctrl,
+                                                   float dt);
+static float FOC_PureSpeedOpenLoopStart_Iq(float speed_iq_ref_max);
 static uint8_t FOC_PureSpeedStartupLockActive(float speed_ref_ctrl);
 static float FOC_PureSpeedStartupLockIq(float speed_error,
                                         float speed_iq_ref_max);
@@ -2116,6 +2170,7 @@ static void FOC_ResetSpeedPidDebug(void)
      g_foc_startup_speed_lock_iq_mA = 0;
      g_foc_startup_speed_lock_pi_seed_mA = 0;
      s_startup_speed_lock_active = 0U;
+     FOC_PureSpeedOpenLoopStart_Reset();
      FOC_ResetSmoothBrakeDebug();
  }
 
@@ -2140,6 +2195,234 @@ static void FOC_PrimeSpeedPidFromIq(float pid_seed_iq, float speed_error)
      s_ctx.pid_speed.prev_error = speed_error;
      g_foc_startup_speed_lock_pi_seed_mA =
          FOC_Log_ToI16(FOC_DebugSignedIq(pid_seed_iq), 1000.0f);
+}
+
+static void FOC_PureSpeedOpenLoopStart_UpdateDebug(void)
+{
+     g_foc_pure_speed_open_loop_start_active =
+         s_pure_speed_ol_start_active;
+     g_foc_pure_speed_open_loop_start_elapsed_ms =
+         FOC_SpeedStartElapsedMs(s_pure_speed_ol_start_elapsed_us);
+     g_foc_pure_speed_open_loop_start_edges =
+         s_pure_speed_ol_start_edges;
+     g_foc_pure_speed_open_loop_start_theta =
+         FOC_Log_AngleU16(s_pure_speed_ol_start_angle);
+}
+
+static void FOC_PureSpeedOpenLoopStart_Reset(void)
+{
+     s_pure_speed_ol_start_active = 0U;
+     s_pure_speed_ol_start_release_pending = 0U;
+     s_pure_speed_ol_start_done = 0U;
+     s_pure_speed_ol_start_edges = 0U;
+     s_pure_speed_ol_start_last_sector = s_ctx.hall_sector.sector;
+     s_pure_speed_ol_start_elapsed_us = 0U;
+     s_pure_speed_ol_start_angle = s_ctx.theta_e_predicted;
+     s_pure_speed_ol_start_direction = s_ctx.direction;
+     g_foc_pure_speed_open_loop_start_iq_ref_mA = 0;
+     FOC_PureSpeedOpenLoopStart_UpdateDebug();
+}
+
+static uint8_t FOC_PureSpeedOpenLoopStart_CommandAllowed(void)
+{
+     float min_ref = (float)g_foc_pure_speed_open_loop_start_min_ref_rpm;
+     float ref_ctrl = s_speed_ref_ctrl;
+
+     if (min_ref < 1.0f) {
+         min_ref = 1.0f;
+     }
+
+     if ((g_foc_pure_speed_open_loop_start_enable == 0U) ||
+         (g_foc_pure_speed_loop_enable == 0U) ||
+         (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED) ||
+         (s_ctx.state != FOC_STATE_RUNNING) ||
+         (s_ctx.fault != FOC_FAULT_NONE) ||
+         (ref_ctrl < min_ref) ||
+         (s_ctx.direction > FOC_DIR_CCW)) {
+         return 0U;
+     }
+
+#if FOC_PURE_SPEED_OPEN_LOOP_START_CCW_ONLY
+     if (s_ctx.direction != FOC_DIR_CCW) {
+         return 0U;
+     }
+#endif
+
+     return 1U;
+}
+
+static void FOC_PureSpeedOpenLoopStart_Begin(void)
+{
+     s_pure_speed_ol_start_active = 1U;
+     s_pure_speed_ol_start_release_pending = 0U;
+     s_pure_speed_ol_start_done = 0U;
+     s_pure_speed_ol_start_edges = 0U;
+     s_pure_speed_ol_start_last_sector = s_ctx.hall_sector.sector;
+     s_pure_speed_ol_start_elapsed_us = 0U;
+     s_pure_speed_ol_start_direction = s_ctx.direction;
+     s_pure_speed_ol_start_angle =
+         (s_ctx.hall_sector.sector != 0U)
+         ? s_ctx.hall_sector.theta_e
+         : s_ctx.theta_e_predicted;
+     if (g_foc_pure_speed_open_loop_start_count < 0xFFFFFFFFU) {
+         g_foc_pure_speed_open_loop_start_count++;
+     }
+     FOC_PureSpeedOpenLoopStart_UpdateDebug();
+}
+
+static uint8_t FOC_PureSpeedOpenLoopStart_ReleaseReady(void)
+{
+     float release_rpm =
+         (float)g_foc_pure_speed_open_loop_start_release_rpm;
+     uint8_t edge_count = g_foc_pure_speed_open_loop_start_edge_count;
+     uint8_t edge_ready;
+     uint8_t speed_ready;
+
+     if (edge_count == 0U) {
+         edge_count = 1U;
+     }
+     edge_ready =
+         (s_pure_speed_ol_start_edges >= edge_count) ? 1U : 0U;
+
+     if (release_rpm < 1.0f) {
+         speed_ready = 1U;
+     } else {
+         speed_ready =
+             (FOC_FABS(s_ctx.speed_ctrl_fdb) >= release_rpm) ? 1U : 0U;
+     }
+
+     return ((edge_ready != 0U) && (speed_ready != 0U)) ? 1U : 0U;
+}
+
+static void FOC_PureSpeedOpenLoopStart_UpdateEdges(void)
+{
+     uint8_t cur_sector = s_ctx.hall_sector.sector;
+
+     if (s_pure_speed_ol_start_active == 0U) {
+         return;
+     }
+     if (cur_sector == 0U) {
+         return;
+     }
+     if (s_pure_speed_ol_start_last_sector == 0U) {
+         s_pure_speed_ol_start_last_sector = cur_sector;
+         return;
+     }
+     if (cur_sector != s_pure_speed_ol_start_last_sector) {
+         if (s_pure_speed_ol_start_edges < 255U) {
+             s_pure_speed_ol_start_edges++;
+         }
+         s_pure_speed_ol_start_last_sector = cur_sector;
+     }
+}
+
+static uint8_t FOC_PureSpeedOpenLoopStart_Service(uint32_t elapsed_us)
+{
+     uint32_t max_us =
+         (uint32_t)g_foc_pure_speed_open_loop_start_max_ms * 1000U;
+     uint8_t near_zero =
+         ((FOC_FABS(s_ctx.speed_fdb) <=
+           (float)g_foc_speed_start_near_zero_rpm) &&
+          (FOC_FABS(s_ctx.speed_ctrl_fdb) <=
+           (float)g_foc_speed_start_near_zero_rpm)) ? 1U : 0U;
+
+     if (FOC_PureSpeedOpenLoopStart_CommandAllowed() == 0U) {
+         FOC_PureSpeedOpenLoopStart_Reset();
+         return 0U;
+     }
+     if (s_pure_speed_ol_start_direction != s_ctx.direction) {
+         FOC_PureSpeedOpenLoopStart_Reset();
+     }
+
+     if (s_pure_speed_ol_start_active == 0U) {
+         if ((near_zero != 0U) &&
+             (s_pure_speed_ol_start_done == 0U)) {
+             FOC_PureSpeedOpenLoopStart_Begin();
+         }
+     }
+
+     if (s_pure_speed_ol_start_active != 0U) {
+         FOC_PureSpeedOpenLoopStart_UpdateEdges();
+         if ((0xFFFFFFFFU - s_pure_speed_ol_start_elapsed_us) >=
+             elapsed_us) {
+             s_pure_speed_ol_start_elapsed_us += elapsed_us;
+         } else {
+             s_pure_speed_ol_start_elapsed_us = 0xFFFFFFFFU;
+         }
+
+         if ((FOC_PureSpeedOpenLoopStart_ReleaseReady() != 0U) ||
+             ((max_us != 0U) &&
+              (s_pure_speed_ol_start_elapsed_us >= max_us))) {
+             if ((max_us != 0U) &&
+                 (s_pure_speed_ol_start_elapsed_us >= max_us) &&
+                 (FOC_PureSpeedOpenLoopStart_ReleaseReady() == 0U)) {
+                 if (g_foc_pure_speed_open_loop_start_timeout_count <
+                     0xFFFFFFFFU) {
+                     g_foc_pure_speed_open_loop_start_timeout_count++;
+                 }
+             } else if (g_foc_pure_speed_open_loop_start_release_count <
+                        0xFFFFFFFFU) {
+                 g_foc_pure_speed_open_loop_start_release_count++;
+             }
+             s_pure_speed_ol_start_active = 0U;
+             s_pure_speed_ol_start_release_pending = 1U;
+             s_pure_speed_ol_start_done = 1U;
+         }
+     }
+
+     FOC_PureSpeedOpenLoopStart_UpdateDebug();
+     return s_pure_speed_ol_start_active;
+}
+
+static float FOC_PureSpeedOpenLoopStart_ApplyAngle(float theta_e_ctrl,
+                                                   float dt)
+{
+     float rpm = (float)g_foc_pure_speed_open_loop_start_rpm;
+     float omega_e;
+
+     if (s_pure_speed_ol_start_active == 0U) {
+         return theta_e_ctrl;
+     }
+     if (rpm < 1.0f) {
+         rpm = 1.0f;
+     }
+     if (dt < 0.0f) {
+         dt = 0.0f;
+     }
+
+     omega_e = rpm * (FOC_2PI / 60.0f) *
+               (float)s_config.motor.pole_pairs;
+     if (s_ctx.direction == FOC_DIR_CCW) {
+         s_pure_speed_ol_start_angle -= omega_e * dt;
+     } else {
+         s_pure_speed_ol_start_angle += omega_e * dt;
+     }
+     s_pure_speed_ol_start_angle =
+         FOC_NormalizeAngle(s_pure_speed_ol_start_angle);
+     s_ctx.theta_e_predicted = s_pure_speed_ol_start_angle;
+     FOC_PureSpeedOpenLoopStart_UpdateDebug();
+
+     return s_pure_speed_ol_start_angle;
+}
+
+static float FOC_PureSpeedOpenLoopStart_Iq(float speed_iq_ref_max)
+{
+     float iq =
+         (float)g_foc_pure_speed_open_loop_start_iq_mA * 0.001f;
+
+     if (speed_iq_ref_max < 0.0f) {
+         speed_iq_ref_max = 0.0f;
+     }
+     if (iq <= 0.0f) {
+         iq = 0.0f;
+     }
+     if (iq > speed_iq_ref_max) {
+         iq = speed_iq_ref_max;
+     }
+
+     g_foc_pure_speed_open_loop_start_iq_ref_mA =
+         FOC_Log_ToI16(FOC_DebugSignedIq(iq), 1000.0f);
+     return iq;
 }
 
 static uint8_t FOC_PureSpeedStartupLockActive(float speed_ref_ctrl)
@@ -2439,12 +2722,13 @@ static void FOC_UpdateHallTravelStallGuard(void)
         current_abs = s_ctx.current_peak;
     }
 
-    /* Before two startup Hall edges, speed feedback is not yet trustworthy.
-     * Do not let the travel guard cut torque during that bootstrap window.
+    /* Before the startup/open-loop handoff has seen enough Hall edges, speed
+     * feedback is not yet trustworthy; do not let the travel guard cut torque.
      */
     if ((s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
         (g_foc_pure_speed_loop_enable != 0U) &&
-        (FOC_PureSpeedStartupLockActive(s_speed_ref_ctrl) != 0U)) {
+        ((FOC_PureSpeedStartupLockActive(s_speed_ref_ctrl) != 0U) ||
+         (s_pure_speed_ol_start_active != 0U))) {
         if ((s_hall_travel_stall_active != 0U) &&
             (s_hall_travel_stall_transient == 0U)) {
             FOC_ApplyHallTravelStallCurrentCut(0U);
@@ -2863,6 +3147,7 @@ static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
          FOC_PID_Reset(&s_ctx.pid_speed);
          s_speed_error_boost_prev_ref = 0.0f;
          FOC_SpeedStart_Reset();
+         FOC_PureSpeedOpenLoopStart_Reset();
      }
 
      delta = target - s_speed_ref_ctrl;
@@ -6298,6 +6583,14 @@ static void FOC_Prof_Reset(void)
          g_foc_hall_travel_stall_window_progress[motor] = 0;
          g_foc_hall_travel_stall_command_progress[motor] = 0;
          s_startup_speed_lock_active_store[motor] = 0U;
+         s_pure_speed_ol_start_active_store[motor] = 0U;
+         s_pure_speed_ol_start_release_pending_store[motor] = 0U;
+         s_pure_speed_ol_start_done_store[motor] = 0U;
+         s_pure_speed_ol_start_edges_store[motor] = 0U;
+         s_pure_speed_ol_start_last_sector_store[motor] = 0U;
+         s_pure_speed_ol_start_elapsed_us_store[motor] = 0U;
+         s_pure_speed_ol_start_angle_store[motor] = 0.0f;
+         s_pure_speed_ol_start_direction_store[motor] = FOC_DIR_CW;
      }
 
      FOC_Core_SelectMotor(0U);
@@ -6424,6 +6717,14 @@ static void FOC_Prof_Reset(void)
 
          FOC_HAL_DisablePWM();
          s_startup_speed_lock_active_store[motor] = 0U;
+         s_pure_speed_ol_start_active_store[motor] = 0U;
+         s_pure_speed_ol_start_release_pending_store[motor] = 0U;
+         s_pure_speed_ol_start_done_store[motor] = 0U;
+         s_pure_speed_ol_start_edges_store[motor] = 0U;
+         s_pure_speed_ol_start_last_sector_store[motor] = 0U;
+         s_pure_speed_ol_start_elapsed_us_store[motor] = 0U;
+         s_pure_speed_ol_start_angle_store[motor] = 0.0f;
+         s_pure_speed_ol_start_direction_store[motor] = FOC_DIR_CW;
          memset(&s_ctx, 0, sizeof(FOC_Context_t));
          s_ctx.state = FOC_STATE_INIT;
      }
@@ -6847,6 +7148,9 @@ static void FOC_Prof_Reset(void)
                                                observer_dt, s_config.motor.pole_pairs);
      FOC_UpdateSpeedControlFeedback();
 
+     uint8_t pure_speed_ol_start_active =
+         FOC_PureSpeedOpenLoopStart_Service(control_period_us);
+
      if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
          theta_e_ctrl = s_ctx.theta_e_predicted;
      }
@@ -6860,6 +7164,11 @@ static void FOC_Prof_Reset(void)
          s_if_angle = FOC_NormalizeAngle(s_if_angle);
          s_ctx.theta_e_predicted = s_if_angle;
          theta_e_ctrl = s_if_angle;
+     }
+     if (pure_speed_ol_start_active != 0U) {
+         theta_e_ctrl =
+             FOC_PureSpeedOpenLoopStart_ApplyAngle(theta_e_ctrl,
+                                                   observer_dt);
      }
 
      theta_e_ctrl = FOC_ApplyCurrentAngleTrim(theta_e_ctrl);
@@ -6947,9 +7256,12 @@ static void FOC_Prof_Reset(void)
                  : FOC_BidirZeroTransfer_PidFrozen();
              uint8_t hall_travel_stall_blocked =
                  FOC_HallTravelStallTorqueBlocked();
+             uint8_t pure_speed_ol_iq_active =
+                 (pure_speed_loop != 0U) ? pure_speed_ol_start_active : 0U;
              uint8_t speed_start_state = FOC_SPEED_START_STATE_IDLE;
              uint8_t startup_speed_lock_active =
-                 (pure_speed_loop != 0U)
+                 ((pure_speed_loop != 0U) &&
+                  (pure_speed_ol_iq_active == 0U))
                  ? FOC_PureSpeedStartupLockActive(speed_ref_ctrl)
                  : 0U;
 
@@ -7001,9 +7313,21 @@ static void FOC_Prof_Reset(void)
                      g_foc_startup_speed_lock_release_count++;
                  }
              }
+             if ((s_pure_speed_ol_start_release_pending != 0U) &&
+                 (pure_speed_loop != 0U) &&
+                 (hall_travel_stall_blocked == 0U)) {
+                 FOC_PrimeSpeedPidFromIq(s_ctx.iq_ref, speed_error);
+                 s_pure_speed_ol_start_release_pending = 0U;
+             }
 
              if (hall_travel_stall_blocked != 0U) {
                  speed_iq_ref = 0.0f;
+                 speed_pid_iq = speed_iq_ref;
+                 FOC_PID_Reset(&s_ctx.pid_speed);
+                 g_foc_speed_error_boost_mA = 0;
+             } else if (pure_speed_ol_iq_active != 0U) {
+                 speed_iq_ref =
+                     FOC_PureSpeedOpenLoopStart_Iq(speed_iq_ref_max);
                  speed_pid_iq = speed_iq_ref;
                  FOC_PID_Reset(&s_ctx.pid_speed);
                  g_foc_speed_error_boost_mA = 0;
