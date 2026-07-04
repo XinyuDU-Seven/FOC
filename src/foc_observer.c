@@ -922,7 +922,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
  {
 
      uint8_t cur_sector = ctx->hall_sector.sector;
-     float speed_for_predict = ctx->speed_filtered;
+     float speed_for_predict = FOC_FABS(ctx->speed_filtered);
      float omega_e = 0.0f;
      uint32_t no_edge_elapsed_us = 0U;
      float no_edge_limit_rpm = 0.0f;
@@ -935,6 +935,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      float release_blend_done_rpm =
          FOC_STARTUP_PREDICT_RELEASE_BLEND_DONE_RPM;
      float speed_filtered_abs = FOC_FABS(ctx->speed_filtered);
+     float speed_ref_abs = FOC_FABS(ctx->speed_ref);
      float speed_ref_ctrl_abs = FOC_FABS(ctx->speed_ref_ctrl);
      float startup_track_err_rpm = speed_ref_ctrl_abs - speed_filtered_abs;
      FOC_Dir_e hall_dir;
@@ -988,7 +989,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_no_edge_angle_diff_mrad = 0;
      g_foc_observer_no_edge_angle_step_mrad = 0;
 
-     if ((ctx->speed_ref <= 0.5f) || (cur_sector == 0U)) {
+     if ((speed_ref_abs <= 0.5f) || (cur_sector == 0U)) {
          s_startup_sync_edge_count = 0U;
          ctx->hall_sector_dt_us = 0U;
          ctx->startup_valid_edge_count = 0U;
@@ -1025,16 +1026,16 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      /* Always extrapolate by the real control interval first. */
      if ((no_edge_overdue == 0U) &&
          (use_startup_ref_predict != 0U) &&
-         (ctx->speed_ref > 0.0f) &&
+         (speed_ref_abs > 0.0f) &&
          (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
-         float startup_target = ctx->speed_ref_ctrl;
+         float startup_target = speed_ref_ctrl_abs;
          float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
 
          if (startup_target < FOC_STARTUP_PREDICT_START_RPM) {
              startup_target = FOC_STARTUP_PREDICT_START_RPM;
          }
-         if (startup_target > ctx->speed_ref) {
-             startup_target = ctx->speed_ref;
+         if (startup_target > speed_ref_abs) {
+             startup_target = speed_ref_abs;
          }
          if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {
              startup_target = FOC_STARTUP_PREDICT_MAX_RPM;
@@ -1068,7 +1069,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          float release_delta = release_target - s_startup_predict_speed_rpm;
          float release_step = release_blend_rate_rpm_s * dt;
 
-         if ((ctx->speed_ref > 0.0f) &&
+         if ((speed_ref_abs > 0.0f) &&
              (cur_sector != 0U) &&
              (s_startup_predict_speed_rpm > 0.0f) &&
              (release_step > 0.0f) &&
