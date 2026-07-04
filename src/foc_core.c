@@ -373,6 +373,18 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_pid_err_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_pid_iq_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_pid_i_mA = 0;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_iq_max_mA = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_ccw_accel_hold_enable =
+    FOC_CCW_ACCEL_HOLD_ENABLE;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_ccw_accel_hold_active = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_ccw_accel_hold_min_ref_rpm =
+    FOC_CCW_ACCEL_HOLD_MIN_REF_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_ccw_accel_hold_err_rpm =
+    FOC_CCW_ACCEL_HOLD_ERR_RPM;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_ccw_accel_hold_release_percent =
+    FOC_CCW_ACCEL_HOLD_RELEASE_PERCENT;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_ccw_accel_hold_iq_mA =
+    FOC_CCW_ACCEL_HOLD_IQ_MA;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_accel_hold_applied_mA = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_startup_speed_lock_active = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_startup_speed_lock_edge_count = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_startup_speed_lock_iq_mA = 0;
@@ -921,6 +933,12 @@ static void FOC_PrimeSpeedPidFromIq(float pid_seed_iq, float speed_error);
 static uint8_t FOC_PureSpeedStartupLockActive(float speed_ref_ctrl);
 static float FOC_PureSpeedStartupLockIq(float speed_error,
                                         float speed_iq_ref_max);
+static float FOC_ApplyCcwAccelHold(float iq_ref,
+                                   float speed_ref_ctrl,
+                                   float speed_error,
+                                   float speed_iq_ref_max,
+                                   uint8_t pure_speed_loop,
+                                   uint8_t startup_speed_lock_active);
 static void FOC_SpeedStart_Reset(void);
 static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
                                       uint32_t elapsed_us,
@@ -2091,6 +2109,8 @@ static void FOC_ResetSpeedPidDebug(void)
      g_foc_speed_pid_iq_mA = 0;
      g_foc_speed_pid_i_mA = 0;
      g_foc_speed_iq_max_mA = 0U;
+     g_foc_ccw_accel_hold_active = 0U;
+     g_foc_ccw_accel_hold_applied_mA = 0;
      g_foc_startup_speed_lock_active = 0U;
      g_foc_startup_speed_lock_edge_count = 0U;
      g_foc_startup_speed_lock_iq_mA = 0;
@@ -2164,6 +2184,61 @@ static float FOC_PureSpeedStartupLockIq(float speed_error,
          FOC_Log_ToI16(FOC_DebugSignedIq(speed_iq_ref), 1000.0f);
 
      return speed_iq_ref;
+}
+
+static float FOC_ApplyCcwAccelHold(float iq_ref,
+                                   float speed_ref_ctrl,
+                                   float speed_error,
+                                   float speed_iq_ref_max,
+                                   uint8_t pure_speed_loop,
+                                   uint8_t startup_speed_lock_active)
+{
+     float hold_iq = (float)g_foc_ccw_accel_hold_iq_mA * 0.001f;
+     float min_ref = (float)g_foc_ccw_accel_hold_min_ref_rpm;
+     float err_rpm = (float)g_foc_ccw_accel_hold_err_rpm;
+     float release_percent =
+         (float)g_foc_ccw_accel_hold_release_percent;
+     float release_rpm;
+     float fdb_abs = FOC_FABS(s_ctx.speed_ctrl_fdb);
+     float raw_abs = FOC_FABS(s_ctx.speed_fdb);
+
+     if (raw_abs > fdb_abs) {
+         fdb_abs = raw_abs;
+     }
+     if (release_percent > 100.0f) {
+         release_percent = 100.0f;
+     }
+     if (release_percent < 1.0f) {
+         release_percent = 1.0f;
+     }
+     release_rpm = speed_ref_ctrl * release_percent * 0.01f;
+
+     if ((g_foc_ccw_accel_hold_enable == 0U) ||
+         (pure_speed_loop == 0U) ||
+         (startup_speed_lock_active != 0U) ||
+         (s_ctx.direction != FOC_DIR_CCW) ||
+         (s_ctx.hall_sector_dt_us == 0U) ||
+         (s_ctx.startup_valid_edge_count <
+          (uint8_t)FOC_STARTUP_SPEED_LOCK_EDGE_COUNT) ||
+         (speed_ref_ctrl < min_ref) ||
+         (speed_error <= err_rpm) ||
+         (fdb_abs >= release_rpm) ||
+         (speed_iq_ref_max <= 0.0f) ||
+         (hold_iq <= 0.0f)) {
+         return iq_ref;
+     }
+
+     if (hold_iq > speed_iq_ref_max) {
+         hold_iq = speed_iq_ref_max;
+     }
+     if (iq_ref < hold_iq) {
+         g_foc_ccw_accel_hold_active = 1U;
+         g_foc_ccw_accel_hold_applied_mA =
+             FOC_Log_ToI16(hold_iq - iq_ref, 1000.0f);
+         return hold_iq;
+     }
+
+     return iq_ref;
 }
 
  static void FOC_ResetSpeedRefRamp(void)
@@ -6912,6 +6987,8 @@ static void FOC_Prof_Reset(void)
              if (startup_speed_lock_active == 0U) {
                  g_foc_startup_speed_lock_iq_mA = 0;
              }
+             g_foc_ccw_accel_hold_active = 0U;
+             g_foc_ccw_accel_hold_applied_mA = 0;
 
              if ((s_startup_speed_lock_active != 0U) &&
                  (startup_speed_lock_active == 0U) &&
@@ -7008,6 +7085,13 @@ static void FOC_Prof_Reset(void)
 #else
                  g_foc_speed_error_boost_mA = 0;
 #endif
+                 speed_iq_ref =
+                     FOC_ApplyCcwAccelHold(speed_iq_ref,
+                                           speed_ref_ctrl,
+                                           speed_error,
+                                           speed_iq_ref_max,
+                                           pure_speed_loop,
+                                           startup_speed_lock_active);
              }
              g_foc_speed_pid_iq_mA =
                  FOC_Log_ToI16(FOC_DebugSignedIq(speed_pid_iq), 1000.0f);
