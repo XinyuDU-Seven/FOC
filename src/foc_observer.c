@@ -284,7 +284,6 @@ static void FOC_Observer_ClampStartupPreEdgeAngle(FOC_Context_t *ctx,
 
     if ((ctx == 0) ||
         (cur_sector == 0U) ||
-        (ctx->hall_sector_dt_us != 0U) ||
         (cur_sector != ctx->hall_sector_prev) ||
         (g_foc_observer_startup_ref_active == 0U)) {
         return;
@@ -850,6 +849,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      float no_edge_limit_rpm = 0.0f;
      float startup_release_rpm = (float)g_foc_observer_startup_release_rpm;
      float startup_release_err_rpm = FOC_STARTUP_PREDICT_RELEASE_ERR_RPM;
+     float startup_measured_lead_rpm =
+         FOC_STARTUP_PREDICT_MEASURED_LEAD_RPM;
      float release_blend_rate_rpm_s =
          FOC_STARTUP_PREDICT_RELEASE_BLEND_RPM_PER_S;
      float release_blend_done_rpm =
@@ -872,6 +873,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      }
      if (startup_track_err_rpm < 0.0f) {
          startup_track_err_rpm = 0.0f;
+     }
+     if (startup_measured_lead_rpm < 0.0f) {
+         startup_measured_lead_rpm = -startup_measured_lead_rpm;
      }
      if (release_blend_rate_rpm_s < 0.0f) {
          release_blend_rate_rpm_s = -release_blend_rate_rpm_s;
@@ -945,6 +949,17 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          }
          if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {
              startup_target = FOC_STARTUP_PREDICT_MAX_RPM;
+         }
+         if ((ctx->hall_sector_dt_us != 0U) &&
+             (startup_measured_lead_rpm > 0.0f)) {
+             float measured_lead_target =
+                 speed_filtered_abs + startup_measured_lead_rpm;
+             if (measured_lead_target < FOC_STARTUP_PREDICT_START_RPM) {
+                 measured_lead_target = FOC_STARTUP_PREDICT_START_RPM;
+             }
+             if (startup_target > measured_lead_target) {
+                 startup_target = measured_lead_target;
+             }
          }
          if (s_startup_predict_speed_rpm < FOC_STARTUP_PREDICT_START_RPM) {
              s_startup_predict_speed_rpm = FOC_STARTUP_PREDICT_START_RPM;
