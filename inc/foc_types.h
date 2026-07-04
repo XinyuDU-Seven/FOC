@@ -419,6 +419,8 @@
 
      uint32_t               hall_sector_dt_us; /**< 上一次有效扇区间隔 (us) */
 
+     uint8_t                startup_valid_edge_count; /**< Valid Hall edges seen since startup/direction reset */
+
      uint16_t               sector_no_change_count; /**< 连续无扇区跳变的控制周期计数 */
 
      float                  theta_e_predicted; /**< 扇区间插值预测电角度 (rad) */

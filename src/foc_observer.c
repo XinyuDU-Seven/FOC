@@ -150,6 +150,7 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_release_rpm =
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_sync_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_sync_boost_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_sync_edge_count = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_valid_edge_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_recovery_sync_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_sync_step_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_sync_diff_mrad = 0;
@@ -546,6 +547,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      ctx->timestamp_prev           = FOC_HAL_GetTimestampUs();
      ctx->hall_sector_timestamp_us = ctx->timestamp_prev;
+     ctx->hall_sector_dt_us        = 0U;
+     ctx->startup_valid_edge_count = 0U;
 
      ctx->sector_no_change_count   = 0U;
 
@@ -564,6 +567,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_resync_diff_mrad = 0;
      g_foc_observer_startup_sync_boost_active = 0U;
      g_foc_observer_startup_sync_edge_count = 0U;
+     g_foc_observer_startup_valid_edge_count = 0U;
      g_foc_observer_startup_pre_edge_clamp_active = 0U;
      g_foc_observer_startup_pre_edge_clamp_count = 0U;
      g_foc_observer_startup_pre_edge_clamp_step_mrad = 0;
@@ -694,7 +698,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
         if (prev_sector != 0U) {
 
-            /* Normal transition: compute speed from delta time */
+            /* The first startup edge only seeds the timestamp. The second
+             * edge is the first one that gives a real sector-to-sector speed.
+             */
 
             uint32_t dt_us   = ts_now - ctx->timestamp_prev;
 
@@ -702,7 +708,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
  
 
-            if (pole_pairs > 0U && dt_sec > 1e-6f) {
+            if ((ctx->startup_valid_edge_count != 0U) &&
+                (pole_pairs > 0U) &&
+                (dt_sec > 1e-6f)) {
 
                 uint8_t sector_steps = FOC_Observer_GetSectorStepCount(ctx,
                                                                         prev_sector,
@@ -731,7 +739,15 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
             }
 
-            ctx->hall_sector_dt_us = dt_us;
+            if (ctx->startup_valid_edge_count != 0U) {
+                ctx->hall_sector_dt_us = dt_us;
+            } else {
+                ctx->hall_sector_dt_us = 0U;
+            }
+
+            if (ctx->startup_valid_edge_count < 255U) {
+                ctx->startup_valid_edge_count++;
+            }
 
         }
 
@@ -796,10 +812,13 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
             speed_rpm = 0.0f;
             ctx->speed_raw = 0.0f;
             ctx->speed_filtered = 0.0f;
+            ctx->hall_sector_dt_us = 0U;
+            ctx->startup_valid_edge_count = 0U;
             if (ctx->hall_sector.sector != 0U) {
                 ctx->theta_e_predicted = ctx->hall_sector.theta_e;
             }
             ctx->hall_sector_prev = cur_sector;
+            g_foc_observer_startup_valid_edge_count = 0U;
             return 0.0f;
 
         }
@@ -811,6 +830,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      /* 记录当前扇区 */
 
      ctx->hall_sector_prev = cur_sector;
+     g_foc_observer_startup_valid_edge_count =
+         ctx->startup_valid_edge_count;
 
  
 
@@ -907,17 +928,23 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      if ((ctx->speed_ref <= 0.5f) || (cur_sector == 0U)) {
          s_startup_sync_edge_count = 0U;
+         ctx->hall_sector_dt_us = 0U;
+         ctx->startup_valid_edge_count = 0U;
          g_foc_observer_startup_sync_edge_count = 0U;
+         g_foc_observer_startup_valid_edge_count = 0U;
      }
 
      if (s_predict_direction != hall_dir) {
          s_predict_direction = hall_dir;
          s_startup_predict_speed_rpm = 0.0f;
          s_startup_sync_edge_count = 0U;
+         ctx->hall_sector_dt_us = 0U;
+         ctx->startup_valid_edge_count = 0U;
          if (cur_sector != 0U) {
              ctx->theta_e_predicted = ctx->hall_sector.theta_e;
              ctx->theta_e_prev = ctx->theta_e_predicted;
          }
+         g_foc_observer_startup_valid_edge_count = 0U;
          g_foc_observer_direction_reset_count++;
      }
      if (no_edge_overdue != 0U) {

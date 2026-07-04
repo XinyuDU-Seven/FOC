@@ -179,6 +179,9 @@ FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_speed_err_rpm[FOC_DETAIL_LO
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_speed_pid_iq_mA[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_speed_pid_i_mA[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_speed_iq_max_mA[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_startup_speed_lock_active[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_startup_speed_lock_edges[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_startup_speed_lock_iq_mA[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_speed_error_boost_mA[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_speed_start_state[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_speed_start_iq_mA[FOC_DETAIL_LOG_SIZE];

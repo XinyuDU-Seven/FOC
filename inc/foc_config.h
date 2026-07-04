@@ -786,6 +786,30 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_STARTUP_SPEED_LOCK_ENABLE
+
+#define FOC_STARTUP_SPEED_LOCK_ENABLE  1U
+
+#endif
+
+#ifndef FOC_STARTUP_SPEED_LOCK_EDGE_COUNT
+
+#define FOC_STARTUP_SPEED_LOCK_EDGE_COUNT  2U
+
+#endif
+
+#ifndef FOC_STARTUP_SPEED_LOCK_MIN_REF_RPM
+
+#define FOC_STARTUP_SPEED_LOCK_MIN_REF_RPM  1.0f
+
+#endif
+
+#ifndef FOC_STARTUP_SPEED_LOCK_IQ_MAX_MA
+
+#define FOC_STARTUP_SPEED_LOCK_IQ_MAX_MA  2500U
+
+#endif
+
 /* Hall electrical angle calibration.
  * The Hall lookup table stores sector center angles for compatibility.
  * Control-angle synchronization uses the sector entry edge when
