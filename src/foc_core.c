@@ -66,6 +66,10 @@ static volatile uint8_t s_foc_core_active_motor = 0U;
 #define FOC_SPEED_START_STATE_BREAKAWAY  1U
 #define FOC_SPEED_START_STATE_SOFT_START 2U
 #define FOC_SPEED_START_STATE_CLOSED     3U
+#define FOC_HALL_TRAVEL_STALL_REASON_NONE      0U
+#define FOC_HALL_TRAVEL_STALL_REASON_PROGRESS  1U
+#define FOC_HALL_TRAVEL_STALL_REASON_NO_EDGE   2U
+#define FOC_HALL_TRAVEL_STALL_REASON_SPEED_ERR 3U
 
 static uint8_t s_foc_ctrl_source_store[FOC_CORE_MOTOR_COUNT] = {
     FOC_CTRL_SOURCE_SPEED,
@@ -343,6 +347,8 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_travel_stall_active[FOC_CORE_MOTOR_C
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_counter[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile int8_t   g_foc_hall_travel_stall_dir[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_travel_stall_transient[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_travel_stall_reason[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_speed_err_counter[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_suppressed_delta[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_travel_freeze_count[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_stall_window_start[FOC_CORE_MOTOR_COUNT] = {0, 0};
@@ -360,6 +366,8 @@ static uint8_t  s_foc_hall_travel_stall_active_store[FOC_CORE_MOTOR_COUNT] = {0U
 static uint16_t s_foc_hall_travel_stall_counter_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static int8_t   s_foc_hall_travel_stall_dir_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static uint8_t  s_foc_hall_travel_stall_transient_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t  s_foc_hall_travel_stall_reason_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint16_t s_foc_hall_travel_speed_err_counter_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static int32_t  s_foc_hall_travel_suppressed_delta_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int32_t  s_foc_hall_travel_stall_window_start_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int8_t   s_foc_hall_travel_stall_window_dir_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
@@ -807,6 +815,8 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_hall_travel_stall_counter      (s_foc_hall_travel_stall_counter_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_dir          (s_foc_hall_travel_stall_dir_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_transient    (s_foc_hall_travel_stall_transient_store[s_foc_core_active_motor])
+#define s_hall_travel_stall_reason       (s_foc_hall_travel_stall_reason_store[s_foc_core_active_motor])
+#define s_hall_travel_speed_err_counter  (s_foc_hall_travel_speed_err_counter_store[s_foc_core_active_motor])
 #define s_hall_travel_suppressed_delta   (s_foc_hall_travel_suppressed_delta_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_window_start (s_foc_hall_travel_stall_window_start_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_window_dir   (s_foc_hall_travel_stall_window_dir_store[s_foc_core_active_motor])
@@ -2290,6 +2300,9 @@ static void FOC_UpdateHallTravelStallDebug(void)
     g_foc_hall_travel_stall_dir[motor] = s_hall_travel_stall_dir;
     g_foc_hall_travel_stall_transient[motor] =
         s_hall_travel_stall_transient;
+    g_foc_hall_travel_stall_reason[motor] = s_hall_travel_stall_reason;
+    g_foc_hall_travel_speed_err_counter[motor] =
+        s_hall_travel_speed_err_counter;
     g_foc_hall_travel_suppressed_delta[motor] =
         s_hall_travel_suppressed_delta;
     g_foc_hall_travel_stall_window_start[motor] =
@@ -2308,6 +2321,8 @@ static void FOC_ResetHallTravelStallGuard(uint8_t clear_suppressed)
     s_hall_travel_stall_counter = 0U;
     s_hall_travel_stall_dir = 0;
     s_hall_travel_stall_transient = 0U;
+    s_hall_travel_stall_reason = FOC_HALL_TRAVEL_STALL_REASON_NONE;
+    s_hall_travel_speed_err_counter = 0U;
     FOC_ResetHallTravelStallWindow(0);
     FOC_ResetHallTravelStallCommand(0);
     if (clear_suppressed != 0U) {
@@ -2352,9 +2367,11 @@ static void FOC_UpdateHallTravelStallGuard(void)
         (ref_abs > ctrl_fdb_abs) ? (ref_abs - ctrl_fdb_abs) : 0.0f;
     float min_err = (float)g_foc_hall_travel_stall_min_err_rpm;
     float severe_err = ref_abs * 0.5f;
+    float target_margin = target_abs * 0.02f;
     float current_min =
         (float)g_foc_hall_travel_stall_min_iq_mA * 0.001f;
     uint16_t threshold = g_foc_hall_travel_stall_count_threshold;
+    uint16_t speed_err_threshold = (uint16_t)(FOC_CONTROL_FREQ_HZ / 40U);
     uint16_t max_dir_counts = g_foc_hall_travel_stall_max_dir_counts;
     int8_t command_sign = FOC_HallTravelCommandSign();
     uint8_t was_active = s_hall_travel_stall_active;
@@ -2366,6 +2383,9 @@ static void FOC_UpdateHallTravelStallGuard(void)
     uint8_t keep_latched = 0U;
     uint8_t no_edge_stall = 0U;
     uint8_t high_error_stall = 0U;
+    uint8_t speed_error_stall = 0U;
+    uint8_t target_ready = 0U;
+    uint8_t stall_reason = FOC_HALL_TRAVEL_STALL_REASON_NONE;
 
     if (iq_fdb_abs > current_abs) {
         current_abs = iq_fdb_abs;
@@ -2384,10 +2404,46 @@ static void FOC_UpdateHallTravelStallGuard(void)
     if (severe_err < min_err) {
         severe_err = min_err;
     }
-    if ((FOC_FABS(target_abs - ref_abs) <= 0.5f) &&
+    if (target_margin < 5.0f) {
+        target_margin = 5.0f;
+    }
+    if ((target_abs < 1.0f) ||
+        ((ref_abs + target_margin) >= target_abs)) {
+        target_ready = 1U;
+    }
+    if (speed_err_threshold == 0U) {
+        speed_err_threshold = 1U;
+    }
+    if ((threshold != 0U) && (threshold < speed_err_threshold)) {
+        speed_err_threshold = threshold;
+    }
+    if ((target_ready != 0U) &&
         ((speed_err_abs >= severe_err) ||
          (ctrl_err_abs >= severe_err))) {
         high_error_stall = 1U;
+    }
+    if ((g_foc_hall_travel_stall_guard_enable != 0U) &&
+        (s_ctx.state == FOC_STATE_RUNNING) &&
+        (s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
+        (ref_abs >= (float)g_foc_hall_travel_stall_min_ref_rpm) &&
+        (high_error_stall != 0U) &&
+        (current_abs >= current_min) &&
+        (command_sign != 0)) {
+        if (s_hall_travel_speed_err_counter < speed_err_threshold) {
+            s_hall_travel_speed_err_counter++;
+        }
+    } else if ((g_foc_hall_travel_stall_guard_enable == 0U) ||
+               (s_ctx.state != FOC_STATE_RUNNING) ||
+               (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED) ||
+               (ref_abs < (float)g_foc_hall_travel_stall_min_ref_rpm) ||
+               (current_abs < current_min) ||
+               (command_sign == 0)) {
+        s_hall_travel_speed_err_counter = 0U;
+    } else if (s_hall_travel_speed_err_counter > 0U) {
+        s_hall_travel_speed_err_counter--;
+    }
+    if (s_hall_travel_speed_err_counter >= speed_err_threshold) {
+        speed_error_stall = 1U;
     }
 
     if (command_sign == 0) {
@@ -2399,6 +2455,8 @@ static void FOC_UpdateHallTravelStallGuard(void)
             s_hall_travel_stall_counter = 0U;
             s_hall_travel_stall_dir = 0;
             s_hall_travel_stall_transient = 0U;
+            s_hall_travel_stall_reason =
+                FOC_HALL_TRAVEL_STALL_REASON_NONE;
             FOC_UpdateHallTravelStallDebug();
             return;
         }
@@ -2426,7 +2484,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
             (s_hall_travel_stall_command_progress >=
              (int32_t)min_command_counts) ||
             (no_edge_stall != 0U) ||
-            (high_error_stall != 0U)) {
+            (speed_error_stall != 0U)) {
             persistent_stall_allowed = 1U;
         }
 
@@ -2451,8 +2509,8 @@ static void FOC_UpdateHallTravelStallGuard(void)
         low_progress = 1U;
     }
 
-    /* Hard-stop Hall jitter can fake speed; recent net travel is the
-     * discriminator, so repeated same-direction sethybrid calls get blocked.
+    /* Hall can keep jittering at the mechanical stop, so a sustained severe
+     * speed error under high current is allowed to latch without travel freeze.
      */
     if ((g_foc_hall_travel_stall_guard_enable != 0U) &&
         (s_ctx.state == FOC_STATE_RUNNING) &&
@@ -2460,10 +2518,17 @@ static void FOC_UpdateHallTravelStallGuard(void)
         (ref_abs >= (float)g_foc_hall_travel_stall_min_ref_rpm) &&
         ((low_progress != 0U) ||
          (no_edge_stall != 0U) ||
-         (high_error_stall != 0U)) &&
+         (speed_error_stall != 0U)) &&
         (current_abs >= current_min) &&
         (command_sign != 0)) {
         condition = 1U;
+        if (speed_error_stall != 0U) {
+            stall_reason = FOC_HALL_TRAVEL_STALL_REASON_SPEED_ERR;
+        } else if (no_edge_stall != 0U) {
+            stall_reason = FOC_HALL_TRAVEL_STALL_REASON_NO_EDGE;
+        } else {
+            stall_reason = FOC_HALL_TRAVEL_STALL_REASON_PROGRESS;
+        }
     }
 
     if ((s_hall_travel_stall_active != 0U) &&
@@ -2480,6 +2545,8 @@ static void FOC_UpdateHallTravelStallGuard(void)
         (command_sign != s_hall_travel_stall_dir)) {
         condition = 0U;
         keep_latched = 0U;
+        speed_error_stall = 0U;
+        s_hall_travel_speed_err_counter = 0U;
     }
 
     if ((s_hall_travel_suppressed_delta != 0) &&
@@ -2487,6 +2554,8 @@ static void FOC_UpdateHallTravelStallGuard(void)
         (FOC_HallTravelSignI32(s_hall_travel_suppressed_delta) != command_sign)) {
         condition = 0U;
         keep_latched = 0U;
+        speed_error_stall = 0U;
+        s_hall_travel_speed_err_counter = 0U;
     }
 
     if (keep_latched != 0U) {
@@ -2500,7 +2569,10 @@ static void FOC_UpdateHallTravelStallGuard(void)
     }
 
     if (condition != 0U) {
-        if (no_edge_stall != 0U) {
+        s_hall_travel_stall_reason = stall_reason;
+        if (speed_error_stall != 0U) {
+            threshold = 1U;
+        } else if (no_edge_stall != 0U) {
             threshold = 1U;
         } else if (threshold == 0U) {
             threshold = 1U;
@@ -2517,7 +2589,9 @@ static void FOC_UpdateHallTravelStallGuard(void)
                 s_hall_travel_stall_transient = 1U;
             }
             if ((was_active == 0U) &&
-                (persistent_stall_allowed != 0U)) {
+                (persistent_stall_allowed != 0U) &&
+                (s_hall_travel_stall_reason !=
+                 FOC_HALL_TRAVEL_STALL_REASON_SPEED_ERR)) {
                 FOC_RollBackHallTravelStallWindow(command_sign);
             }
         } else {
@@ -2529,6 +2603,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
         s_hall_travel_stall_counter = 0U;
         s_hall_travel_stall_dir = 0;
         s_hall_travel_stall_transient = 0U;
+        s_hall_travel_stall_reason = FOC_HALL_TRAVEL_STALL_REASON_NONE;
     }
 
     if (s_hall_travel_stall_active != 0U) {
@@ -6208,6 +6283,8 @@ static void FOC_Prof_Reset(void)
          s_foc_hall_travel_stall_counter_store[motor] = 0U;
          s_foc_hall_travel_stall_dir_store[motor] = 0;
          s_foc_hall_travel_stall_transient_store[motor] = 0U;
+         s_foc_hall_travel_stall_reason_store[motor] = 0U;
+         s_foc_hall_travel_speed_err_counter_store[motor] = 0U;
          s_foc_hall_travel_suppressed_delta_store[motor] = 0;
          s_foc_hall_travel_stall_window_start_store[motor] = 0;
          s_foc_hall_travel_stall_window_dir_store[motor] = 0;
@@ -6219,6 +6296,8 @@ static void FOC_Prof_Reset(void)
          g_foc_hall_travel_stall_counter[motor] = 0U;
          g_foc_hall_travel_stall_dir[motor] = 0;
          g_foc_hall_travel_stall_transient[motor] = 0U;
+         g_foc_hall_travel_stall_reason[motor] = 0U;
+         g_foc_hall_travel_speed_err_counter[motor] = 0U;
          g_foc_hall_travel_suppressed_delta[motor] = 0;
          g_foc_hall_travel_freeze_count[motor] = 0U;
          g_foc_hall_travel_stall_window_start[motor] = 0;
@@ -7366,6 +7445,8 @@ int FOC_Core_WriteHallTravelOffset(uint8_t motor_id,
      s_foc_hall_travel_stall_counter_store[motor_id] = 0U;
      s_foc_hall_travel_stall_dir_store[motor_id] = 0;
      s_foc_hall_travel_stall_transient_store[motor_id] = 0U;
+     s_foc_hall_travel_stall_reason_store[motor_id] = 0U;
+     s_foc_hall_travel_speed_err_counter_store[motor_id] = 0U;
      s_foc_hall_travel_suppressed_delta_store[motor_id] = 0;
      s_foc_hall_travel_stall_window_start_store[motor_id] =
          g_foc_hall_travel_count[motor_id];
@@ -7379,6 +7460,8 @@ int FOC_Core_WriteHallTravelOffset(uint8_t motor_id,
      g_foc_hall_travel_stall_counter[motor_id] = 0U;
      g_foc_hall_travel_stall_dir[motor_id] = 0;
      g_foc_hall_travel_stall_transient[motor_id] = 0U;
+     g_foc_hall_travel_stall_reason[motor_id] = 0U;
+     g_foc_hall_travel_speed_err_counter[motor_id] = 0U;
      g_foc_hall_travel_suppressed_delta[motor_id] = 0;
      g_foc_hall_travel_freeze_count[motor_id] = 0U;
      g_foc_hall_travel_stall_window_start[motor_id] =
