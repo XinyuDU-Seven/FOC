@@ -2357,6 +2357,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
     uint8_t persistent_stall_allowed = 0U;
     uint8_t condition = 0U;
     uint8_t keep_latched = 0U;
+    uint8_t no_edge_stall = 0U;
 
     if (iq_fdb_abs > current_abs) {
         current_abs = iq_fdb_abs;
@@ -2364,6 +2365,11 @@ static void FOC_UpdateHallTravelStallGuard(void)
     if (s_ctx.current_peak > current_abs) {
         current_abs = s_ctx.current_peak;
     }
+#if (FOC_SECTOR_NO_CHANGE_THRESHOLD > 0U)
+    if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
+        no_edge_stall = 1U;
+    }
+#endif
 
     if (command_sign == 0) {
         FOC_ResetHallTravelStallWindow(0);
@@ -2399,7 +2405,8 @@ static void FOC_UpdateHallTravelStallGuard(void)
         }
         if ((min_command_counts == 0U) ||
             (s_hall_travel_stall_command_progress >=
-             (int32_t)min_command_counts)) {
+             (int32_t)min_command_counts) ||
+            (no_edge_stall != 0U)) {
             persistent_stall_allowed = 1U;
         }
 
@@ -2431,7 +2438,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
         (s_ctx.state == FOC_STATE_RUNNING) &&
         (s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
         (ref_abs >= (float)g_foc_hall_travel_stall_min_ref_rpm) &&
-        (low_progress != 0U) &&
+        ((low_progress != 0U) || (no_edge_stall != 0U)) &&
         (current_abs >= current_min) &&
         (command_sign != 0)) {
         condition = 1U;
@@ -2471,7 +2478,9 @@ static void FOC_UpdateHallTravelStallGuard(void)
     }
 
     if (condition != 0U) {
-        if (threshold == 0U) {
+        if (no_edge_stall != 0U) {
+            threshold = 1U;
+        } else if (threshold == 0U) {
             threshold = 1U;
         }
         if (s_hall_travel_stall_counter < threshold) {
