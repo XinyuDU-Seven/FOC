@@ -425,10 +425,10 @@ Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 | `nHallDistance` | 当前对齐应用层 offset 后的带符号 Hall 行程 |
 | `unTotalHallCounts` | 当前有效 Hall 更新总次数 |
 | `unCurrentDirectionHallCounts` | 当前方向连续有效 Hall 更新次数，换向后重新计数 |
-| `punDeltaTimeUsHall[]` | 最近 100 次有效 Hall 更新的间隔时间，单位 us |
-| `punHistoryHall[]` | 最近 100 次有效 Hall 更新的 raw Hall 合成值，`h1 << 2 | h2 << 1 | h3` |
+| `punDeltaTimeUsHall[]` | 最近 50 次有效 Hall 更新的间隔时间，单位 us |
+| `punHistoryHall[]` | 最近 50 次有效 Hall 更新的 raw Hall 合成值，`h1 << 2 | h2 << 1 | h3` |
 | `unHeadIndexHall` | `punDeltaTimeUsHall[]` 和 `punHistoryHall[]` 最新写入索引；无历史时为 `-1` |
-| `punHallCountsHistory[]` | 最近 100 次有效 Hall 更新时的总更新次数计数 |
+| `punHallCountsHistory[]` | 最近 50 次有效 Hall 更新时的总更新次数计数 |
 | `unHeadIndexAppHall` | `punHallCountsHistory[]` 最新写入索引；当前与 `unHeadIndexHall` 同步 |
 | `unDirection` | 内部方向转应用层方向，CCW 返回 `2`，其他返回 `1` |
 

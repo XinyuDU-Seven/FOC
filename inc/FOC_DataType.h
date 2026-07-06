@@ -29,6 +29,10 @@
 
 #include <stdint.h>
 
+#ifndef FOC_APP_HALL_COUNTS
+#define FOC_APP_HALL_COUNTS 50U
+#endif
+
  
 
 /* 电机FOC占空比输出 */
@@ -663,15 +667,15 @@ typedef struct
 
     /* 新增算法应用需求数据存储 */
 
-    uint32_t punDeltaTimeUsHall[100]; /* 用于存储霍尔的更新数据时的相对时间数组，微秒 */
+    uint32_t punDeltaTimeUsHall[FOC_APP_HALL_COUNTS]; /* 用于存储霍尔的更新数据时的相对时间数组，微秒 */
 
-    uint8_t punHistoryHall[100];      /* 用于存储霍尔的状态数组，a相高位 */
+    uint8_t punHistoryHall[FOC_APP_HALL_COUNTS];      /* 用于存储霍尔的状态数组，a相高位 */
 
     int16_t unHeadIndexHall; /* punDeltaTimeUsHall及punHistoryHall 的更新索引（该索引上的数据已被更新） */
 
     /* 新增应用的霍尔记录 */
 
-    uint64_t punHallCountsHistory[100]; /* 霍尔总数计数 */
+    uint64_t punHallCountsHistory[FOC_APP_HALL_COUNTS]; /* 霍尔总数计数 */
 
     int16_t unHeadIndexAppHall; /* punHallCountsHistory 的更新索引（该索引上的数据已被更新） */
 

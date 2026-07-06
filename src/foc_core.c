@@ -126,7 +126,7 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_if_edge_calib_recommended_offset_mrad = 0
 #define FOC_LOG_DECIMATION  1U
 #define FOC_TEXT_LOG_SIZE   128U
 #define FOC_START_LOG_SIZE  512U
-#define FOC_HALL_HISTORY_SIZE 100U
+#define FOC_HALL_HISTORY_SIZE 50U
 
 typedef struct {
     uint32_t seq;
