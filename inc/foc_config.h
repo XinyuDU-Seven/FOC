@@ -263,9 +263,8 @@ extern "C" {
 #endif
 
 /* Application travel stall guard.
- * This freezes only the externally reported Hall travel when the motor is
- * pushing into a hard stop. Hall edges still feed FOC angle/speed logic, and
- * the guard does not inhibit normal motor control.
+ * When the motor pushes into a hard stop, freeze externally reported Hall
+ * travel and suppress same-direction torque until the command reverses.
  */
 #ifndef FOC_HALL_TRAVEL_STALL_GUARD_ENABLE
 #define FOC_HALL_TRAVEL_STALL_GUARD_ENABLE  1U
