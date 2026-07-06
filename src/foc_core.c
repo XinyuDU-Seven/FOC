@@ -369,6 +369,7 @@ static int32_t  s_foc_hall_travel_stall_window_progress_store[FOC_CORE_MOTOR_COU
 static int32_t  s_foc_hall_travel_stall_command_start_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int8_t   s_foc_hall_travel_stall_command_dir_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int32_t  s_foc_hall_travel_stall_command_progress_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
+static uint8_t  s_foc_hall_travel_stall_motion_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_pid_err_rpm = 0;
@@ -820,6 +821,8 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
     (s_foc_hall_travel_stall_command_dir_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_command_progress \
     (s_foc_hall_travel_stall_command_progress_store[s_foc_core_active_motor])
+#define s_hall_travel_stall_motion_seen \
+    (s_foc_hall_travel_stall_motion_seen_store[s_foc_core_active_motor])
 static uint8_t s_dyn_speed_prev_enable = 0U;
 static uint32_t s_dyn_speed_start_us = 0U;
 static uint32_t s_dyn_log_last_us = 0U;
@@ -2249,6 +2252,7 @@ static void FOC_ResetHallTravelStallCommand(int8_t command_sign)
         g_foc_hall_travel_count[s_foc_core_active_motor];
     s_hall_travel_stall_command_dir = command_sign;
     s_hall_travel_stall_command_progress = 0;
+    s_hall_travel_stall_motion_seen = 0U;
 }
 
 static void FOC_RollBackHallTravelStallWindow(int8_t command_sign)
@@ -2310,6 +2314,7 @@ static void FOC_ResetHallTravelStallGuard(uint8_t clear_suppressed)
     s_hall_travel_stall_counter = 0U;
     s_hall_travel_stall_dir = 0;
     s_hall_travel_stall_transient = 0U;
+    s_hall_travel_stall_motion_seen = 0U;
     FOC_ResetHallTravelStallWindow(0);
     FOC_ResetHallTravelStallCommand(0);
     if (clear_suppressed != 0U) {
@@ -2430,7 +2435,8 @@ static void FOC_UpdateHallTravelStallGuard(void)
             (s_hall_travel_stall_command_progress >=
              (int32_t)min_command_counts)) {
             persistent_stall_allowed = 1U;
-            if ((fast_threshold != 0U) &&
+            if ((s_hall_travel_stall_motion_seen != 0U) &&
+                (fast_threshold != 0U) &&
                 ((threshold == 0U) || (fast_threshold < threshold))) {
                 threshold = fast_threshold;
             }
@@ -2451,6 +2457,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
             (int32_t)max_dir_counts) {
             low_progress = 1U;
         } else {
+            s_hall_travel_stall_motion_seen = 1U;
             FOC_ResetHallTravelStallWindow(command_sign);
         }
     } else if (fdb_abs <= (float)g_foc_hall_travel_stall_max_fdb_rpm) {
