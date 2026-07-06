@@ -2351,6 +2351,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
     float ctrl_err_abs =
         (ref_abs > ctrl_fdb_abs) ? (ref_abs - ctrl_fdb_abs) : 0.0f;
     float min_err = (float)g_foc_hall_travel_stall_min_err_rpm;
+    float severe_err = ref_abs * 0.5f;
     float current_min =
         (float)g_foc_hall_travel_stall_min_iq_mA * 0.001f;
     uint16_t threshold = g_foc_hall_travel_stall_count_threshold;
@@ -2380,9 +2381,12 @@ static void FOC_UpdateHallTravelStallGuard(void)
     if (min_err < 1.0f) {
         min_err = 1.0f;
     }
+    if (severe_err < min_err) {
+        severe_err = min_err;
+    }
     if ((FOC_FABS(target_abs - ref_abs) <= 0.5f) &&
-        (speed_err_abs >= min_err) &&
-        (ctrl_err_abs >= min_err)) {
+        ((speed_err_abs >= severe_err) ||
+         (ctrl_err_abs >= severe_err))) {
         high_error_stall = 1U;
     }
 
