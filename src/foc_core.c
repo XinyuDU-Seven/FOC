@@ -1000,7 +1000,6 @@ static uint8_t FOC_HallSectorsAreAdjacent(uint8_t from, uint8_t to);
 static int16_t FOC_ClampI32ToI16(int32_t v);
 static void FOC_ResetHallTravelStallGuard(uint8_t clear_suppressed);
 static void FOC_UpdateHallTravelStallGuard(void);
-static void FOC_ApplyHallTravelStallCurrentCut(uint8_t reset_pid);
 static uint8_t FOC_HallTravelStallTorqueBlocked(void);
 static int32_t FOC_FilterHallTravelDelta(int32_t delta);
 static int32_t FOC_RecordHallTravelStep(uint8_t prev_sector, uint8_t cur_sector);
@@ -2319,26 +2318,6 @@ static void FOC_ResetHallTravelStallGuard(uint8_t clear_suppressed)
     FOC_UpdateHallTravelStallDebug();
 }
 
-static void FOC_ApplyHallTravelStallCurrentCut(uint8_t reset_pid)
-{
-    s_ctx.iq_ref = 0.0f;
-    g_foc_speed_error_boost_mA = 0;
-    FOC_ResetSpeedPidDebug();
-    g_foc_low_speed_torque_active = 0U;
-    g_foc_low_speed_torque_applied_mA = 0;
-    g_foc_low_speed_iq_slew_active = 0U;
-    g_foc_low_speed_iq_slew_limited_mA = 0;
-    FOC_ResetLiftCurrentLimitDebug();
-    FOC_SpeedStart_Reset();
-
-    if (reset_pid != 0U) {
-        FOC_PID_Reset(&s_ctx.pid_speed);
-        FOC_PID_Reset(&s_ctx.pid_iq);
-        s_speed_loop_accum_us = 0U;
-        s_ctx.speed_loop_counter = 0U;
-    }
-}
-
 static void FOC_UpdateHallTravelStallGuard(void)
 {
     float ref_abs = FOC_FABS(s_speed_ref_ctrl);
@@ -2378,13 +2357,13 @@ static void FOC_UpdateHallTravelStallGuard(void)
             return;
         }
         /* Keep the hard-stop latch across neutral so repeated same-direction
-         * button presses do not re-apply torque at the mechanical limit.
+         * commands keep the externally reported Hall travel frozen at the
+         * mechanical limit. This must not change the FOC control path.
          */
         if ((s_hall_travel_stall_active != 0U) &&
             (g_foc_hall_travel_stall_guard_enable != 0U) &&
             (s_ctx.state == FOC_STATE_RUNNING) &&
             (s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED)) {
-            FOC_ApplyHallTravelStallCurrentCut(0U);
             FOC_UpdateHallTravelStallDebug();
             return;
         }
@@ -2425,7 +2404,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
     }
 
     /* Hard-stop Hall jitter can fake speed; recent net travel is the
-     * discriminator, so repeated same-direction sethybrid calls get blocked.
+     * discriminator. Once latched, only external Hall travel is frozen.
      */
     if ((g_foc_hall_travel_stall_guard_enable != 0U) &&
         (s_ctx.state == FOC_STATE_RUNNING) &&
@@ -2465,7 +2444,6 @@ static void FOC_UpdateHallTravelStallGuard(void)
         if (s_hall_travel_stall_dir == 0) {
             s_hall_travel_stall_dir = command_sign;
         }
-        FOC_ApplyHallTravelStallCurrentCut((was_active == 0U) ? 1U : 0U);
         FOC_UpdateHallTravelStallDebug();
         return;
     }
@@ -2500,29 +2478,15 @@ static void FOC_UpdateHallTravelStallGuard(void)
         s_hall_travel_stall_transient = 0U;
     }
 
-    if (s_hall_travel_stall_active != 0U) {
-        FOC_ApplyHallTravelStallCurrentCut((was_active == 0U) ? 1U : 0U);
-    }
-
     FOC_UpdateHallTravelStallDebug();
 }
 
 static uint8_t FOC_HallTravelStallTorqueBlocked(void)
 {
-    int8_t command_sign;
-
-    if (s_hall_travel_stall_active == 0U) {
-        return 0U;
-    }
-
-    command_sign = FOC_HallTravelCommandSign();
-    if ((command_sign != 0) &&
-        (s_hall_travel_stall_dir != 0) &&
-        (command_sign != s_hall_travel_stall_dir)) {
-        return 0U;
-    }
-
-    return 1U;
+    /* The travel stall latch only suppresses external Hall travel counts.
+     * Hall edges still feed the observer and normal motor control continues.
+     */
+    return 0U;
 }
 
 static int32_t FOC_FilterHallTravelDelta(int32_t delta)
