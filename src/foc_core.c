@@ -2345,6 +2345,12 @@ static void FOC_UpdateHallTravelStallGuard(void)
     float fdb_abs = FOC_FABS(s_ctx.speed_fdb);
     float current_abs = FOC_FABS(s_ctx.iq_ref);
     float iq_fdb_abs = FOC_FABS(s_ctx.i_dq.q);
+    float ctrl_fdb_abs = FOC_FABS(s_ctx.speed_ctrl_fdb);
+    float target_abs = FOC_FABS(s_ctx.speed_ref);
+    float speed_err_abs = (ref_abs > fdb_abs) ? (ref_abs - fdb_abs) : 0.0f;
+    float ctrl_err_abs =
+        (ref_abs > ctrl_fdb_abs) ? (ref_abs - ctrl_fdb_abs) : 0.0f;
+    float min_err = (float)g_foc_hall_travel_stall_min_err_rpm;
     float current_min =
         (float)g_foc_hall_travel_stall_min_iq_mA * 0.001f;
     uint16_t threshold = g_foc_hall_travel_stall_count_threshold;
@@ -2358,6 +2364,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
     uint8_t condition = 0U;
     uint8_t keep_latched = 0U;
     uint8_t no_edge_stall = 0U;
+    uint8_t high_error_stall = 0U;
 
     if (iq_fdb_abs > current_abs) {
         current_abs = iq_fdb_abs;
@@ -2370,6 +2377,14 @@ static void FOC_UpdateHallTravelStallGuard(void)
         no_edge_stall = 1U;
     }
 #endif
+    if (min_err < 1.0f) {
+        min_err = 1.0f;
+    }
+    if ((FOC_FABS(target_abs - ref_abs) <= 0.5f) &&
+        (speed_err_abs >= min_err) &&
+        (ctrl_err_abs >= min_err)) {
+        high_error_stall = 1U;
+    }
 
     if (command_sign == 0) {
         FOC_ResetHallTravelStallWindow(0);
@@ -2406,7 +2421,8 @@ static void FOC_UpdateHallTravelStallGuard(void)
         if ((min_command_counts == 0U) ||
             (s_hall_travel_stall_command_progress >=
              (int32_t)min_command_counts) ||
-            (no_edge_stall != 0U)) {
+            (no_edge_stall != 0U) ||
+            (high_error_stall != 0U)) {
             persistent_stall_allowed = 1U;
         }
 
@@ -2438,7 +2454,9 @@ static void FOC_UpdateHallTravelStallGuard(void)
         (s_ctx.state == FOC_STATE_RUNNING) &&
         (s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
         (ref_abs >= (float)g_foc_hall_travel_stall_min_ref_rpm) &&
-        ((low_progress != 0U) || (no_edge_stall != 0U)) &&
+        ((low_progress != 0U) ||
+         (no_edge_stall != 0U) ||
+         (high_error_stall != 0U)) &&
         (current_abs >= current_min) &&
         (command_sign != 0)) {
         condition = 1U;
@@ -6556,7 +6574,6 @@ static void FOC_Prof_Reset(void)
      }
 
      FOC_NormalizeSignedSpeedRef();
-     FOC_UpdateHallTravelStallGuard();
 
      float observer_dt = FOC_ControlDtFromUs(control_period_us,
                                              FOC_CONTROL_OBSERVER_DT_MAX_US);
@@ -6749,6 +6766,7 @@ static void FOC_Prof_Reset(void)
 
                                                observer_dt, s_config.motor.pole_pairs);
      FOC_UpdateSpeedControlFeedback();
+     FOC_UpdateHallTravelStallGuard();
 
      if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
          theta_e_ctrl = s_ctx.theta_e_predicted;
