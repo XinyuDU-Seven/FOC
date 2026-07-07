@@ -998,6 +998,7 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
                                       uint8_t blocked,
                                       uint8_t zero_speed_pid_frozen,
                                       uint8_t zero_output_held);
+static float FOC_SpeedStart_MotionFdbAbs(void);
 static float FOC_SpeedStart_BreakawayIq(float speed_iq_ref_max);
 static float FOC_SpeedStart_UnstuckIqMax(float speed_iq_ref_max);
 static uint8_t FOC_SpeedStart_ClosedCatchupActive(float speed_ref_ctrl,
@@ -1405,6 +1406,18 @@ static uint8_t FOC_SpeedStart_CommandActive(float speed_ref_ctrl)
      return (speed_ref_ctrl >= min_ref) ? 1U : 0U;
 }
 
+static float FOC_SpeedStart_MotionFdbAbs(void)
+{
+     float fdb_abs = FOC_FABS(s_ctx.speed_fdb);
+     float ctrl_abs = FOC_FABS(s_ctx.speed_ctrl_fdb);
+
+     if (FOC_EndpointReleaseActive() != 0U) {
+         return fdb_abs;
+     }
+
+     return (ctrl_abs > fdb_abs) ? ctrl_abs : fdb_abs;
+}
+
 static uint8_t FOC_SpeedStart_IsNearZero(void)
 {
      float near_zero = (float)g_foc_speed_start_near_zero_rpm;
@@ -1419,7 +1432,7 @@ static uint8_t FOC_SpeedStart_IsNearZero(void)
      }
 
      return ((FOC_FABS(s_ctx.speed_fdb) <= near_zero) &&
-             (FOC_FABS(s_ctx.speed_ctrl_fdb) <= near_zero)) ? 1U : 0U;
+             (FOC_SpeedStart_MotionFdbAbs() <= near_zero)) ? 1U : 0U;
 }
 
 static void FOC_LowSpeedIqSlew_Prime(float iq_ref)
@@ -1437,8 +1450,7 @@ static uint8_t FOC_SpeedStart_IsMoving(void)
          move_rpm = 1.0f;
      }
 
-     moving = ((FOC_FABS(s_ctx.speed_fdb) >= move_rpm) ||
-               (FOC_FABS(s_ctx.speed_ctrl_fdb) >= move_rpm)) ? 1U : 0U;
+     moving = (FOC_SpeedStart_MotionFdbAbs() >= move_rpm) ? 1U : 0U;
      g_foc_speed_start_moving = moving;
      return moving;
 }
@@ -1629,7 +1641,7 @@ static uint8_t FOC_SpeedStart_ReleaseReached(void)
          return 0U;
      }
 
-     return (FOC_FABS(s_ctx.speed_ctrl_fdb) >= release_rpm) ? 1U : 0U;
+     return (FOC_SpeedStart_MotionFdbAbs() >= release_rpm) ? 1U : 0U;
 }
 
 static float FOC_SpeedStart_HoldIq(float speed_iq_ref_max)
@@ -1666,7 +1678,7 @@ static uint8_t FOC_SpeedStart_TrackHoldActive(float speed_ref_ctrl)
 {
      float max_rpm = (float)g_foc_speed_start_track_hold_max_rpm;
      float err_rpm = (float)g_foc_speed_start_track_hold_err_rpm;
-     float ctrl_fdb = FOC_FABS(s_ctx.speed_ctrl_fdb);
+     float ctrl_fdb = FOC_SpeedStart_MotionFdbAbs();
      uint8_t active = 0U;
 
      if (err_rpm < 1.0f) {
@@ -1687,7 +1699,7 @@ static uint8_t FOC_SpeedStart_CloseReady(float speed_ref_ctrl)
 {
      float release_rpm = FOC_SpeedStart_ReleaseRpm();
      float deadband = (float)g_foc_speed_start_close_deadband_rpm;
-     float ctrl_fdb = FOC_FABS(s_ctx.speed_ctrl_fdb);
+     float ctrl_fdb = FOC_SpeedStart_MotionFdbAbs();
 
      if (release_rpm <= 0.0f) {
          return 1U;

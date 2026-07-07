@@ -517,6 +517,34 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
     return 1U;
 }
 
+static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
+{
+    float release_rpm = (float)g_foc_observer_startup_release_rpm;
+    float sector_us;
+    float timeout_us;
+
+    if ((g_foc_observer_startup_ref_active == 0U) || (pole_pairs == 0U)) {
+        return 0U;
+    }
+    if (release_rpm < FOC_STARTUP_PREDICT_START_RPM) {
+        release_rpm = FOC_STARTUP_PREDICT_START_RPM;
+    }
+    if (release_rpm < 1.0f) {
+        release_rpm = 1.0f;
+    }
+
+    sector_us = 10000000.0f / ((float)pole_pairs * release_rpm);
+    timeout_us = sector_us * (float)FOC_HALL_STOP_TIMEOUT_RATIO;
+    if (timeout_us < 1.0f) {
+        return 1U;
+    }
+    if (timeout_us > 4294967295.0f) {
+        return 0xFFFFFFFFU;
+    }
+
+    return (uint32_t)(timeout_us + 0.5f);
+}
+
  /* ===================================================================
 
   *  观测器初始化
@@ -547,6 +575,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      ctx->timestamp_prev           = FOC_HAL_GetTimestampUs();
      ctx->hall_sector_timestamp_us = ctx->timestamp_prev;
+     ctx->hall_sector_dt_us        = 0U;
 
      ctx->sector_no_change_count   = 0U;
 
@@ -759,6 +788,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
             uint32_t ts_now = FOC_HAL_GetTimestampUs();
             uint32_t stop_timeout_us = ctx->hall_sector_dt_us *
                                        FOC_HALL_STOP_TIMEOUT_RATIO;
+            uint32_t startup_stop_timeout_us =
+                FOC_Observer_StartupStopTimeoutUs(pole_pairs);
             if (FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
                                            &no_edge_elapsed_us,
                                            &no_edge_limit_rpm) != 0U) {
@@ -778,6 +809,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
             }
             if (stop_timeout_us < FOC_HALL_STOP_TIMEOUT_MIN_US) {
                 stop_timeout_us = FOC_HALL_STOP_TIMEOUT_MIN_US;
+            }
+            if (stop_timeout_us < startup_stop_timeout_us) {
+                stop_timeout_us = startup_stop_timeout_us;
             }
 
             if ((ctx->hall_sector_dt_us != 0U) &&
