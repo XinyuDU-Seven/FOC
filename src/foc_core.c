@@ -339,6 +339,9 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_min_iq_mA =
     FOC_HALL_TRAVEL_STALL_MIN_IQ_MA;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_count_threshold =
     FOC_HALL_TRAVEL_STALL_COUNT_THRESHOLD;
+FOC_DEBUG_ROOT volatile uint16_t
+    g_foc_hall_travel_stall_speed_err_count_threshold =
+        FOC_HALL_TRAVEL_STALL_SPEED_ERR_COUNT_THRESHOLD;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_max_dir_counts =
     FOC_HALL_TRAVEL_STALL_MAX_DIR_COUNTS;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_min_command_counts =
@@ -2600,7 +2603,8 @@ static void FOC_UpdateHallTravelStallGuard(void)
     float current_min =
         (float)g_foc_hall_travel_stall_min_iq_mA * 0.001f;
     uint16_t threshold = g_foc_hall_travel_stall_count_threshold;
-    uint16_t speed_err_threshold = (uint16_t)(FOC_CONTROL_FREQ_HZ / 40U);
+    uint16_t speed_err_threshold =
+        g_foc_hall_travel_stall_speed_err_count_threshold;
     uint16_t max_dir_counts = g_foc_hall_travel_stall_max_dir_counts;
     int8_t command_sign = FOC_HallTravelCommandSign();
     uint8_t was_active = s_hall_travel_stall_active;
