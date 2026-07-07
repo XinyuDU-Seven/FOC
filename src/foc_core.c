@@ -428,6 +428,8 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_move_rpm = 20U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_release_rpm = 300U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_breakaway_ms = 160U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_soft_ms = 30U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_motor0_cw_breakaway_iq_mA = 3800U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_motor0_ccw_breakaway_iq_mA = 3800U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_cw_breakaway_iq_mA = 3800U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_ccw_breakaway_iq_mA = 2000U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_hold_percent = 80U;
@@ -1375,10 +1377,19 @@ static uint8_t FOC_SpeedStart_IsMoving(void)
 
 static float FOC_SpeedStart_BreakawayIq(float speed_iq_ref_max)
 {
-     uint16_t iq_mA = (s_ctx.direction == FOC_DIR_CCW)
-                    ? g_foc_speed_start_ccw_breakaway_iq_mA
-                    : g_foc_speed_start_cw_breakaway_iq_mA;
-     float iq = (float)iq_mA * 0.001f;
+     uint16_t iq_mA;
+     float iq;
+
+     if (s_foc_core_active_motor == 0U) {
+         iq_mA = (s_ctx.direction == FOC_DIR_CCW)
+                ? g_foc_motor0_ccw_breakaway_iq_mA
+                : g_foc_motor0_cw_breakaway_iq_mA;
+     } else {
+         iq_mA = (s_ctx.direction == FOC_DIR_CCW)
+                ? g_foc_speed_start_ccw_breakaway_iq_mA
+                : g_foc_speed_start_cw_breakaway_iq_mA;
+     }
+     iq = (float)iq_mA * 0.001f;
 
      if (speed_iq_ref_max < 0.0f) {
          speed_iq_ref_max = 0.0f;
