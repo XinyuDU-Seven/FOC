@@ -343,6 +343,7 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_max_dir_counts =
     FOC_HALL_TRAVEL_STALL_MAX_DIR_COUNTS;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_min_command_counts =
     FOC_HALL_TRAVEL_STALL_MIN_COMMAND_COUNTS;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_travel_stall_fault_enable = 1U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_travel_stall_active[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile uint16_t g_foc_hall_travel_stall_counter[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 FOC_DEBUG_ROOT volatile int8_t   g_foc_hall_travel_stall_dir[FOC_CORE_MOTOR_COUNT] = {0, 0};
@@ -2337,6 +2338,10 @@ static void FOC_ResetHallTravelStallGuard(uint8_t clear_suppressed)
 static void FOC_ApplyHallTravelStallCurrentCut(uint8_t reset_pid)
 {
     s_ctx.iq_ref = 0.0f;
+    if ((g_foc_hall_travel_stall_fault_enable != 0U) &&
+        (s_hall_travel_stall_active != 0U)) {
+        s_ctx.fault |= FOC_FAULT_STALL;
+    }
     g_foc_speed_error_boost_mA = 0;
     FOC_ResetSpeedPidDebug();
     g_foc_low_speed_torque_active = 0U;
