@@ -355,6 +355,21 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_travel_freeze_count[FOC_CORE_MOTOR_C
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_stall_window_start[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_stall_window_progress[FOC_CORE_MOTOR_COUNT] = {0, 0};
 FOC_DEBUG_ROOT volatile int32_t  g_foc_hall_travel_stall_command_progress[FOC_CORE_MOTOR_COUNT] = {0, 0};
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_motor0_endpoint_release_enable = 1U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_motor0_endpoint_release_if_rpm = 180U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_motor0_endpoint_release_max_ms = 3500U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_motor0_endpoint_release_max_fdb_rpm = 80U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_motor0_endpoint_release_done_edges = 2U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_motor0_endpoint_release_done_rpm = 80U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_endpoint_release_active = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_endpoint_release_direction = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_endpoint_release_edge_count = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_endpoint_release_elapsed_ms = 0U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_endpoint_release_theta_u16 = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_endpoint_release_timed_out = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_endpoint_release_start_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_endpoint_release_done_count = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_endpoint_release_timeout_count = 0U;
 static uint32_t s_foc_hall_history_delta_us[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
 static uint8_t  s_foc_hall_history_raw[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
 static uint64_t s_foc_hall_history_count[FOC_CORE_MOTOR_COUNT][FOC_HALL_HISTORY_SIZE];
@@ -376,6 +391,16 @@ static int32_t  s_foc_hall_travel_stall_window_progress_store[FOC_CORE_MOTOR_COU
 static int32_t  s_foc_hall_travel_stall_command_start_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int8_t   s_foc_hall_travel_stall_command_dir_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
 static int32_t  s_foc_hall_travel_stall_command_progress_store[FOC_CORE_MOTOR_COUNT] = {0, 0};
+static uint8_t  s_endpoint_release_active_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t  s_endpoint_release_timeout_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t  s_endpoint_release_edge_count_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t  s_endpoint_release_last_sector_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static FOC_Dir_e s_endpoint_release_direction_store[FOC_CORE_MOTOR_COUNT] = {
+    FOC_DIR_CW,
+    FOC_DIR_CW
+};
+static uint32_t s_endpoint_release_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static float    s_endpoint_release_angle_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_pid_err_rpm = 0;
@@ -831,6 +856,13 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
     (s_foc_hall_travel_stall_command_dir_store[s_foc_core_active_motor])
 #define s_hall_travel_stall_command_progress \
     (s_foc_hall_travel_stall_command_progress_store[s_foc_core_active_motor])
+#define s_endpoint_release_active       (s_endpoint_release_active_store[s_foc_core_active_motor])
+#define s_endpoint_release_timeout      (s_endpoint_release_timeout_store[s_foc_core_active_motor])
+#define s_endpoint_release_edge_count   (s_endpoint_release_edge_count_store[s_foc_core_active_motor])
+#define s_endpoint_release_last_sector  (s_endpoint_release_last_sector_store[s_foc_core_active_motor])
+#define s_endpoint_release_direction    (s_endpoint_release_direction_store[s_foc_core_active_motor])
+#define s_endpoint_release_elapsed_us   (s_endpoint_release_elapsed_us_store[s_foc_core_active_motor])
+#define s_endpoint_release_angle        (s_endpoint_release_angle_store[s_foc_core_active_motor])
 static uint8_t s_dyn_speed_prev_enable = 0U;
 static uint32_t s_dyn_speed_start_us = 0U;
 static uint32_t s_dyn_log_last_us = 0U;
@@ -924,6 +956,11 @@ static float FOC_ApplyCurrentAngleTrim(float theta_ctrl);
 static void FOC_UpdateCurrentAngleTrim(float dt);
 static void FOC_UpdateSpeedControlFeedback(void);
 static void FOC_SpeedStart_Reset(void);
+static void FOC_EndpointRelease_Reset(uint8_t clear_timeout);
+static uint8_t FOC_EndpointReleaseActive(void);
+static float FOC_EndpointRelease_Service(float theta_ctrl,
+                                         float dt,
+                                         uint32_t period_us);
 static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
                                       uint32_t elapsed_us,
                                       float speed_iq_ref_max,
@@ -1985,6 +2022,182 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
      return iq_ref;
 }
 
+static void FOC_EndpointRelease_UpdateDebug(void)
+{
+    g_foc_endpoint_release_active = s_endpoint_release_active;
+    g_foc_endpoint_release_direction = (uint8_t)s_endpoint_release_direction;
+    g_foc_endpoint_release_edge_count = s_endpoint_release_edge_count;
+    g_foc_endpoint_release_elapsed_ms =
+        FOC_SpeedStartElapsedMs(s_endpoint_release_elapsed_us);
+    g_foc_endpoint_release_theta_u16 =
+        FOC_Log_AngleU16(s_endpoint_release_angle);
+    g_foc_endpoint_release_timed_out = s_endpoint_release_timeout;
+}
+
+static void FOC_EndpointRelease_Reset(uint8_t clear_timeout)
+{
+    s_endpoint_release_active = 0U;
+    s_endpoint_release_edge_count = 0U;
+    s_endpoint_release_last_sector = 0U;
+    s_endpoint_release_direction = s_ctx.direction;
+    s_endpoint_release_elapsed_us = 0U;
+    s_endpoint_release_angle = s_ctx.theta_e_predicted;
+    if (clear_timeout != 0U) {
+        s_endpoint_release_timeout = 0U;
+    }
+    FOC_EndpointRelease_UpdateDebug();
+}
+
+static uint8_t FOC_EndpointReleaseActive(void)
+{
+    return s_endpoint_release_active;
+}
+
+static uint8_t FOC_EndpointReleaseHardInactive(void)
+{
+    return ((g_foc_motor0_endpoint_release_enable == 0U) ||
+            (s_foc_core_active_motor != 0U) ||
+            (s_ctx.state != FOC_STATE_RUNNING) ||
+            (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED) ||
+            (s_ctx.direction > FOC_DIR_CCW) ||
+            (FOC_SpeedStart_CommandActive(s_speed_ref_ctrl) == 0U) ||
+            (FOC_HallTravelStallTorqueBlocked() != 0U)) ? 1U : 0U;
+}
+
+static uint8_t FOC_EndpointReleaseStartEligible(void)
+{
+    float max_fdb = (float)g_foc_motor0_endpoint_release_max_fdb_rpm;
+
+    if (s_endpoint_release_timeout != 0U) {
+        return 0U;
+    }
+    if ((s_speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
+        (s_speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
+        return 0U;
+    }
+    if (s_ctx.sector_no_change_count < FOC_SECTOR_NO_CHANGE_THRESHOLD) {
+        return 0U;
+    }
+    if (max_fdb < 1.0f) {
+        max_fdb = 1.0f;
+    }
+    if ((FOC_FABS(s_ctx.speed_fdb) > max_fdb) ||
+        (FOC_FABS(s_ctx.speed_ctrl_fdb) > max_fdb)) {
+        return 0U;
+    }
+
+    return 1U;
+}
+
+static float FOC_EndpointRelease_Service(float theta_ctrl,
+                                         float dt,
+                                         uint32_t period_us)
+{
+    float release_rpm = (float)g_foc_motor0_endpoint_release_if_rpm;
+    float done_rpm = (float)g_foc_motor0_endpoint_release_done_rpm;
+    float speed_abs = FOC_FABS(s_ctx.speed_fdb);
+    uint32_t max_us =
+        (uint32_t)g_foc_motor0_endpoint_release_max_ms * 1000U;
+    uint8_t done_edges = g_foc_motor0_endpoint_release_done_edges;
+    uint8_t cur_sector = s_ctx.hall_sector.sector;
+    uint8_t edge_seen = 0U;
+    float omega_e;
+
+    if (FOC_FABS(s_ctx.speed_ctrl_fdb) > speed_abs) {
+        speed_abs = FOC_FABS(s_ctx.speed_ctrl_fdb);
+    }
+
+    if (FOC_EndpointReleaseHardInactive() != 0U) {
+        FOC_EndpointRelease_Reset(1U);
+        return theta_ctrl;
+    }
+    if (s_endpoint_release_direction != s_ctx.direction) {
+        FOC_EndpointRelease_Reset(1U);
+    }
+
+    if (s_endpoint_release_active != 0U) {
+        if ((s_speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
+            (s_speed_start_state != FOC_SPEED_START_STATE_SOFT_START) &&
+            (s_speed_start_state != FOC_SPEED_START_STATE_CLOSED)) {
+            FOC_EndpointRelease_Reset(0U);
+            return theta_ctrl;
+        }
+        if ((cur_sector != 0U) &&
+            (s_endpoint_release_last_sector != 0U) &&
+            (cur_sector != s_endpoint_release_last_sector)) {
+            edge_seen = 1U;
+            s_endpoint_release_last_sector = cur_sector;
+            if (s_endpoint_release_edge_count < 255U) {
+                s_endpoint_release_edge_count++;
+            }
+            s_endpoint_release_angle = theta_ctrl;
+        } else if ((cur_sector != 0U) &&
+                   (s_endpoint_release_last_sector == 0U)) {
+            s_endpoint_release_last_sector = cur_sector;
+        }
+
+        if (done_edges == 0U) {
+            done_edges = 1U;
+        }
+        if (((s_endpoint_release_edge_count >= done_edges) ||
+             ((edge_seen != 0U) && (done_rpm > 0.0f) &&
+              (speed_abs >= done_rpm))) ||
+            (s_speed_start_state == FOC_SPEED_START_STATE_CLOSED)) {
+            g_foc_endpoint_release_done_count++;
+            FOC_EndpointRelease_Reset(0U);
+            return theta_ctrl;
+        }
+    } else {
+        if (FOC_EndpointReleaseStartEligible() == 0U) {
+            FOC_EndpointRelease_UpdateDebug();
+            return theta_ctrl;
+        }
+
+        s_endpoint_release_active = 1U;
+        s_endpoint_release_direction = s_ctx.direction;
+        s_endpoint_release_edge_count = 0U;
+        s_endpoint_release_last_sector = cur_sector;
+        s_endpoint_release_elapsed_us = 0U;
+        s_endpoint_release_angle = theta_ctrl;
+        g_foc_endpoint_release_start_count++;
+    }
+
+    if (period_us == 0U) {
+        period_us = FOC_CONTROL_PERIOD_US;
+    }
+    if ((0xFFFFFFFFU - s_endpoint_release_elapsed_us) >= period_us) {
+        s_endpoint_release_elapsed_us += period_us;
+    } else {
+        s_endpoint_release_elapsed_us = 0xFFFFFFFFU;
+    }
+    if ((max_us != 0U) && (s_endpoint_release_elapsed_us >= max_us)) {
+        s_endpoint_release_active = 0U;
+        s_endpoint_release_timeout = 1U;
+        g_foc_endpoint_release_timeout_count++;
+        FOC_EndpointRelease_UpdateDebug();
+        return theta_ctrl;
+    }
+
+    if (dt <= 0.0f) {
+        dt = (float)FOC_CONTROL_PERIOD_US * 1.0e-6f;
+    }
+    if (release_rpm < 1.0f) {
+        release_rpm = 1.0f;
+    }
+    omega_e = release_rpm * (FOC_2PI / 60.0f) *
+              (float)s_config.motor.pole_pairs;
+    if (s_ctx.direction == FOC_DIR_CCW) {
+        s_endpoint_release_angle -= omega_e * dt;
+    } else {
+        s_endpoint_release_angle += omega_e * dt;
+    }
+    s_endpoint_release_angle = FOC_NormalizeAngle(s_endpoint_release_angle);
+    s_ctx.theta_e_predicted = s_endpoint_release_angle;
+    FOC_EndpointRelease_UpdateDebug();
+
+    return s_endpoint_release_angle;
+}
+
 static void FOC_StartLog_Reset(void)
 {
      uint16_t i;
@@ -2400,6 +2613,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
     uint8_t high_error_stall = 0U;
     uint8_t speed_error_stall = 0U;
     uint8_t target_ready = 0U;
+    uint8_t endpoint_release_active = FOC_EndpointReleaseActive();
     uint8_t stall_reason = FOC_HALL_TRAVEL_STALL_REASON_NONE;
 
     if (iq_fdb_abs > current_abs) {
@@ -2436,6 +2650,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
         (s_ctx.state == FOC_STATE_RUNNING) &&
         (s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
         (ref_abs >= (float)g_foc_hall_travel_stall_min_ref_rpm) &&
+        (endpoint_release_active == 0U) &&
         (high_error_stall != 0U) &&
         (current_abs >= current_min) &&
         (command_sign != 0)) {
@@ -2446,6 +2661,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
                (s_ctx.state != FOC_STATE_RUNNING) ||
                (s_foc_ctrl_source != FOC_CTRL_SOURCE_SPEED) ||
                (ref_abs < (float)g_foc_hall_travel_stall_min_ref_rpm) ||
+               (endpoint_release_active != 0U) ||
                (current_abs < current_min) ||
                (command_sign == 0)) {
         s_hall_travel_speed_err_counter = 0U;
@@ -2525,6 +2741,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
         (s_ctx.state == FOC_STATE_RUNNING) &&
         (s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
         (ref_abs >= (float)g_foc_hall_travel_stall_min_ref_rpm) &&
+        (endpoint_release_active == 0U) &&
         (((low_progress != 0U) && (persistent_stall_allowed != 0U)) ||
          (speed_error_stall != 0U)) &&
         (current_abs >= current_min) &&
@@ -6483,6 +6700,7 @@ static void FOC_Prof_Reset(void)
      s_speed_loop_accum_us = 0U;
      FOC_ResetSpeedRefRamp();
      FOC_SpeedStart_Reset();
+     FOC_EndpointRelease_Reset(1U);
      FOC_ResetHallTravelStallGuard(1U);
      s_speed_error_boost_prev_ref = 0.0f;
      s_bidir_decel_hold_prev_ref = 0.0f;
@@ -6568,6 +6786,7 @@ static void FOC_Prof_Reset(void)
      s_ctx.speed_ref = 0.0f;
      FOC_ResetSpeedRefRamp();
      FOC_SpeedStart_Reset();
+     FOC_EndpointRelease_Reset(1U);
      FOC_ResetHallTravelStallGuard(1U);
      g_foc_dyn_speed_enable = 0U;
      g_foc_bidir_speed_enable = 0U;
@@ -6858,6 +7077,10 @@ static void FOC_Prof_Reset(void)
      if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
          theta_e_ctrl = s_ctx.theta_e_predicted;
      }
+
+     theta_e_ctrl = FOC_EndpointRelease_Service(theta_e_ctrl,
+                                                observer_dt,
+                                                control_period_us);
 
      if (s_foc_ctrl_source == FOC_CTRL_SOURCE_IF) {
          if (s_ctx.direction == FOC_DIR_CCW) {
