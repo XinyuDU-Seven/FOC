@@ -907,7 +907,8 @@ static FocError FOC_AI_CheckReferenceState(void)
   /* 当前已选中电机的FOC上下文，用于判断fault状态并映射错误码。 */
   const FOC_Context_t *ctx = FOC_Core_GetContext();
 
-  if (ctx->state == FOC_STATE_FAULT) {
+  if ((ctx->state == FOC_STATE_FAULT) ||
+      (ctx->fault != FOC_FAULT_NONE)) {
     return FOC_AI_MapFault(ctx->fault);
   }
   return FOC_SUCCESS;
@@ -2217,14 +2218,16 @@ FocError Foc_EnableFocControl_AI(uint8_t unId)
   }
 
   ctx = FOC_Core_GetContext();
-  if (ctx->state == FOC_STATE_RUNNING) {
-    return FOC_SUCCESS;
-  }
-  if (ctx->state == FOC_STATE_FAULT) {
+  if ((ctx->state == FOC_STATE_FAULT) ||
+      (ctx->fault != FOC_FAULT_NONE)) {
     err = FOC_AI_MapResult(FOC_ClearFault());
     if (err != FOC_SUCCESS) {
       return err;
     }
+    ctx = FOC_Core_GetContext();
+  }
+  if (ctx->state == FOC_STATE_RUNNING) {
+    return FOC_SUCCESS;
   }
 
   return FOC_AI_MapResult(FOC_Start());

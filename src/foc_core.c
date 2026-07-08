@@ -7024,7 +7024,9 @@ static void FOC_Prof_Reset(void)
 
      /* 进入待机态 */
 
-     s_ctx.state = FOC_STATE_IDLE;
+     s_ctx.state = (s_ctx.fault == FOC_FAULT_NONE)
+                 ? FOC_STATE_IDLE
+                 : FOC_STATE_FAULT;
 
  
 
@@ -8191,7 +8193,8 @@ int FOC_Core_SetDirection(FOC_Dir_e dir)
 
  {
 
-     if (s_ctx.state != FOC_STATE_FAULT) {
+     if ((s_ctx.state != FOC_STATE_FAULT) &&
+         (s_ctx.fault == FOC_FAULT_NONE)) {
 
          return FOC_OK;
 
