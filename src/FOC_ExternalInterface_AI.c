@@ -57,6 +57,7 @@ extern volatile int16_t  g_foc_hall_angle_offset_mrad;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
 #define FOC_DETAIL_LOG_SIZE    512U
+#define FOC_APP_SPEED_CMD_LOG_SIZE 128U
 #define FOC_DETAIL_LOG_DECIM_DEFAULT_MS       12U
 #define FOC_DETAIL_LOG_DECIM_STARTUP_MS       2U
 #define FOC_DETAIL_LOG_DECIM_SIGNED_CURVE_MS 12U
@@ -211,6 +212,30 @@ FOC_AI_DEBUG_ROOT volatile int8_t   g_foc_detail_log_zero_direction_pending[FOC_
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_decel_hold_mA[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_edge_elapsed_us[FOC_DETAIL_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_fault[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_detail_log_app_cmd_seq[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_app_cmd_age_ms[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_detail_log_app_direction[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_detail_log_app_speed_rpm[FOC_DETAIL_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_detail_log_app_target_rpm[FOC_DETAIL_LOG_SIZE];
+
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_speed_cmd_log_enable = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_speed_cmd_log_reset = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_speed_cmd_log_filter_motor_id = 1U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_app_speed_cmd_log_idx = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_speed_cmd_log_wrapped = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_app_speed_cmd_log_seq_next = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_speed_cmd_last_valid = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_app_speed_cmd_last_seq = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_app_speed_cmd_last_t_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_speed_cmd_last_direction = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_app_speed_cmd_last_speed_rpm = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_app_speed_cmd_last_target_rpm = 0;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_app_speed_cmd_log_seq[FOC_APP_SPEED_CMD_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_app_speed_cmd_log_t_ms[FOC_APP_SPEED_CMD_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_app_speed_cmd_log_cb_count[FOC_APP_SPEED_CMD_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_speed_cmd_log_direction[FOC_APP_SPEED_CMD_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_app_speed_cmd_log_speed_rpm[FOC_APP_SPEED_CMD_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_app_speed_cmd_log_target_rpm[FOC_APP_SPEED_CMD_LOG_SIZE];
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_bidir_speed_step_enable = 0U;
@@ -885,6 +910,22 @@ static FocError FOC_AI_CheckReferenceState(void)
   return FOC_SUCCESS;
 }
 
+static uint8_t FOC_AI_GetTestCaseMotorId(void)
+{
+  return (g_foc_test_motor_id < FOC_PHY_MOTOR_COUNT)
+       ? g_foc_test_motor_id
+       : 0U;
+}
+
+static void FOC_AI_DisarmTestCaseService(void)
+{
+  g_foc_test_case_select = FOC_TEST_CASE_STOP;
+  g_foc_test_case_applied = FOC_TEST_CASE_STOP;
+  g_foc_test_case_last_error = 0U;
+  s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
+  s_foc_test_case_last_motor_id = FOC_AI_GetTestCaseMotorId();
+}
+
 static uint8_t FOC_AI_HallRawToU8(const FOC_HallRaw_t *hall_raw)
 {
   return (uint8_t)((hall_raw->h1 << 2) | (hall_raw->h2 << 1) | hall_raw->h3);
@@ -903,6 +944,90 @@ static float FOC_AI_SignedIqRef(const FOC_Context_t *ctx)
 static float FOC_AI_SignedMechSpeed(const FOC_Context_t *ctx, float speed)
 {
   return (ctx->direction == FOC_DIR_CCW) ? speed : -speed;
+}
+
+static int16_t FOC_AI_LogToI16(float value, float scale)
+{
+  float scaled = value * scale;
+
+  if (scaled > 32767.0f) {
+    return 32767;
+  }
+  if (scaled < -32768.0f) {
+    return -32768;
+  }
+
+  return (int16_t)scaled;
+}
+
+static void FOC_AI_SpeedCmdLogResetIfNeeded(void)
+{
+  if (g_foc_app_speed_cmd_log_reset == 0U) {
+    return;
+  }
+
+  g_foc_app_speed_cmd_log_idx = 0U;
+  g_foc_app_speed_cmd_log_wrapped = 0U;
+  g_foc_app_speed_cmd_log_seq_next = 0U;
+  g_foc_app_speed_cmd_last_valid = 0U;
+  g_foc_app_speed_cmd_last_seq = 0U;
+  g_foc_app_speed_cmd_last_t_ms = 0U;
+  g_foc_app_speed_cmd_last_direction = 0U;
+  g_foc_app_speed_cmd_last_speed_rpm = 0U;
+  g_foc_app_speed_cmd_last_target_rpm = 0;
+  g_foc_app_speed_cmd_log_reset = 0U;
+}
+
+static void FOC_AI_RecordHybridSpeedCommand(uint8_t unId,
+                                            uint8_t direction,
+                                            uint16_t speed_rpm,
+                                            float target_rpm)
+{
+  uint16_t idx;
+  uint32_t seq;
+  uint32_t t_ms;
+  int16_t target_i16;
+
+  FOC_AI_SpeedCmdLogResetIfNeeded();
+  if (unId != g_foc_app_speed_cmd_log_filter_motor_id) {
+    return;
+  }
+
+  g_foc_test_motor_id_applied = unId;
+
+  seq = g_foc_app_speed_cmd_log_seq_next++;
+  t_ms = FOC_HAL_GetTimestampUs() / 1000U;
+  target_i16 = FOC_AI_LogToI16(target_rpm, 1.0f);
+
+  g_foc_app_speed_cmd_last_valid = 1U;
+  g_foc_app_speed_cmd_last_seq = seq;
+  g_foc_app_speed_cmd_last_t_ms = t_ms;
+  g_foc_app_speed_cmd_last_direction = direction;
+  g_foc_app_speed_cmd_last_speed_rpm = speed_rpm;
+  g_foc_app_speed_cmd_last_target_rpm = target_i16;
+
+  if (g_foc_app_speed_cmd_log_enable == 0U) {
+    return;
+  }
+
+  idx = g_foc_app_speed_cmd_log_idx;
+  if (idx >= FOC_APP_SPEED_CMD_LOG_SIZE) {
+    idx = 0U;
+    g_foc_app_speed_cmd_log_wrapped = 1U;
+  }
+
+  g_foc_app_speed_cmd_log_idx = (uint16_t)(idx + 1U);
+  if (g_foc_app_speed_cmd_log_idx >= FOC_APP_SPEED_CMD_LOG_SIZE) {
+    g_foc_app_speed_cmd_log_idx = 0U;
+    g_foc_app_speed_cmd_log_wrapped = 1U;
+  }
+
+  g_foc_app_speed_cmd_log_seq[idx] = seq;
+  g_foc_app_speed_cmd_log_t_ms[idx] = t_ms;
+  g_foc_app_speed_cmd_log_cb_count[idx] = g_foc_ai_callback_count;
+  g_foc_app_speed_cmd_log_direction[idx] = direction;
+  g_foc_app_speed_cmd_log_speed_rpm[idx] = speed_rpm;
+  g_foc_app_speed_cmd_log_target_rpm[idx] = target_i16;
 }
 
 static FocError FOC_AI_MakeSignedTarget(uint16_t direction,
@@ -931,6 +1056,7 @@ static FocError FOC_AI_MakeSignedTarget(uint16_t direction,
 static void FOC_AI_ClearAutoModes(void)
 {
   speed_ref = -1.0f;
+  FOC_AI_DisarmTestCaseService();
   FOC_TestCase_ClearFixedStartupLimits();
   g_foc_dyn_speed_enable = 0U;
   g_foc_dyn_speed_reverse = 0U;
@@ -2040,8 +2166,8 @@ FocError Foc_EnableFocControl_AI(uint8_t unId)
   /* ctx指向选中电机的运行上下文，用于判断当前是否running/fault。 */
   const FOC_Context_t *ctx;
   /* err保存电机选择或底层启动结果映射后的External错误码。 */
-  FocError err = FOC_AI_SelectMotor(unId);
-
+  FocError err;
+  err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
     return err;
   }
@@ -2079,8 +2205,9 @@ FocError Foc_EnableFocControl_AI(uint8_t unId)
 FocError Foc_DisableFocControl_AI(uint8_t unId)
 {
   /* err保存电机选择结果，选择失败时不再调用FOC_Stop。 */
-  FocError err = FOC_AI_SelectMotor(unId);
+  FocError err;
 
+  err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
     return err;
   }
@@ -2110,7 +2237,9 @@ FocError Foc_DisableFocControl_AI(uint8_t unId)
 FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq)
 {
   /* err保存电机选择、fault状态检查和底层设置结果。 */
-  FocError err = FOC_AI_SelectMotor(unId);
+  FocError err;
+
+  err = FOC_AI_SelectMotor(unId);
 
   if (err != FOC_SUCCESS) {
     return err;
@@ -2176,6 +2305,8 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
     if (err != FOC_SUCCESS) {
       return err;
     }
+    FOC_AI_RecordHybridSpeedCommand(unId, (uint8_t)unParam1,
+                                    unParam4, target);
     return FOC_AI_SetHybridSpeedReference(unId, target);
   }
 
@@ -2185,7 +2316,8 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
     if (err != FOC_SUCCESS) {
       return err;
     }
-    return Foc_SetCurrentReference_AI(unId, 0.0f, target);
+    err = Foc_SetCurrentReference_AI(unId, 0.0f, target);
+    return err;
   }
 
   if (unMode == FOC_APP_MODE_VQ) {
@@ -2193,7 +2325,8 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
     if (err != FOC_SUCCESS) {
       return err;
     }
-    return Foc_SetVoltageReference_AI(unId, 0.0f, target);
+    err = Foc_SetVoltageReference_AI(unId, 0.0f, target);
+    return err;
   }
 
   return FOC_INPUT_PARAMETER_INVALID;
@@ -2502,9 +2635,7 @@ static float s_foc_test_case_last_fixed_ref = 0.0f;
 
 static uint8_t FOC_TestCase_GetMotorId(void)
 {
-  return (g_foc_test_motor_id < FOC_PHY_MOTOR_COUNT)
-       ? g_foc_test_motor_id
-       : 0U;
+  return FOC_AI_GetTestCaseMotorId();
 }
 
 static void FOC_TestCase_ClearAutoModes(void)
@@ -2693,6 +2824,13 @@ static void FOC_TestCase_Service(void)
 {
   uint8_t test_case = g_foc_test_case_select;
   uint8_t motor_id = FOC_TestCase_GetMotorId();
+
+  if ((test_case == FOC_TEST_CASE_STOP) &&
+      (g_foc_test_case_applied == FOC_TEST_CASE_STOP)) {
+    s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
+    s_foc_test_case_last_motor_id = motor_id;
+    return;
+  }
 
   if((test_case == s_foc_test_case_last_select) &&
      (motor_id == s_foc_test_case_last_motor_id)){

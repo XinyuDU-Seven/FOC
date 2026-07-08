@@ -724,6 +724,17 @@ extern volatile int8_t   g_foc_detail_log_zero_direction_pending[FOC_DETAIL_LOG_
 extern volatile int16_t  g_foc_detail_log_decel_hold_mA[FOC_DETAIL_LOG_SIZE];
 extern volatile uint32_t g_foc_detail_log_edge_elapsed_us[FOC_DETAIL_LOG_SIZE];
 extern volatile uint16_t g_foc_detail_log_fault[FOC_DETAIL_LOG_SIZE];
+extern volatile uint32_t g_foc_detail_log_app_cmd_seq[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_app_cmd_age_ms[FOC_DETAIL_LOG_SIZE];
+extern volatile uint8_t  g_foc_detail_log_app_direction[FOC_DETAIL_LOG_SIZE];
+extern volatile uint16_t g_foc_detail_log_app_speed_rpm[FOC_DETAIL_LOG_SIZE];
+extern volatile int16_t  g_foc_detail_log_app_target_rpm[FOC_DETAIL_LOG_SIZE];
+extern volatile uint8_t  g_foc_app_speed_cmd_last_valid;
+extern volatile uint32_t g_foc_app_speed_cmd_last_seq;
+extern volatile uint32_t g_foc_app_speed_cmd_last_t_ms;
+extern volatile uint8_t  g_foc_app_speed_cmd_last_direction;
+extern volatile uint16_t g_foc_app_speed_cmd_last_speed_rpm;
+extern volatile int16_t  g_foc_app_speed_cmd_last_target_rpm;
 extern volatile uint8_t  g_foc_bidir_speed_enable;
 extern volatile uint8_t  g_foc_bidir_speed_step_enable;
 extern volatile uint8_t  g_foc_bidir_speed_reset_stats;
@@ -3849,6 +3860,11 @@ static void FOC_DetailLog_Reset(void)
         g_foc_detail_log_decel_hold_mA[i] = 0;
         g_foc_detail_log_edge_elapsed_us[i] = 0U;
         g_foc_detail_log_fault[i] = 0U;
+        g_foc_detail_log_app_cmd_seq[i] = 0U;
+        g_foc_detail_log_app_cmd_age_ms[i] = 0xFFFFU;
+        g_foc_detail_log_app_direction[i] = 0U;
+        g_foc_detail_log_app_speed_rpm[i] = 0U;
+        g_foc_detail_log_app_target_rpm[i] = 0;
     }
 }
 
@@ -3862,6 +3878,12 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
     float duty_max = s_ctx.duty_a;
+    uint32_t app_cmd_age_ms = 0xFFFFFFFFU;
+    uint32_t app_cmd_seq = 0U;
+    uint32_t app_cmd_t_ms = 0U;
+    uint8_t app_cmd_direction = 0U;
+    uint16_t app_cmd_speed_rpm = 0U;
+    int16_t app_cmd_target_rpm = 0;
 
     if (g_foc_detail_log_active == 0U) {
         return;
@@ -3905,6 +3927,14 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
     }
     if (s_ctx.duty_c > duty_max) {
         duty_max = s_ctx.duty_c;
+    }
+    if (g_foc_app_speed_cmd_last_valid != 0U) {
+        app_cmd_seq = g_foc_app_speed_cmd_last_seq;
+        app_cmd_t_ms = g_foc_app_speed_cmd_last_t_ms;
+        app_cmd_direction = g_foc_app_speed_cmd_last_direction;
+        app_cmd_speed_rpm = g_foc_app_speed_cmd_last_speed_rpm;
+        app_cmd_target_rpm = g_foc_app_speed_cmd_last_target_rpm;
+        app_cmd_age_ms = (now_us / 1000U) - app_cmd_t_ms;
     }
 
     s_detail_log_last_us = now_us;
@@ -3975,6 +4005,12 @@ static void FOC_DetailLog_Record(uint32_t now_us, float theta_ctrl)
         g_foc_bidir_decel_hold_applied_mA;
     g_foc_detail_log_edge_elapsed_us[idx] = edge_elapsed_us;
     g_foc_detail_log_fault[idx] = (uint16_t)s_ctx.fault;
+    g_foc_detail_log_app_cmd_seq[idx] = app_cmd_seq;
+    g_foc_detail_log_app_cmd_age_ms[idx] =
+        FOC_Log_U32ToU16(app_cmd_age_ms);
+    g_foc_detail_log_app_direction[idx] = app_cmd_direction;
+    g_foc_detail_log_app_speed_rpm[idx] = app_cmd_speed_rpm;
+    g_foc_detail_log_app_target_rpm[idx] = app_cmd_target_rpm;
 
     idx++;
     g_foc_detail_log_idx = idx;
