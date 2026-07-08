@@ -33,6 +33,9 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_app_id = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_last_get_motor_num_foc_id = 0xFFU;
 /* 最近一次Foc_GetMotorNum返回的错误码，Watch中用于确认映射是否成功。 */
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_last_get_motor_num_err = FOC_SUCCESS;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_ai_init_done = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_ai_init_result = FOC_ERR;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_lazy_init_count = 0U;
 /* 动态速度测试使用的外部标志，External接口清自动模式时会间接影响相关测试模式。 */
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 /* 旧测试入口的速度给定，External正式控制前会置为-1以退出旧测试给定。 */
@@ -1051,6 +1054,21 @@ static FocError FOC_AI_MakeSignedTarget(uint16_t direction,
     return FOC_SUCCESS;
   }
   return FOC_INVALID_DIRECITON;
+}
+
+static uint8_t FOC_AI_IsHybridDisableCommand(uint8_t unMode,
+                                             uint16_t unParam1,
+                                             uint16_t unParam2,
+                                             uint16_t unParam3,
+                                             uint16_t unParam4,
+                                             uint16_t unParam5)
+{
+  return ((unMode == 0U) &&
+          (unParam1 == 0U) &&
+          (unParam2 == 0U) &&
+          (unParam3 == 0U) &&
+          (unParam4 == 0U) &&
+          (unParam5 == 0U)) ? 1U : 0U;
 }
 
 static void FOC_AI_ClearAutoModes(void)
@@ -2109,10 +2127,11 @@ void Foc_AlgorithmControlCallback_AI(void){
 
  *******************************************************************************************/
 
-void Foc_Init_AI(void)
+static int FOC_AI_InitCore(void)
 {
   /* FOC核心初始化配置，当前两个物理电机共用同一套默认参数初始化。 */
   FOC_Config_t config;
+  int result;
 
   memset(&config, 0, sizeof(FOC_Config_t));
 
@@ -2142,7 +2161,26 @@ void Foc_Init_AI(void)
   config.speed_pid.out_max = config.motor.max_current_a;
   config.speed_pid.out_min = -config.motor.max_current_a;
 
-  (void)FOC_Init(&config);
+  result = FOC_Init(&config);
+  g_foc_ai_init_result = (int16_t)result;
+  g_foc_ai_init_done = (result == FOC_OK) ? 1U : 0U;
+  return result;
+}
+
+static FocError FOC_AI_EnsureInitialized(void)
+{
+  if ((g_foc_ai_init_done != 0U) &&
+      (g_foc_ai_init_result == FOC_OK)) {
+    return FOC_SUCCESS;
+  }
+
+  g_foc_ai_lazy_init_count++;
+  return FOC_AI_MapResult(FOC_AI_InitCore());
+}
+
+void Foc_Init_AI(void)
+{
+  (void)FOC_AI_InitCore();
 }
 
  
@@ -2167,6 +2205,12 @@ FocError Foc_EnableFocControl_AI(uint8_t unId)
   const FOC_Context_t *ctx;
   /* err保存电机选择或底层启动结果映射后的External错误码。 */
   FocError err;
+
+  err = FOC_AI_EnsureInitialized();
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
   err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
     return err;
@@ -2294,9 +2338,21 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
   /* unParam2当前没有参与实际控制，保留是为了匹配外部接口定义。 */
   (void)unParam2;
 
+  err = FOC_AI_EnsureInitialized();
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
   err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
     return err;
+  }
+
+  if (FOC_AI_IsHybridDisableCommand(unMode, unParam1, unParam2,
+                                    unParam3, unParam4, unParam5) != 0U) {
+    FOC_AI_RecordHybridSpeedCommand(unId, FOC_APP_DIR_NONE, 0U, 0.0f);
+    FOC_AI_ClearAutoModes();
+    return FOC_AI_MapResult(FOC_Stop());
   }
 
   if ((unMode == FOC_APP_MODE_VQ_RATIO_SPEED) ||
