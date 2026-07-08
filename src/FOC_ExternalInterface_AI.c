@@ -90,7 +90,7 @@ static void FOC_TestCase_ClearFixedStartupLimits(void)
   g_foc_low_speed_iq_slew_down_mA_per_s = 0U;
 }
 
-static void FOC_TestCase_ApplyFixedStartupLimits(void)
+static void FOC_AI_ApplySpeedStartupLimits(void)
 {
   g_foc_lift_current_limit_base_mA = g_foc_testcase1_iq_limit_mA;
   g_foc_lift_current_limit_boost_mA = g_foc_testcase1_iq_limit_mA;
@@ -2125,6 +2125,25 @@ FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq)
   return FOC_AI_MapResult(FOC_SetCurrentRef(fId, fIq));
 }
 
+static FocError FOC_AI_SetHybridSpeedReference(uint8_t unId, float fSpeed)
+{
+  FocError err;
+
+  err = FOC_AI_SelectMotor(unId);
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  err = FOC_AI_CheckReferenceState();
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  FOC_AI_ClearAutoModes();
+  FOC_AI_ApplySpeedStartupLimits();
+  return FOC_AI_MapResult(FOC_SetSpeedRef(fSpeed));
+}
+
  
 
 /*******************************************************************************************
@@ -2157,7 +2176,7 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
     if (err != FOC_SUCCESS) {
       return err;
     }
-    return Foc_SetSpeedReference_AI(unId, target);
+    return FOC_AI_SetHybridSpeedReference(unId, target);
   }
 
   if ((unMode == FOC_APP_MODE_VQ_RATIO_CURRENT) ||
@@ -2577,7 +2596,7 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
     if ((FOC_AI_SelectMotor(unId) == FOC_SUCCESS) &&
         (FOC_AI_CheckReferenceState() == FOC_SUCCESS)) {
-      FOC_TestCase_ApplyFixedStartupLimits();
+      FOC_AI_ApplySpeedStartupLimits();
       (void)FOC_SetSpeedRef(fixed_ref);
     }
     g_foc_detail_log_start_now = 1U;
