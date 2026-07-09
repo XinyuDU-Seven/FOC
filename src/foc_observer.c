@@ -162,6 +162,10 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_no_edge_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_resync_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_resync_diff_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_ref_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_no_edge_hold_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_startup_no_edge_hold_count = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_no_edge_hold_elapsed_ms = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_no_edge_hold_timeout_ms = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_predict_speed_rpm = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_release_rpm =
     (uint16_t)FOC_STARTUP_PREDICT_RELEASE_RPM;
@@ -691,6 +695,59 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
     return 1U;
 }
 
+static uint8_t FOC_Observer_StartupNoEdgeHoldEnabled(const FOC_Context_t *ctx,
+                                                     uint8_t pole_pairs,
+                                                     uint32_t elapsed_us,
+                                                     uint32_t *timeout_us)
+{
+#if FOC_STARTUP_NO_EDGE_HOLD_ENABLE
+    float enter_rpm = FOC_ANGLE_PREDICT_PLL_ENTER_RPM;
+    float speed_abs;
+    uint32_t timeout = (uint32_t)FOC_STARTUP_NO_EDGE_HOLD_MS * 1000U;
+
+    if ((ctx == 0) ||
+        (pole_pairs == 0U) ||
+        (ctx->hall_sector.sector == 0U) ||
+        (ctx->speed_ref <= 0.5f) ||
+        (g_foc_observer_startup_ref_active == 0U)) {
+        return 0U;
+    }
+
+    if (enter_rpm < 0.0f) {
+        enter_rpm = -enter_rpm;
+    }
+    speed_abs = FOC_FABS(ctx->speed_filtered);
+    if ((enter_rpm > 0.0f) && (speed_abs > enter_rpm)) {
+        return 0U;
+    }
+
+    if (timeout < 1000U) {
+        timeout = 1000U;
+    }
+    if (timeout_us != 0) {
+        *timeout_us = timeout;
+    }
+    g_foc_observer_startup_no_edge_hold_active =
+        (elapsed_us < timeout) ? 1U : 0U;
+    g_foc_observer_startup_no_edge_hold_elapsed_ms =
+        (uint16_t)((elapsed_us / 1000U) > 65535U
+                 ? 65535U
+                 : (elapsed_us / 1000U));
+    g_foc_observer_startup_no_edge_hold_timeout_ms =
+        (uint16_t)((timeout / 1000U) > 65535U
+                 ? 65535U
+                 : (timeout / 1000U));
+
+    return (elapsed_us < timeout) ? 1U : 0U;
+#else
+    (void)ctx;
+    (void)pole_pairs;
+    (void)elapsed_us;
+    (void)timeout_us;
+    return 0U;
+#endif
+}
+
 static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
 {
     float release_rpm = (float)g_foc_observer_startup_release_rpm;
@@ -778,6 +835,10 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
      g_foc_observer_no_edge_active = 0U;
      g_foc_observer_resync_count = 0U;
      g_foc_observer_resync_diff_mrad = 0;
+     g_foc_observer_startup_no_edge_hold_active = 0U;
+     g_foc_observer_startup_no_edge_hold_count = 0U;
+     g_foc_observer_startup_no_edge_hold_elapsed_ms = 0U;
+     g_foc_observer_startup_no_edge_hold_timeout_ms = 0U;
      g_foc_observer_startup_sync_boost_active = 0U;
      g_foc_observer_startup_sync_edge_count = 0U;
      g_foc_observer_startup_pre_edge_clamp_active = 0U;
@@ -965,6 +1026,8 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          ctx->timestamp_prev = ts_now;
 
         ctx->sector_no_change_count = 0U;
+        g_foc_observer_startup_no_edge_hold_active = 0U;
+        g_foc_observer_startup_no_edge_hold_elapsed_ms = 0U;
 
      } else {
 
@@ -977,10 +1040,14 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
 
         {
             uint32_t ts_now = FOC_HAL_GetTimestampUs();
+            uint32_t elapsed_us = ts_now - ctx->timestamp_prev;
             uint32_t stop_timeout_us = ctx->hall_sector_dt_us *
                                        FOC_HALL_STOP_TIMEOUT_RATIO;
             uint32_t startup_stop_timeout_us =
                 FOC_Observer_StartupStopTimeoutUs(pole_pairs);
+            uint32_t startup_hold_timeout_us = 0U;
+            uint8_t startup_hold_active;
+
             if (FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
                                            &no_edge_elapsed_us,
                                            &no_edge_limit_rpm) != 0U) {
@@ -1005,9 +1072,29 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
                 stop_timeout_us = startup_stop_timeout_us;
             }
 
+            startup_hold_active =
+                FOC_Observer_StartupNoEdgeHoldEnabled(ctx,
+                                                      pole_pairs,
+                                                      elapsed_us,
+                                                      &startup_hold_timeout_us);
+            if ((startup_hold_active != 0U) &&
+                (stop_timeout_us < startup_hold_timeout_us)) {
+                stop_timeout_us = startup_hold_timeout_us;
+            }
+
             if ((ctx->hall_sector_dt_us != 0U) &&
-                ((ts_now - ctx->timestamp_prev) >= stop_timeout_us)) {
+                (elapsed_us >= stop_timeout_us)) {
                 ctx->sector_no_change_count = FOC_SECTOR_NO_CHANGE_THRESHOLD;
+            } else if ((startup_hold_active != 0U) &&
+                       (ctx->sector_no_change_count >=
+                        FOC_SECTOR_NO_CHANGE_THRESHOLD)) {
+                ctx->sector_no_change_count =
+                    FOC_SECTOR_NO_CHANGE_THRESHOLD - 1U;
+                if (g_foc_observer_startup_no_edge_hold_count < 0xFFFFFFFFU) {
+                    g_foc_observer_startup_no_edge_hold_count++;
+                }
+            } else if (startup_hold_active == 0U) {
+                g_foc_observer_startup_no_edge_hold_active = 0U;
             }
         }
 
