@@ -214,9 +214,11 @@ void FOC_Observer_SetHallAngleOffsetMrad(uint8_t motor_id,
   */
 
 /* Hybrid angle prediction:
- * below the PLL enter threshold, the returned angle follows linear
- * Hall-sector interpolation; above the threshold, the interpolation angle is
- * used as the PLL input and the returned angle is the PLL-smoothed output.
+ * during low-speed startup without reliable Hall edges, the returned angle is
+ * the calibrated Hall sector center. With valid low-speed edges, the returned
+ * angle follows linear Hall-sector interpolation. Above the PLL enter
+ * threshold, the interpolation angle is used as the PLL input and the returned
+ * angle is the PLL-smoothed output.
  */
  float FOC_Observer_PredictAngle(FOC_Context_t *ctx, float dt, uint8_t pole_pairs);
 
