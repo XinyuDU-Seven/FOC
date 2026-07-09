@@ -129,8 +129,11 @@ float FOC_Observer_HallEdgeSyncAngle(const FOC_Context_t *ctx,
                                      float omega_e,
                                      float advance_max);
 
-/* Runtime global Hall angle offset, in mrad. Used for coarse offset calibration. */
-extern volatile int16_t g_foc_hall_angle_offset_mrad;
+/* Runtime Hall angle offsets, in mrad. Indexed by physical motor id. */
+extern volatile int16_t g_foc_hall_angle_offset_mrad_motor[];
+int16_t FOC_Observer_GetHallAngleOffsetMrad(void);
+void FOC_Observer_SetHallAngleOffsetMrad(uint8_t motor_id,
+                                         int16_t offset_mrad);
 
  
 

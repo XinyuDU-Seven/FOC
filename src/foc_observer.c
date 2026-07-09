@@ -162,8 +162,10 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_angle_clamp_cou
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_diff_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_limit_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_step_mrad = 0;
-FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_hall_angle_offset_mrad =
-    (int16_t)(FOC_HALL_ANGLE_OFFSET_RAD * 1000.0f);
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_hall_angle_offset_mrad_motor[FOC_OBSERVER_MOTOR_COUNT] = {
+    FOC_HALL_ANGLE_OFFSET_MOTOR0_MRAD,
+    FOC_HALL_ANGLE_OFFSET_MOTOR1_MRAD
+};
 
 static float FOC_Observer_NormalizeAngleDiff(float diff)
 {
@@ -196,9 +198,26 @@ static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
     return 0.0f;
 }
 
+int16_t FOC_Observer_GetHallAngleOffsetMrad(void)
+{
+    uint8_t motor = FOC_Observer_GetMotorIndex();
+
+    return g_foc_hall_angle_offset_mrad_motor[motor];
+}
+
+void FOC_Observer_SetHallAngleOffsetMrad(uint8_t motor_id,
+                                         int16_t offset_mrad)
+{
+    if (motor_id >= FOC_OBSERVER_MOTOR_COUNT) {
+        motor_id = 0U;
+    }
+
+    g_foc_hall_angle_offset_mrad_motor[motor_id] = offset_mrad;
+}
+
 static float FOC_Observer_GetHallAngleOffset(void)
 {
-    return (float)g_foc_hall_angle_offset_mrad * 0.001f;
+    return (float)FOC_Observer_GetHallAngleOffsetMrad() * 0.001f;
 }
 
 static float FOC_Observer_GetHallSyncAngle(uint8_t sector)

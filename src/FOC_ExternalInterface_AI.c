@@ -8,6 +8,7 @@
 #include "foc_core.h"
 #include "foc_hal_if.h"
 #include "foc_math.h"
+#include "foc_observer.h"
 
 #ifdef __ICCARM__
 #define FOC_AI_DEBUG_ROOT __root
@@ -56,7 +57,6 @@ extern volatile uint16_t g_foc_lift_start_overload_iq_mA;
 extern volatile uint16_t g_foc_speed_start_breakaway_boost_max_iq_mA;
 extern volatile uint8_t  g_foc_speed_start_unstuck_enable;
 extern volatile uint16_t g_foc_speed_start_unstuck_max_iq_mA;
-extern volatile int16_t  g_foc_hall_angle_offset_mrad;
 extern volatile uint8_t  g_foc_if_edge_sync_enable;
 extern volatile uint32_t g_foc_if_edge_sync_count;
 extern volatile uint8_t  g_foc_if_edge_sync_sector;
@@ -110,8 +110,8 @@ extern volatile int16_t  g_foc_if_edge_calib_recommended_offset_mrad;
 
 #define FOC_IQ_START_OFFSET_SCORE_INVALID 2147483647L
 
-static void FOC_IqStartTest_ResetRuntime(void);
-static void FOC_IFOffsetTest_ResetRuntime(void);
+static void FOC_IqStartTest_ResetRuntime(uint8_t motor_id);
+static void FOC_IFOffsetTest_ResetRuntime(uint8_t motor_id);
 
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_up_rpm_per_s = 2000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_down_rpm_per_s = 1200U;
@@ -1035,6 +1035,23 @@ static uint8_t FOC_AI_GetTestCaseMotorId(void)
        : 0U;
 }
 
+static int16_t FOC_AI_GetHallAngleOffsetMrad(uint8_t motor_id)
+{
+  if (motor_id >= FOC_PHY_MOTOR_COUNT) {
+    motor_id = 0U;
+  }
+  return g_foc_hall_angle_offset_mrad_motor[motor_id];
+}
+
+static void FOC_AI_SetHallAngleOffsetMrad(uint8_t motor_id,
+                                          int16_t offset_mrad)
+{
+  if (motor_id >= FOC_PHY_MOTOR_COUNT) {
+    motor_id = 0U;
+  }
+  FOC_Observer_SetHallAngleOffsetMrad(motor_id, offset_mrad);
+}
+
 static void FOC_AI_DisarmTestCaseService(void)
 {
   g_foc_test_case_select = FOC_TEST_CASE_STOP;
@@ -1192,7 +1209,7 @@ static void FOC_AI_ClearAutoModes(void)
   FOC_AI_DisarmTestCaseService();
   FOC_TestCase_ClearFixedStartupLimits();
   if (g_foc_if_offset_test_active != 0U) {
-    FOC_IFOffsetTest_ResetRuntime();
+    FOC_IFOffsetTest_ResetRuntime(FOC_AI_GetTestCaseMotorId());
   }
   g_foc_dyn_speed_enable = 0U;
   g_foc_dyn_speed_reverse = 0U;
@@ -1328,7 +1345,7 @@ static void FOC_IqStartTest_RecordOffsetScore(uint16_t cmd_mA,
   }
 }
 
-static void FOC_IqStartTest_ResetRuntime(void)
+static void FOC_IqStartTest_ResetRuntime(uint8_t motor_id)
 {
   if (g_foc_iq_start_test_offset_best_reset != 0U) {
     FOC_IqStartTest_ClearBestOffsetScore();
@@ -1351,7 +1368,8 @@ static void FOC_IqStartTest_ResetRuntime(void)
   g_foc_iq_start_test_first_speed_cmd_mA = 0;
   g_foc_iq_start_test_first_speed_ms = 0U;
   g_foc_iq_start_test_end_cmd_mA = 0;
-  g_foc_iq_start_test_offset_mrad = g_foc_hall_angle_offset_mrad;
+  g_foc_iq_start_test_offset_mrad =
+      FOC_AI_GetHallAngleOffsetMrad(motor_id);
   g_foc_iq_start_test_offset_score_valid = 0U;
   g_foc_iq_start_test_offset_score =
       FOC_IQ_START_OFFSET_SCORE_INVALID;
@@ -1450,7 +1468,7 @@ static void FOC_IqStartTest_Start(uint8_t motor_id)
   uint16_t max_mA = g_foc_iq_start_test_max_mA;
   uint32_t now_us = FOC_HAL_GetTimestampUs();
 
-  FOC_IqStartTest_ResetRuntime();
+  FOC_IqStartTest_ResetRuntime(motor_id);
 
   if (max_mA < start_mA) {
     max_mA = start_mA;
@@ -1935,7 +1953,7 @@ static void FOC_IFOffsetTest_RecordEdge(const FOC_Context_t *ctx)
   }
 }
 
-static void FOC_IFOffsetTest_ResetRuntime(void)
+static void FOC_IFOffsetTest_ResetRuntime(uint8_t motor_id)
 {
   if (g_foc_if_offset_test_active != 0U) {
     FOC_IFOffsetTest_RestoreCoreCalibConfig();
@@ -1962,7 +1980,8 @@ static void FOC_IFOffsetTest_ResetRuntime(void)
   g_foc_if_offset_test_current_peak_mA = 0U;
   g_foc_if_offset_test_cmd_angle_u16 = 0U;
   g_foc_if_offset_test_cmd_angle_mrad = 0;
-  g_foc_if_offset_test_start_offset_mrad = g_foc_hall_angle_offset_mrad;
+  g_foc_if_offset_test_start_offset_mrad =
+      FOC_AI_GetHallAngleOffsetMrad(motor_id);
   g_foc_if_offset_test_calib_done = 0U;
   g_foc_if_offset_test_calib_samples = 0U;
   g_foc_if_offset_test_calib_skipped = 0U;
@@ -1970,7 +1989,8 @@ static void FOC_IFOffsetTest_ResetRuntime(void)
   g_foc_if_offset_test_calib_abs_avg_diff_mrad = 0U;
   g_foc_if_offset_test_calib_min_diff_mrad = 0;
   g_foc_if_offset_test_calib_max_diff_mrad = 0;
-  g_foc_if_offset_test_calib_recommended_mrad = g_foc_hall_angle_offset_mrad;
+  g_foc_if_offset_test_calib_recommended_mrad =
+      g_foc_if_offset_test_start_offset_mrad;
   g_foc_if_offset_test_sync_count = 0U;
   g_foc_if_offset_test_sync_sector = 0U;
   g_foc_if_offset_test_sync_diff_mrad = 0;
@@ -1990,7 +2010,8 @@ static void FOC_IFOffsetTest_ResetRuntime(void)
   g_foc_if_offset_test_rev_min_diff_mrad = 0;
   g_foc_if_offset_test_rev_max_diff_mrad = 0;
   g_foc_if_offset_test_rev_recommended_mrad = 0;
-  g_foc_if_offset_test_recommended_mrad = g_foc_hall_angle_offset_mrad;
+  g_foc_if_offset_test_recommended_mrad =
+      g_foc_if_offset_test_start_offset_mrad;
   g_foc_if_offset_test_dir_delta_mrad = 0;
   FOC_IFOffsetTest_ClearAngleLog();
   s_foc_if_offset_test_start_us = 0U;
@@ -2013,8 +2034,9 @@ static void FOC_IFOffsetTest_Finish(uint8_t motor_id, uint8_t result)
       (g_foc_if_offset_test_apply_result != 0U) &&
       ((g_foc_if_offset_test_fwd_valid != 0U) ||
        (g_foc_if_offset_test_rev_valid != 0U))) {
-    g_foc_hall_angle_offset_mrad =
-        g_foc_if_offset_test_recommended_mrad;
+    FOC_AI_SetHallAngleOffsetMrad(
+        motor_id,
+        g_foc_if_offset_test_recommended_mrad);
     g_foc_if_offset_test_applied = 1U;
   }
 
@@ -2036,12 +2058,18 @@ static void FOC_IFOffsetTest_Start(uint8_t motor_id)
   FocError result;
   uint32_t now_us = FOC_HAL_GetTimestampUs();
 
-  FOC_IFOffsetTest_ResetRuntime();
+  FOC_IFOffsetTest_ResetRuntime(motor_id);
 
   FOC_IFOffsetTest_SaveCoreCalibConfig();
 
   g_foc_if_offset_test_active = 1U;
   g_foc_if_offset_test_phase = FOC_IF_OFFSET_TEST_PHASE_LOCK_FORWARD;
+  g_foc_if_offset_test_start_offset_mrad =
+      FOC_AI_GetHallAngleOffsetMrad(motor_id);
+  g_foc_if_offset_test_calib_recommended_mrad =
+      g_foc_if_offset_test_start_offset_mrad;
+  g_foc_if_offset_test_recommended_mrad =
+      g_foc_if_offset_test_start_offset_mrad;
   s_foc_if_offset_test_start_us = now_us;
   s_foc_if_offset_test_phase_start_us = now_us;
 
@@ -3372,10 +3400,12 @@ static uint8_t FOC_TestCase_GetMotorId(void)
 
 static void FOC_TestCase_ClearAutoModes(void)
 {
+  uint8_t motor_id = FOC_TestCase_GetMotorId();
+
   speed_ref = -1.0f;
   FOC_TestCase_ClearFixedStartupLimits();
-  FOC_IqStartTest_ResetRuntime();
-  FOC_IFOffsetTest_ResetRuntime();
+  FOC_IqStartTest_ResetRuntime(motor_id);
+  FOC_IFOffsetTest_ResetRuntime(motor_id);
   g_foc_dyn_speed_enable = 0U;
   g_foc_dyn_speed_reverse = 0U;
   g_foc_dyn_speed_reset_stats = 0U;

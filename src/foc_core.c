@@ -1168,14 +1168,16 @@ static void FOC_IF_ResetEdgeSyncDebug(void)
     g_foc_if_edge_calib_done = 0U;
     g_foc_if_edge_calib_sample_count = 0U;
     g_foc_if_edge_calib_skipped_count = 0U;
-    g_foc_if_edge_calib_start_offset_mrad = g_foc_hall_angle_offset_mrad;
+    g_foc_if_edge_calib_start_offset_mrad =
+        FOC_Observer_GetHallAngleOffsetMrad();
     g_foc_if_edge_calib_sum_diff_mrad = 0;
     g_foc_if_edge_calib_abs_sum_diff_mrad = 0U;
     g_foc_if_edge_calib_avg_diff_mrad = 0;
     g_foc_if_edge_calib_abs_avg_diff_mrad = 0U;
     g_foc_if_edge_calib_min_diff_mrad = 0;
     g_foc_if_edge_calib_max_diff_mrad = 0;
-    g_foc_if_edge_calib_recommended_offset_mrad = g_foc_hall_angle_offset_mrad;
+    g_foc_if_edge_calib_recommended_offset_mrad =
+        g_foc_if_edge_calib_start_offset_mrad;
 }
 
 static void FOC_IF_RecordEdgeCalib(int16_t diff_mrad)

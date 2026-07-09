@@ -787,10 +787,15 @@ extern "C" {
 /* Hall electrical angle calibration.
  * The Hall lookup table stores sector center angles for compatibility.
  * Control-angle synchronization uses the sector entry edge when
- * FOC_HALL_EDGE_SYNC_ENABLE is set.
+ * FOC_HALL_EDGE_SYNC_ENABLE is set. Angle offsets are calibrated per
+ * physical motor and expressed in mrad.
  */
-#ifndef FOC_HALL_ANGLE_OFFSET_RAD
-#define FOC_HALL_ANGLE_OFFSET_RAD       0.0f
+#ifndef FOC_HALL_ANGLE_OFFSET_MOTOR0_MRAD
+#define FOC_HALL_ANGLE_OFFSET_MOTOR0_MRAD  (-88)
+#endif
+
+#ifndef FOC_HALL_ANGLE_OFFSET_MOTOR1_MRAD
+#define FOC_HALL_ANGLE_OFFSET_MOTOR1_MRAD  (-200)
 #endif
 
 #ifndef FOC_HALL_ANGLE_TRIM_S1_RAD

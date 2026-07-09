@@ -72,13 +72,14 @@ The current lookup maps this sequence to continuous sectors:
 2 -> 3 -> 4 -> 5 -> 6 -> 1
 ```
 
-The Hall sector table keeps sector center angles internally, but the control synchronization angle uses a configurable offset:
+The Hall sector table keeps sector center angles internally, but the control synchronization angle uses per-motor calibrated offsets:
 
 ```c
-#define FOC_HALL_ANGLE_OFFSET_RAD (-(FOC_PI / 6.0f))
+#define FOC_HALL_ANGLE_OFFSET_MOTOR0_MRAD  (-88)
+#define FOC_HALL_ANGLE_OFFSET_MOTOR1_MRAD  (-200)
 ```
 
-This default changes the Hall synchronization point from sector center to sector entry edge, which is important for reducing d-axis current spikes during Hall-sector transitions.
+These defaults are the measured Hall electrical angle offsets for the two physical motors. Keep them separated when changing Hall wiring, motor phase order, or rotation direction.
 
 After changing Hall wiring, motor phase order, or rotation direction, re-check:
 
@@ -168,7 +169,7 @@ actual symptom
 direction
 load condition
 bus voltage
-FOC_HALL_ANGLE_OFFSET_RAD
+FOC_HALL_ANGLE_OFFSET_MOTOR0_MRAD / FOC_HALL_ANGLE_OFFSET_MOTOR1_MRAD
 overcurrent threshold
 ```
 
