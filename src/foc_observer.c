@@ -120,6 +120,18 @@ static uint8_t s_startup_sync_edge_count_store[FOC_OBSERVER_MOTOR_COUNT] = {
     0U,
     0U
 };
+static uint8_t s_angle_predict_pll_active_store[FOC_OBSERVER_MOTOR_COUNT] = {
+    0U,
+    0U
+};
+static float s_angle_predict_pll_angle_store[FOC_OBSERVER_MOTOR_COUNT] = {
+    0.0f,
+    0.0f
+};
+static float s_angle_predict_pll_omega_corr_store[FOC_OBSERVER_MOTOR_COUNT] = {
+    0.0f,
+    0.0f
+};
 
 static uint8_t FOC_Observer_GetMotorIndex(void)
 {
@@ -134,6 +146,12 @@ static uint8_t FOC_Observer_GetMotorIndex(void)
     (s_predict_direction_store[FOC_Observer_GetMotorIndex()])
 #define s_startup_sync_edge_count \
     (s_startup_sync_edge_count_store[FOC_Observer_GetMotorIndex()])
+#define s_angle_predict_pll_active \
+    (s_angle_predict_pll_active_store[FOC_Observer_GetMotorIndex()])
+#define s_angle_predict_pll_angle \
+    (s_angle_predict_pll_angle_store[FOC_Observer_GetMotorIndex()])
+#define s_angle_predict_pll_omega_corr \
+    (s_angle_predict_pll_omega_corr_store[FOC_Observer_GetMotorIndex()])
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_direction_reset_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_decay_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_elapsed_us = 0U;
@@ -162,6 +180,10 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_angle_clamp_cou
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_diff_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_limit_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_no_edge_angle_step_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_angle_predict_mode = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_pll_error_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_pll_step_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_pll_corr_rpm = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_hall_angle_offset_mrad_motor[FOC_OBSERVER_MOTOR_COUNT] = {
     FOC_HALL_ANGLE_OFFSET_MOTOR0_MRAD,
     FOC_HALL_ANGLE_OFFSET_MOTOR1_MRAD
@@ -177,6 +199,139 @@ static float FOC_Observer_NormalizeAngleDiff(float diff)
     }
 
     return diff;
+}
+
+static int16_t FOC_Observer_ToI16(float value)
+{
+    if (value > 32767.0f) {
+        return 32767;
+    }
+    if (value < -32768.0f) {
+        return -32768;
+    }
+
+    return (int16_t)value;
+}
+
+static float FOC_Observer_SignedElecOmega(float speed_rpm,
+                                          FOC_Dir_e hall_dir,
+                                          uint8_t pole_pairs)
+{
+    float omega_e = speed_rpm * (FOC_2PI / 60.0f) * (float)pole_pairs;
+
+    return (hall_dir == FOC_DIR_CCW) ? -omega_e : omega_e;
+}
+
+static void FOC_Observer_ResetAnglePredictPll(float seed_angle)
+{
+    s_angle_predict_pll_active = 0U;
+    s_angle_predict_pll_angle = FOC_NormalizeAngle(seed_angle);
+    s_angle_predict_pll_omega_corr = 0.0f;
+    g_foc_observer_angle_predict_mode = 0U;
+    g_foc_observer_pll_error_mrad = 0;
+    g_foc_observer_pll_step_mrad = 0;
+    g_foc_observer_pll_corr_rpm = 0;
+}
+
+static float FOC_Observer_ApplyAnglePredictPll(float linear_angle,
+                                               float speed_for_predict,
+                                               float pll_switch_speed_rpm,
+                                               FOC_Dir_e hall_dir,
+                                               float dt,
+                                               uint8_t cur_sector,
+                                               uint8_t pole_pairs)
+{
+#if FOC_ANGLE_PREDICT_PLL_ENABLE
+    float enter_rpm = FOC_ANGLE_PREDICT_PLL_ENTER_RPM;
+    float exit_rpm = FOC_ANGLE_PREDICT_PLL_EXIT_RPM;
+    float speed_abs = FOC_FABS(pll_switch_speed_rpm);
+    float phase_err;
+    float omega_ff;
+    float corr_max;
+    float step;
+
+    if (enter_rpm < 0.0f) {
+        enter_rpm = -enter_rpm;
+    }
+    if (exit_rpm < 0.0f) {
+        exit_rpm = -exit_rpm;
+    }
+    if (exit_rpm > enter_rpm) {
+        exit_rpm = enter_rpm;
+    }
+
+    if ((dt <= 0.0f) || (cur_sector == 0U) || (pole_pairs == 0U)) {
+        FOC_Observer_ResetAnglePredictPll(linear_angle);
+        return linear_angle;
+    }
+
+    if (s_angle_predict_pll_active != 0U) {
+        if (speed_abs < exit_rpm) {
+            FOC_Observer_ResetAnglePredictPll(linear_angle);
+            return linear_angle;
+        }
+    } else {
+        s_angle_predict_pll_angle = FOC_NormalizeAngle(linear_angle);
+        s_angle_predict_pll_omega_corr = 0.0f;
+        if (speed_abs <= enter_rpm) {
+            g_foc_observer_angle_predict_mode = 0U;
+            g_foc_observer_pll_error_mrad = 0;
+            g_foc_observer_pll_step_mrad = 0;
+            g_foc_observer_pll_corr_rpm = 0;
+            return linear_angle;
+        }
+        s_angle_predict_pll_active = 1U;
+        g_foc_observer_angle_predict_mode = 1U;
+        return linear_angle;
+    }
+
+    phase_err = FOC_Observer_NormalizeAngleDiff(
+        linear_angle - s_angle_predict_pll_angle);
+    omega_ff = FOC_Observer_SignedElecOmega(speed_for_predict,
+                                            hall_dir,
+                                            pole_pairs);
+    corr_max = FOC_ANGLE_PREDICT_PLL_CORR_MAX_RPM *
+               (FOC_2PI / 60.0f) * (float)pole_pairs;
+    if (corr_max < 0.0f) {
+        corr_max = -corr_max;
+    }
+
+    s_angle_predict_pll_omega_corr +=
+        FOC_ANGLE_PREDICT_PLL_KI * phase_err * dt;
+    if (corr_max > 0.0f) {
+        s_angle_predict_pll_omega_corr =
+            FOC_CLAMP(s_angle_predict_pll_omega_corr, -corr_max, corr_max);
+    }
+
+    step = (omega_ff + s_angle_predict_pll_omega_corr +
+            (FOC_ANGLE_PREDICT_PLL_KP * phase_err)) * dt;
+    s_angle_predict_pll_angle =
+        FOC_NormalizeAngle(s_angle_predict_pll_angle + step);
+
+    g_foc_observer_angle_predict_mode = 1U;
+    g_foc_observer_pll_error_mrad =
+        FOC_Observer_ToI16(phase_err * 1000.0f);
+    g_foc_observer_pll_step_mrad =
+        FOC_Observer_ToI16(step * 1000.0f);
+    if (pole_pairs != 0U) {
+        float corr_rpm = s_angle_predict_pll_omega_corr *
+                         (60.0f / FOC_2PI) / (float)pole_pairs;
+        g_foc_observer_pll_corr_rpm = FOC_Observer_ToI16(corr_rpm);
+    } else {
+        g_foc_observer_pll_corr_rpm = 0;
+    }
+
+    return s_angle_predict_pll_angle;
+#else
+    (void)speed_for_predict;
+    (void)pll_switch_speed_rpm;
+    (void)hall_dir;
+    (void)dt;
+    (void)cur_sector;
+    (void)pole_pairs;
+    FOC_Observer_ResetAnglePredictPll(linear_angle);
+    return linear_angle;
+#endif
 }
 
 static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
@@ -539,14 +694,25 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
 {
     float release_rpm = (float)g_foc_observer_startup_release_rpm;
+    float predict_rpm = s_startup_predict_speed_rpm;
+    float linear_min_rpm = FOC_ANGLE_PREDICT_LINEAR_START_RPM;
     float sector_us;
     float timeout_us;
 
     if ((g_foc_observer_startup_ref_active == 0U) || (pole_pairs == 0U)) {
         return 0U;
     }
-    if (release_rpm < FOC_STARTUP_PREDICT_START_RPM) {
-        release_rpm = FOC_STARTUP_PREDICT_START_RPM;
+    if (linear_min_rpm < 1.0f) {
+        linear_min_rpm = 1.0f;
+    }
+    if (predict_rpm < 0.0f) {
+        predict_rpm = -predict_rpm;
+    }
+    if (predict_rpm > 0.0f) {
+        release_rpm = predict_rpm;
+    }
+    if (release_rpm < linear_min_rpm) {
+        release_rpm = linear_min_rpm;
     }
     if (release_rpm < 1.0f) {
         release_rpm = 1.0f;
@@ -602,6 +768,7 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
      s_startup_predict_speed_rpm   = 0.0f;
      s_predict_direction           = FOC_Observer_GetHallMotionDir(ctx);
      s_startup_sync_edge_count     = 0U;
+     FOC_Observer_ResetAnglePredictPll(ctx->theta_e_predicted);
      g_foc_observer_direction_reset_count = 0U;
      g_foc_observer_no_edge_decay_count = 0U;
      g_foc_observer_no_edge_elapsed_us = 0U;
@@ -622,6 +789,10 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
      g_foc_observer_no_edge_angle_diff_mrad = 0;
      g_foc_observer_no_edge_angle_limit_mrad = 0;
      g_foc_observer_no_edge_angle_step_mrad = 0;
+     g_foc_observer_angle_predict_mode = 0U;
+     g_foc_observer_pll_error_mrad = 0;
+     g_foc_observer_pll_step_mrad = 0;
+     g_foc_observer_pll_corr_rpm = 0;
 
  
 
@@ -638,6 +809,7 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          ctx->hall_sector_prev = ctx->hall_sector.sector;
 
          ctx->theta_e_predicted = ctx->hall_sector.theta_e;
+         FOC_Observer_ResetAnglePredictPll(ctx->theta_e_predicted);
 
      }
 
@@ -853,6 +1025,7 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
             if (ctx->hall_sector.sector != 0U) {
                 ctx->theta_e_predicted = ctx->hall_sector.theta_e;
             }
+            FOC_Observer_ResetAnglePredictPll(ctx->theta_e_predicted);
             ctx->hall_sector_prev = cur_sector;
             return 0.0f;
 
@@ -907,6 +1080,8 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          FOC_STARTUP_PREDICT_RELEASE_BLEND_RPM_PER_S;
      float release_blend_done_rpm =
          FOC_STARTUP_PREDICT_RELEASE_BLEND_DONE_RPM;
+     float pll_enter_rpm = FOC_ANGLE_PREDICT_PLL_ENTER_RPM;
+     float linear_start_min_rpm = FOC_ANGLE_PREDICT_LINEAR_START_RPM;
      float speed_filtered_abs = FOC_FABS(ctx->speed_filtered);
      float speed_ref_ctrl_abs = FOC_FABS(ctx->speed_ref_ctrl);
      float startup_track_err_rpm = speed_ref_ctrl_abs - speed_filtered_abs;
@@ -931,6 +1106,15 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
      }
      if (release_blend_done_rpm < 0.0f) {
          release_blend_done_rpm = -release_blend_done_rpm;
+     }
+     if (pll_enter_rpm < 0.0f) {
+         pll_enter_rpm = -pll_enter_rpm;
+     }
+     if (linear_start_min_rpm < 0.0f) {
+         linear_start_min_rpm = -linear_start_min_rpm;
+     }
+     if (linear_start_min_rpm < 1.0f) {
+         linear_start_min_rpm = 1.0f;
      }
      use_startup_ref_predict =
          ((ctx->hall_sector_dt_us == 0U) ||
@@ -967,6 +1151,7 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
              ctx->theta_e_predicted = ctx->hall_sector.theta_e;
              ctx->theta_e_prev = ctx->theta_e_predicted;
          }
+         FOC_Observer_ResetAnglePredictPll(ctx->theta_e_predicted);
          g_foc_observer_direction_reset_count++;
      }
      if (no_edge_overdue != 0U) {
@@ -988,10 +1173,17 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          (ctx->speed_ref > 0.0f) &&
          (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
          float startup_target = ctx->speed_ref_ctrl;
+         float startup_min_rpm = FOC_STARTUP_PREDICT_START_RPM;
          float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
 
-         if (startup_target < FOC_STARTUP_PREDICT_START_RPM) {
-             startup_target = FOC_STARTUP_PREDICT_START_RPM;
+         if (speed_filtered_abs < pll_enter_rpm) {
+             startup_min_rpm = linear_start_min_rpm;
+             if ((pll_enter_rpm > 0.0f) && (startup_target > pll_enter_rpm)) {
+                 startup_target = pll_enter_rpm;
+             }
+         }
+         if (startup_target < startup_min_rpm) {
+             startup_target = startup_min_rpm;
          }
          if (startup_target > ctx->speed_ref) {
              startup_target = ctx->speed_ref;
@@ -999,8 +1191,8 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {
              startup_target = FOC_STARTUP_PREDICT_MAX_RPM;
          }
-         if (s_startup_predict_speed_rpm < FOC_STARTUP_PREDICT_START_RPM) {
-             s_startup_predict_speed_rpm = FOC_STARTUP_PREDICT_START_RPM;
+         if (s_startup_predict_speed_rpm < startup_min_rpm) {
+             s_startup_predict_speed_rpm = startup_min_rpm;
          }
          if (s_startup_predict_speed_rpm < startup_target) {
              s_startup_predict_speed_rpm += ramp_step;
@@ -1251,6 +1443,17 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          ctx->theta_e_predicted += FOC_2PI;
 
      }
+
+     ctx->theta_e_predicted =
+         FOC_Observer_ApplyAnglePredictPll(ctx->theta_e_predicted,
+                                           speed_for_predict,
+                                           (no_edge_overdue != 0U)
+                                             ? speed_for_predict
+                                             : ctx->speed_filtered,
+                                           hall_dir,
+                                           dt,
+                                           cur_sector,
+                                           pole_pairs);
 
  
 

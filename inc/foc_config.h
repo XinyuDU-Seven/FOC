@@ -518,6 +518,34 @@ extern "C" {
 #define FOC_BIDIR_ZERO_IQ_SLEW_MA_PER_S 16000U
 #endif
 
+#ifndef FOC_ANGLE_PREDICT_PLL_ENABLE
+#define FOC_ANGLE_PREDICT_PLL_ENABLE    1U
+#endif
+
+#ifndef FOC_ANGLE_PREDICT_PLL_ENTER_RPM
+#define FOC_ANGLE_PREDICT_PLL_ENTER_RPM 50.0f
+#endif
+
+#ifndef FOC_ANGLE_PREDICT_PLL_EXIT_RPM
+#define FOC_ANGLE_PREDICT_PLL_EXIT_RPM  45.0f
+#endif
+
+#ifndef FOC_ANGLE_PREDICT_LINEAR_START_RPM
+#define FOC_ANGLE_PREDICT_LINEAR_START_RPM  5.0f
+#endif
+
+#ifndef FOC_ANGLE_PREDICT_PLL_KP
+#define FOC_ANGLE_PREDICT_PLL_KP        80.0f
+#endif
+
+#ifndef FOC_ANGLE_PREDICT_PLL_KI
+#define FOC_ANGLE_PREDICT_PLL_KI        800.0f
+#endif
+
+#ifndef FOC_ANGLE_PREDICT_PLL_CORR_MAX_RPM
+#define FOC_ANGLE_PREDICT_PLL_CORR_MAX_RPM  150.0f
+#endif
+
  
 
 /** 角度预测软同步系数 (0~1)：扇区跳变时预测角度向扇区中心角度靠拢的比例，
