@@ -184,6 +184,34 @@ int FOC_Core_SetCurrentRef(float id, float iq);
  */
 int FOC_Core_SetIFRef(float iq, float rpm);
 
+/**
+ * @brief Set d/q current references with forced electrical angle advance.
+ * @param id d-axis current reference (A)
+ * @param iq q-axis current reference (A), positive forward, negative reverse
+ * @param rpm forced mechanical speed reference (rpm), signed like iq
+ * @return FOC_OK on success
+ */
+int FOC_Core_SetOpenAngleCurrentRef(float id, float iq, float rpm);
+
+/**
+ * @brief Set d/q current references with forced angle initialized to theta_e.
+ * @param id d-axis current reference (A)
+ * @param iq q-axis current reference (A), positive forward, negative reverse
+ * @param rpm forced mechanical speed reference (rpm), signed like iq
+ * @param theta_e forced electrical angle (rad)
+ * @return FOC_OK on success
+ */
+int FOC_Core_SetOpenAngleCurrentRefAtAngle(float id,
+                                           float iq,
+                                           float rpm,
+                                           float theta_e);
+
+/**
+ * @brief Get current forced open-loop electrical angle command.
+ * @return electrical angle command (rad)
+ */
+float FOC_Core_GetOpenAngleCommand(void);
+
  
 
 /**

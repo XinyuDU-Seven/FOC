@@ -1245,8 +1245,10 @@ static void FOC_IF_SyncAngleOnHallEdge(float omega_e)
 {
     uint8_t cur_sector = s_ctx.hall_sector.sector;
     uint8_t prev_sector = s_ctx.hall_sector_prev;
+    uint8_t sync_enable = g_foc_if_edge_sync_enable;
     float target;
     float before;
+    float after;
     float diff;
     uint16_t theta_hall_u16;
     uint16_t theta_before_u16;
@@ -1254,7 +1256,7 @@ static void FOC_IF_SyncAngleOnHallEdge(float omega_e)
     int16_t diff_mrad;
     int16_t iq_ref_mA;
 
-    if ((g_foc_if_edge_sync_enable == 0U) ||
+    if (((sync_enable == 0U) && (g_foc_if_edge_calib_enable == 0U)) ||
         (cur_sector == 0U) ||
         (prev_sector == 0U) ||
         (cur_sector == prev_sector)) {
@@ -1273,12 +1275,16 @@ static void FOC_IF_SyncAngleOnHallEdge(float omega_e)
         diff += FOC_2PI;
     }
 
-    s_if_angle = target;
-    s_ctx.theta_e_predicted = target;
+    after = before;
+    if (sync_enable != 0U) {
+        s_if_angle = target;
+        s_ctx.theta_e_predicted = target;
+        after = target;
+    }
 
     theta_hall_u16 = FOC_Log_AngleU16(s_ctx.theta_e);
     theta_before_u16 = FOC_Log_AngleU16(before);
-    theta_after_u16 = FOC_Log_AngleU16(target);
+    theta_after_u16 = FOC_Log_AngleU16(after);
     diff_mrad = FOC_Log_ToI16(diff, 1000.0f);
     iq_ref_mA = FOC_Log_ToI16((s_ctx.direction == FOC_DIR_CCW)
                               ? -s_ctx.iq_ref
@@ -8131,6 +8137,120 @@ int FOC_Core_SetIFRef(float iq, float rpm)
      FOC_HAL_ExitCritical();
 
      return FOC_OK;
+}
+
+static int FOC_Core_SetOpenAngleCurrentRefInternal(float id,
+                                                   float iq,
+                                                   float rpm,
+                                                   uint8_t force_angle,
+                                                   float theta_e)
+{
+     float max_current = s_config.motor.max_current_a;
+     float max_speed = s_config.motor.max_speed_rpm;
+     float signed_iq;
+     float signed_rpm;
+     float abs_rpm;
+     FOC_Dir_e dir;
+     uint8_t was_if;
+
+     if ((max_current <= 0.0f) || (max_speed <= 0.0f)) {
+         return FOC_ERR;
+     }
+
+     signed_iq = FOC_ApplyAppDirectionInvertToRef(iq);
+     signed_rpm = FOC_ApplyAppDirectionInvertToRef(rpm);
+     id = FOC_CLAMP(id, -max_current, max_current);
+     signed_iq = FOC_CLAMP(signed_iq, -max_current, max_current);
+     signed_rpm = FOC_CLAMP(signed_rpm, -max_speed, max_speed);
+
+     if (signed_rpm < 0.0f) {
+         dir = FOC_DIR_CCW;
+         abs_rpm = -signed_rpm;
+     } else if (signed_rpm > 0.0f) {
+         dir = FOC_DIR_CW;
+         abs_rpm = signed_rpm;
+     } else if (signed_iq < 0.0f) {
+         dir = FOC_DIR_CCW;
+         abs_rpm = 0.0f;
+     } else {
+         dir = FOC_DIR_CW;
+         abs_rpm = 0.0f;
+     }
+
+     FOC_HAL_EnterCritical();
+
+     was_if = (s_foc_ctrl_source == FOC_CTRL_SOURCE_IF) ? 1U : 0U;
+     s_foc_ctrl_source = FOC_CTRL_SOURCE_IF;
+     s_ctx.direction = dir;
+     s_ctx.id_ref = id;
+     s_ctx.speed_ref = abs_rpm;
+     s_ctx.speed_ref_ctrl = abs_rpm;
+     s_speed_ref_ctrl = abs_rpm;
+     s_speed_ref_ctrl_direction = dir;
+     s_if_speed_rpm = abs_rpm;
+     if ((was_if == 0U) || (force_angle != 0U)) {
+         s_if_angle = (force_angle != 0U)
+                    ? FOC_NormalizeAngle(theta_e)
+                    : ((s_ctx.hall_sector.sector != 0U)
+                       ? s_ctx.hall_sector.theta_e
+                       : s_ctx.theta_e_predicted);
+         FOC_IF_ResetEdgeSyncDebug();
+     }
+
+     g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(abs_rpm, 1.0f);
+     g_foc_speed_ref_ctrl_rpm = FOC_Log_ToI16(abs_rpm, 1.0f);
+     g_foc_speed_ref_ramp_active = 0U;
+
+     g_foc_dyn_speed_enable = 0U;
+     g_foc_bidir_speed_enable = 0U;
+     s_dyn_speed_prev_enable = 0U;
+     s_bidir_speed_prev_enable = 0U;
+     g_foc_dyn_speed_reset_stats = 0U;
+     g_foc_bidir_speed_reset_stats = 0U;
+
+     FOC_PID_Reset(&s_ctx.pid_speed);
+     s_speed_loop_accum_us = 0U;
+     s_ctx.speed_loop_counter = 0U;
+     FOC_SpeedStart_Reset();
+     s_ctx.speed_ctrl_fdb = 0.0f;
+     g_foc_speed_ctrl_fdb_rpm = 0;
+     g_foc_speed_error_boost_mA = 0;
+     FOC_ResetSpeedPidDebug();
+     s_speed_error_boost_prev_ref = 0.0f;
+     s_bidir_decel_hold_prev_ref = 0.0f;
+     g_foc_bidir_decel_hold_active = 0U;
+     g_foc_bidir_decel_hold_applied_mA = 0;
+     g_foc_bidir_decel_hold_raw_err_rpm = 0;
+     s_bidir_zero_soft_prev_ref = 0.0f;
+     g_foc_bidir_zero_soft_active = 0U;
+     g_foc_bidir_zero_soft_scale_percent = 100U;
+     g_foc_bidir_zero_soft_limited_mA = 0;
+     FOC_ResetLiftCurrentLimitDebug();
+     FOC_BidirZeroTransfer_Reset();
+
+     s_ctx.iq_ref = (signed_iq < 0.0f) ? -signed_iq : signed_iq;
+
+     FOC_HAL_ExitCritical();
+
+     return FOC_OK;
+}
+
+int FOC_Core_SetOpenAngleCurrentRef(float id, float iq, float rpm)
+{
+     return FOC_Core_SetOpenAngleCurrentRefInternal(id, iq, rpm, 0U, 0.0f);
+}
+
+int FOC_Core_SetOpenAngleCurrentRefAtAngle(float id,
+                                           float iq,
+                                           float rpm,
+                                           float theta_e)
+{
+     return FOC_Core_SetOpenAngleCurrentRefInternal(id, iq, rpm, 1U, theta_e);
+}
+
+float FOC_Core_GetOpenAngleCommand(void)
+{
+     return s_if_angle;
 }
 
 int FOC_Core_SetDirection(FOC_Dir_e dir)

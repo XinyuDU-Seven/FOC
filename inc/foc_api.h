@@ -84,6 +84,28 @@ int  FOC_SetCurrentRef(float id, float iq);
 int  FOC_SetIFRef(float iq, float rpm);
 
 /**
+ * @brief Set d/q current references with forced angle advance.
+ * @param id d-axis current reference (A)
+ * @param iq q-axis current reference (A), positive forward, negative reverse
+ * @param rpm forced mechanical speed reference (rpm), signed like iq
+ * @return FOC_OK on success
+ */
+int  FOC_SetOpenAngleCurrentRef(float id, float iq, float rpm);
+
+/**
+ * @brief Set d/q current references with forced angle initialized to theta_e.
+ * @param id d-axis current reference (A)
+ * @param iq q-axis current reference (A), positive forward, negative reverse
+ * @param rpm forced mechanical speed reference (rpm), signed like iq
+ * @param theta_e forced electrical angle (rad)
+ * @return FOC_OK on success
+ */
+int  FOC_SetOpenAngleCurrentRefAtAngle(float id,
+                                       float iq,
+                                       float rpm,
+                                       float theta_e);
+
+/**
  * @brief 设定旋转方向
  * @param dir 旋转方向 (FOC_DIR_CW / FOC_DIR_CCW)
  * @return FOC_OK 成功

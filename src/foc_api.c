@@ -81,6 +81,22 @@ int FOC_SetIFRef(float iq, float rpm)
 
 }
 
+int FOC_SetOpenAngleCurrentRef(float id, float iq, float rpm)
+
+{
+
+    return FOC_Core_SetOpenAngleCurrentRef(id, iq, rpm);
+
+}
+
+int FOC_SetOpenAngleCurrentRefAtAngle(float id, float iq, float rpm, float theta_e)
+
+{
+
+    return FOC_Core_SetOpenAngleCurrentRefAtAngle(id, iq, rpm, theta_e);
+
+}
+
  
 
 int FOC_SetDirection(FOC_Dir_e dir)

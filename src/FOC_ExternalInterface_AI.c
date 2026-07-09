@@ -57,6 +57,26 @@ extern volatile uint16_t g_foc_speed_start_breakaway_boost_max_iq_mA;
 extern volatile uint8_t  g_foc_speed_start_unstuck_enable;
 extern volatile uint16_t g_foc_speed_start_unstuck_max_iq_mA;
 extern volatile int16_t  g_foc_hall_angle_offset_mrad;
+extern volatile uint8_t  g_foc_if_edge_sync_enable;
+extern volatile uint32_t g_foc_if_edge_sync_count;
+extern volatile uint8_t  g_foc_if_edge_sync_sector;
+extern volatile uint16_t g_foc_if_edge_sync_theta_if_before;
+extern volatile int16_t  g_foc_if_edge_sync_diff_mrad;
+extern volatile uint8_t  g_foc_if_edge_calib_enable;
+extern volatile uint8_t  g_foc_if_edge_calib_reset;
+extern volatile uint8_t  g_foc_if_edge_calib_skip_edges;
+extern volatile uint8_t  g_foc_if_edge_calib_target_edges;
+extern volatile uint8_t  g_foc_if_edge_calib_done;
+extern volatile uint16_t g_foc_if_edge_calib_sample_count;
+extern volatile uint16_t g_foc_if_edge_calib_skipped_count;
+extern volatile int16_t  g_foc_if_edge_calib_start_offset_mrad;
+extern volatile int32_t  g_foc_if_edge_calib_sum_diff_mrad;
+extern volatile uint32_t g_foc_if_edge_calib_abs_sum_diff_mrad;
+extern volatile int16_t  g_foc_if_edge_calib_avg_diff_mrad;
+extern volatile uint16_t g_foc_if_edge_calib_abs_avg_diff_mrad;
+extern volatile int16_t  g_foc_if_edge_calib_min_diff_mrad;
+extern volatile int16_t  g_foc_if_edge_calib_max_diff_mrad;
+extern volatile int16_t  g_foc_if_edge_calib_recommended_offset_mrad;
 
 #define FOC_DYN_SPEED_LOG_SIZE 512U
 #define FOC_DETAIL_LOG_SIZE    512U
@@ -71,10 +91,27 @@ extern volatile int16_t  g_foc_hall_angle_offset_mrad;
 #define FOC_TEST_CASE_SIGNED_CURVE_1000 3U
 #define FOC_TEST_CASE_DYN_SPEED_CCW     4U
 #define FOC_TEST_CASE_IQ_START_SWEEP    5U
+#define FOC_TEST_CASE_IF_EDGE_OFFSET    6U
+
+#define FOC_IF_OFFSET_TEST_PHASE_IDLE          0U
+#define FOC_IF_OFFSET_TEST_PHASE_LOCK_FORWARD  1U
+#define FOC_IF_OFFSET_TEST_PHASE_SCAN_FORWARD  2U
+#define FOC_IF_OFFSET_TEST_PHASE_LOCK_REVERSE  3U
+#define FOC_IF_OFFSET_TEST_PHASE_SCAN_REVERSE  4U
+#define FOC_IF_OFFSET_TEST_PHASE_DONE          5U
+
+#define FOC_IF_OFFSET_TEST_RESULT_NONE     0U
+#define FOC_IF_OFFSET_TEST_RESULT_SUCCESS  1U
+#define FOC_IF_OFFSET_TEST_RESULT_TIMEOUT  3U
+#define FOC_IF_OFFSET_TEST_RESULT_FAULT    4U
+#define FOC_IF_OFFSET_TEST_RESULT_API_ERR  5U
+
+#define FOC_IF_OFFSET_TEST_LOG_SIZE        16U
 
 #define FOC_IQ_START_OFFSET_SCORE_INVALID 2147483647L
 
 static void FOC_IqStartTest_ResetRuntime(void);
+static void FOC_IFOffsetTest_ResetRuntime(void);
 
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_up_rpm_per_s = 2000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_start_ramp_down_rpm_per_s = 1200U;
@@ -305,7 +342,8 @@ FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_zero_ref_rpm = 0;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_bidir_zero_brake_limited_count = 0U;
 
 /* LiveWatch: 0 stop, 1 fixed, 2 +1000..+4000 sine,
- * 3 +/-1000 sine, 4 -1000..-4000 sine.
+ * 3 +/-1000 sine, 4 -1000..-4000 sine,
+ * 5 iq start sweep, 6 Id closed-loop/open-angle offset sweep.
  */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_select = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_applied = FOC_TEST_CASE_STOP;
@@ -427,6 +465,75 @@ FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_iq_fdb_a = 0.0f;
 FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_current_peak_a = 0.0f;
 FOC_AI_DEBUG_ROOT volatile float    g_foc_current_cmd_speed_fdb_rpm = 0.0f;
 
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_id_mA = 800;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_speed_rpm = 30U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_lock_angle_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_lock_ms = 1000U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_skip_edges = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_target_edges = 12U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_timeout_ms = 8000U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_disable_on_done = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_apply_result = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_applied = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_active = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_done = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_result = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_phase = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_direction = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_if_offset_test_elapsed_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_if_offset_test_phase_elapsed_ms = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_api_result = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_state = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_fault = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_speed_fdb_rpm = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_id_cmd_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_iq_cmd_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_id_ref_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_iq_ref_mA = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_id_mA_fdb = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_iq_mA_fdb = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_current_peak_mA = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_cmd_angle_u16 = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_cmd_angle_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_start_offset_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_calib_done = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_calib_samples = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_calib_skipped = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_calib_avg_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_calib_abs_avg_diff_mrad = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_calib_min_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_calib_max_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_calib_recommended_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_if_offset_test_sync_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_sync_sector = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_sync_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_fwd_valid = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_fwd_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_fwd_samples = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_fwd_avg_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_fwd_abs_avg_diff_mrad = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_fwd_min_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_fwd_max_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_fwd_recommended_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_rev_valid = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_rev_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_rev_samples = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_rev_avg_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_rev_abs_avg_diff_mrad = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_rev_min_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_rev_max_diff_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_rev_recommended_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_recommended_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_dir_delta_mrad = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_fwd_angle_u16[FOC_IF_OFFSET_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_fwd_angle_mrad[FOC_IF_OFFSET_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_fwd_hall_raw[FOC_IF_OFFSET_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_fwd_hall_sector[FOC_IF_OFFSET_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_if_offset_test_rev_angle_u16[FOC_IF_OFFSET_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_if_offset_test_rev_angle_mrad[FOC_IF_OFFSET_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_rev_hall_raw[FOC_IF_OFFSET_TEST_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_if_offset_test_rev_hall_sector[FOC_IF_OFFSET_TEST_LOG_SIZE];
+
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_start_mA = 200U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_step_mA = 100U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_iq_start_test_max_mA = 2500U;
@@ -489,6 +596,13 @@ static uint32_t s_foc_iq_start_test_start_us = 0U;
 static uint32_t s_foc_iq_start_test_step_us = 0U;
 static uint32_t s_foc_iq_start_test_at_max_us = 0U;
 static uint16_t s_foc_iq_start_test_abs_cmd_mA = 0U;
+static uint32_t s_foc_if_offset_test_start_us = 0U;
+static uint32_t s_foc_if_offset_test_phase_start_us = 0U;
+static uint32_t s_foc_if_offset_test_last_sync_count = 0U;
+static uint8_t s_foc_if_offset_test_prev_sync_enable = 1U;
+static uint8_t s_foc_if_offset_test_prev_calib_enable = 1U;
+static uint8_t s_foc_if_offset_test_prev_skip_edges = 2U;
+static uint8_t s_foc_if_offset_test_prev_target_edges = 12U;
 static uint8_t s_foc_current_cmd_live_prev_enable = 0U;
 static uint8_t s_foc_current_cmd_last_motor_id = 0xFFU;
 static uint8_t s_foc_current_cmd_last_use_if = 0xFFU;
@@ -1077,6 +1191,9 @@ static void FOC_AI_ClearAutoModes(void)
   speed_ref = -1.0f;
   FOC_AI_DisarmTestCaseService();
   FOC_TestCase_ClearFixedStartupLimits();
+  if (g_foc_if_offset_test_active != 0U) {
+    FOC_IFOffsetTest_ResetRuntime();
+  }
   g_foc_dyn_speed_enable = 0U;
   g_foc_dyn_speed_reverse = 0U;
   g_foc_dyn_speed_reset_stats = 0U;
@@ -1477,6 +1594,562 @@ static void FOC_IqStartTest_Service(uint8_t motor_id)
   if ((s_foc_iq_start_test_at_max_us != 0U) &&
       ((now_us - s_foc_iq_start_test_at_max_us) >= max_hold_us)) {
     FOC_IqStartTest_Finish(motor_id, 3U);
+  }
+}
+
+static int16_t FOC_IFOffsetTest_ClampI32ToI16(int32_t value)
+{
+  if (value > 32767L) {
+    return 32767;
+  }
+  if (value < -32768L) {
+    return -32768;
+  }
+  return (int16_t)value;
+}
+
+static uint16_t FOC_IFOffsetTest_TargetEdges(void)
+{
+  uint16_t target_edges = g_foc_if_offset_test_target_edges;
+
+  if (target_edges == 0U) {
+    target_edges = 12U;
+  }
+  if (target_edges > FOC_IF_OFFSET_TEST_LOG_SIZE) {
+    target_edges = FOC_IF_OFFSET_TEST_LOG_SIZE;
+  }
+  return target_edges;
+}
+
+static uint32_t FOC_IFOffsetTest_TimeoutUs(void)
+{
+  uint32_t timeout_ms = g_foc_if_offset_test_timeout_ms;
+
+  if (timeout_ms == 0U) {
+    timeout_ms = 8000U;
+  }
+  return timeout_ms * 1000U;
+}
+
+static uint32_t FOC_IFOffsetTest_LockUs(void)
+{
+  uint32_t lock_ms = g_foc_if_offset_test_lock_ms;
+
+  if (lock_ms == 0U) {
+    lock_ms = 1000U;
+  }
+  return lock_ms * 1000U;
+}
+
+static uint8_t FOC_IFOffsetTest_PhaseTimedOut(uint32_t now_us)
+{
+  if (s_foc_if_offset_test_phase_start_us == 0U) {
+    return 0U;
+  }
+  return ((now_us - s_foc_if_offset_test_phase_start_us) >=
+          FOC_IFOffsetTest_TimeoutUs()) ? 1U : 0U;
+}
+
+static float FOC_IFOffsetTest_LockAngleRad(void)
+{
+  return FOC_NormalizeAngle((float)g_foc_if_offset_test_lock_angle_mrad *
+                            0.001f);
+}
+
+static uint16_t FOC_IFOffsetTest_AngleRadToU16(float angle)
+{
+  angle = FOC_NormalizeAngle(angle);
+  return (uint16_t)(angle * (65535.0f / FOC_2PI));
+}
+
+static int16_t FOC_IFOffsetTest_AngleU16ToMrad(uint16_t angle_u16)
+{
+  int32_t angle_mrad =
+      (int32_t)(((uint32_t)angle_u16 * 6283U) / 65535U);
+
+  return FOC_IFOffsetTest_ClampI32ToI16(angle_mrad);
+}
+
+static void FOC_IFOffsetTest_ClearAngleLog(void)
+{
+  uint16_t i;
+
+  for (i = 0U; i < FOC_IF_OFFSET_TEST_LOG_SIZE; i++) {
+    g_foc_if_offset_test_fwd_angle_u16[i] = 0U;
+    g_foc_if_offset_test_fwd_angle_mrad[i] = 0;
+    g_foc_if_offset_test_fwd_hall_raw[i] = 0U;
+    g_foc_if_offset_test_fwd_hall_sector[i] = 0U;
+    g_foc_if_offset_test_rev_angle_u16[i] = 0U;
+    g_foc_if_offset_test_rev_angle_mrad[i] = 0;
+    g_foc_if_offset_test_rev_hall_raw[i] = 0U;
+    g_foc_if_offset_test_rev_hall_sector[i] = 0U;
+  }
+}
+
+static void FOC_IFOffsetTest_UpdateCombinedResult(void)
+{
+  int32_t sum = 0;
+  uint8_t count = 0U;
+
+  if (g_foc_if_offset_test_fwd_valid != 0U) {
+    sum += g_foc_if_offset_test_fwd_recommended_mrad;
+    count++;
+  }
+  if (g_foc_if_offset_test_rev_valid != 0U) {
+    sum += g_foc_if_offset_test_rev_recommended_mrad;
+    count++;
+  }
+
+  if (count != 0U) {
+    g_foc_if_offset_test_recommended_mrad =
+        FOC_IFOffsetTest_ClampI32ToI16(sum / (int32_t)count);
+  }
+
+  if ((g_foc_if_offset_test_fwd_valid != 0U) &&
+      (g_foc_if_offset_test_rev_valid != 0U)) {
+    g_foc_if_offset_test_dir_delta_mrad =
+        FOC_IFOffsetTest_ClampI32ToI16(
+            (int32_t)g_foc_if_offset_test_fwd_recommended_mrad -
+            (int32_t)g_foc_if_offset_test_rev_recommended_mrad);
+  }
+}
+
+static void FOC_IFOffsetTest_RecordDirectionResult(uint8_t direction)
+{
+  uint8_t valid = (g_foc_if_edge_calib_sample_count != 0U) ? 1U : 0U;
+
+  if (direction == FOC_APP_DIR_FORWARD) {
+    g_foc_if_offset_test_fwd_valid = valid;
+    g_foc_if_offset_test_fwd_samples = g_foc_if_edge_calib_sample_count;
+    g_foc_if_offset_test_fwd_avg_diff_mrad =
+        g_foc_if_edge_calib_avg_diff_mrad;
+    g_foc_if_offset_test_fwd_abs_avg_diff_mrad =
+        g_foc_if_edge_calib_abs_avg_diff_mrad;
+    g_foc_if_offset_test_fwd_min_diff_mrad =
+        g_foc_if_edge_calib_min_diff_mrad;
+    g_foc_if_offset_test_fwd_max_diff_mrad =
+        g_foc_if_edge_calib_max_diff_mrad;
+    g_foc_if_offset_test_fwd_recommended_mrad =
+        g_foc_if_edge_calib_recommended_offset_mrad;
+  } else if (direction == FOC_APP_DIR_REVERSE) {
+    g_foc_if_offset_test_rev_valid = valid;
+    g_foc_if_offset_test_rev_samples = g_foc_if_edge_calib_sample_count;
+    g_foc_if_offset_test_rev_avg_diff_mrad =
+        g_foc_if_edge_calib_avg_diff_mrad;
+    g_foc_if_offset_test_rev_abs_avg_diff_mrad =
+        g_foc_if_edge_calib_abs_avg_diff_mrad;
+    g_foc_if_offset_test_rev_min_diff_mrad =
+        g_foc_if_edge_calib_min_diff_mrad;
+    g_foc_if_offset_test_rev_max_diff_mrad =
+        g_foc_if_edge_calib_max_diff_mrad;
+    g_foc_if_offset_test_rev_recommended_mrad =
+        g_foc_if_edge_calib_recommended_offset_mrad;
+  }
+
+  FOC_IFOffsetTest_UpdateCombinedResult();
+}
+
+static void FOC_IFOffsetTest_SaveCoreCalibConfig(void)
+{
+  s_foc_if_offset_test_prev_sync_enable = g_foc_if_edge_sync_enable;
+  s_foc_if_offset_test_prev_calib_enable = g_foc_if_edge_calib_enable;
+  s_foc_if_offset_test_prev_skip_edges = g_foc_if_edge_calib_skip_edges;
+  s_foc_if_offset_test_prev_target_edges = g_foc_if_edge_calib_target_edges;
+}
+
+static void FOC_IFOffsetTest_RestoreCoreCalibConfig(void)
+{
+  g_foc_if_edge_sync_enable = s_foc_if_offset_test_prev_sync_enable;
+  g_foc_if_edge_calib_enable = s_foc_if_offset_test_prev_calib_enable;
+  g_foc_if_edge_calib_skip_edges = s_foc_if_offset_test_prev_skip_edges;
+  g_foc_if_edge_calib_target_edges =
+      s_foc_if_offset_test_prev_target_edges;
+  g_foc_if_edge_calib_reset = 0U;
+}
+
+static void FOC_IFOffsetTest_PrepareEdgeCalib(void)
+{
+  g_foc_if_edge_sync_enable = 0U;
+  g_foc_if_edge_calib_enable = 1U;
+  g_foc_if_edge_calib_skip_edges = g_foc_if_offset_test_skip_edges;
+  g_foc_if_edge_calib_target_edges =
+      (uint8_t)FOC_IFOffsetTest_TargetEdges();
+  g_foc_if_edge_calib_reset = 1U;
+  s_foc_if_offset_test_last_sync_count = 0U;
+}
+
+static void FOC_IFOffsetTest_UpdateMonitor(uint8_t motor_id, uint32_t now_us)
+{
+  const FOC_Context_t *ctx = FOC_Core_GetContextByMotor(motor_id);
+  float signed_speed = FOC_AI_SignedMechSpeed(ctx, ctx->speed_fdb);
+  float cmd_angle = FOC_Core_GetOpenAngleCommand();
+
+  if (s_foc_if_offset_test_start_us != 0U) {
+    g_foc_if_offset_test_elapsed_ms =
+        (now_us - s_foc_if_offset_test_start_us) / 1000U;
+  }
+  if (s_foc_if_offset_test_phase_start_us != 0U) {
+    g_foc_if_offset_test_phase_elapsed_ms =
+        (now_us - s_foc_if_offset_test_phase_start_us) / 1000U;
+  }
+
+  g_foc_if_offset_test_state = (uint16_t)ctx->state;
+  g_foc_if_offset_test_fault = (uint16_t)ctx->fault;
+  g_foc_if_offset_test_speed_fdb_rpm =
+      FOC_IqStartTest_ToI16(signed_speed, 1.0f);
+  g_foc_if_offset_test_id_ref_mA =
+      FOC_IqStartTest_ToI16(ctx->id_ref, 1000.0f);
+  g_foc_if_offset_test_iq_ref_mA =
+      FOC_IqStartTest_ToI16(FOC_AI_SignedIqRef(ctx), 1000.0f);
+  g_foc_if_offset_test_id_mA_fdb =
+      FOC_IqStartTest_ToI16(ctx->i_dq.d, 1000.0f);
+  g_foc_if_offset_test_iq_mA_fdb =
+      FOC_IqStartTest_ToI16(ctx->i_dq.q, 1000.0f);
+  g_foc_if_offset_test_current_peak_mA =
+      FOC_IqStartTest_ToU16(ctx->current_peak, 1000.0f);
+  g_foc_if_offset_test_cmd_angle_u16 =
+      FOC_IFOffsetTest_AngleRadToU16(cmd_angle);
+  g_foc_if_offset_test_cmd_angle_mrad =
+      FOC_IFOffsetTest_AngleU16ToMrad(
+          g_foc_if_offset_test_cmd_angle_u16);
+
+  g_foc_if_offset_test_calib_done = g_foc_if_edge_calib_done;
+  g_foc_if_offset_test_calib_samples = g_foc_if_edge_calib_sample_count;
+  g_foc_if_offset_test_calib_skipped = g_foc_if_edge_calib_skipped_count;
+  g_foc_if_offset_test_calib_avg_diff_mrad =
+      g_foc_if_edge_calib_avg_diff_mrad;
+  g_foc_if_offset_test_calib_abs_avg_diff_mrad =
+      g_foc_if_edge_calib_abs_avg_diff_mrad;
+  g_foc_if_offset_test_calib_min_diff_mrad =
+      g_foc_if_edge_calib_min_diff_mrad;
+  g_foc_if_offset_test_calib_max_diff_mrad =
+      g_foc_if_edge_calib_max_diff_mrad;
+  g_foc_if_offset_test_calib_recommended_mrad =
+      g_foc_if_edge_calib_recommended_offset_mrad;
+  g_foc_if_offset_test_sync_count = g_foc_if_edge_sync_count;
+  g_foc_if_offset_test_sync_sector = g_foc_if_edge_sync_sector;
+  g_foc_if_offset_test_sync_diff_mrad = g_foc_if_edge_sync_diff_mrad;
+}
+
+static FocError FOC_IFOffsetTest_CommandLock(uint8_t motor_id,
+                                             uint8_t direction)
+{
+  int16_t id_mA = g_foc_if_offset_test_id_mA;
+  float id_a = (float)id_mA * 0.001f;
+  float lock_angle = FOC_IFOffsetTest_LockAngleRad();
+  FocError result;
+
+  g_foc_if_offset_test_direction = direction;
+  g_foc_if_offset_test_id_cmd_mA = id_mA;
+  g_foc_if_offset_test_iq_cmd_mA = 0;
+
+  g_foc_if_edge_sync_enable = 0U;
+  g_foc_if_edge_calib_enable = 0U;
+  g_foc_if_edge_calib_reset = 1U;
+  s_foc_if_offset_test_last_sync_count = 0U;
+
+  result = FOC_AI_SelectMotor(motor_id);
+  if (result == FOC_SUCCESS) {
+    result = FOC_AI_CheckReferenceState();
+  }
+  if (result == FOC_SUCCESS) {
+    result = FOC_AI_MapResult(
+        FOC_SetOpenAngleCurrentRefAtAngle(id_a, 0.0f, 0.0f, lock_angle));
+  }
+
+  g_foc_if_offset_test_api_result = (uint16_t)result;
+  return result;
+}
+
+static FocError FOC_IFOffsetTest_CommandScan(uint8_t motor_id,
+                                             uint8_t direction)
+{
+  int16_t id_mA = g_foc_if_offset_test_id_mA;
+  uint16_t speed_rpm = g_foc_if_offset_test_speed_rpm;
+  float id_a = (float)id_mA * 0.001f;
+  float rpm = (float)speed_rpm;
+  float start_angle = FOC_IFOffsetTest_LockAngleRad();
+  FocError result;
+
+  if (direction == FOC_APP_DIR_REVERSE) {
+    rpm = -rpm;
+  }
+
+  g_foc_if_offset_test_direction = direction;
+  g_foc_if_offset_test_id_cmd_mA = id_mA;
+  g_foc_if_offset_test_iq_cmd_mA = 0;
+
+  FOC_IFOffsetTest_PrepareEdgeCalib();
+
+  result = FOC_AI_SelectMotor(motor_id);
+  if (result == FOC_SUCCESS) {
+    result = FOC_AI_CheckReferenceState();
+  }
+  if (result == FOC_SUCCESS) {
+    result = FOC_AI_MapResult(
+        FOC_SetOpenAngleCurrentRefAtAngle(id_a, 0.0f, rpm, start_angle));
+  }
+
+  g_foc_if_offset_test_api_result = (uint16_t)result;
+  return result;
+}
+
+static void FOC_IFOffsetTest_RecordEdge(const FOC_Context_t *ctx)
+{
+  uint16_t idx;
+  uint16_t angle_u16;
+  int16_t angle_mrad;
+  uint8_t hall_raw = FOC_AI_HallRawToU8(&ctx->hall_raw);
+  uint8_t hall_sector = g_foc_if_edge_sync_sector;
+
+  if (g_foc_if_edge_sync_count == s_foc_if_offset_test_last_sync_count) {
+    return;
+  }
+  s_foc_if_offset_test_last_sync_count = g_foc_if_edge_sync_count;
+  if (g_foc_if_edge_sync_count == 0U) {
+    return;
+  }
+
+  angle_u16 = g_foc_if_edge_sync_theta_if_before;
+  angle_mrad = FOC_IFOffsetTest_AngleU16ToMrad(angle_u16);
+
+  if (g_foc_if_offset_test_phase == FOC_IF_OFFSET_TEST_PHASE_SCAN_FORWARD) {
+    idx = g_foc_if_offset_test_fwd_count;
+    if (idx < FOC_IF_OFFSET_TEST_LOG_SIZE) {
+      g_foc_if_offset_test_fwd_angle_u16[idx] = angle_u16;
+      g_foc_if_offset_test_fwd_angle_mrad[idx] = angle_mrad;
+      g_foc_if_offset_test_fwd_hall_raw[idx] = hall_raw;
+      g_foc_if_offset_test_fwd_hall_sector[idx] = hall_sector;
+      g_foc_if_offset_test_fwd_count = (uint16_t)(idx + 1U);
+    }
+  } else if (g_foc_if_offset_test_phase ==
+             FOC_IF_OFFSET_TEST_PHASE_SCAN_REVERSE) {
+    idx = g_foc_if_offset_test_rev_count;
+    if (idx < FOC_IF_OFFSET_TEST_LOG_SIZE) {
+      g_foc_if_offset_test_rev_angle_u16[idx] = angle_u16;
+      g_foc_if_offset_test_rev_angle_mrad[idx] = angle_mrad;
+      g_foc_if_offset_test_rev_hall_raw[idx] = hall_raw;
+      g_foc_if_offset_test_rev_hall_sector[idx] = hall_sector;
+      g_foc_if_offset_test_rev_count = (uint16_t)(idx + 1U);
+    }
+  }
+}
+
+static void FOC_IFOffsetTest_ResetRuntime(void)
+{
+  if (g_foc_if_offset_test_active != 0U) {
+    FOC_IFOffsetTest_RestoreCoreCalibConfig();
+  }
+
+  g_foc_if_offset_test_applied = 0U;
+  g_foc_if_offset_test_active = 0U;
+  g_foc_if_offset_test_done = 0U;
+  g_foc_if_offset_test_result = FOC_IF_OFFSET_TEST_RESULT_NONE;
+  g_foc_if_offset_test_phase = FOC_IF_OFFSET_TEST_PHASE_IDLE;
+  g_foc_if_offset_test_direction = 0U;
+  g_foc_if_offset_test_elapsed_ms = 0U;
+  g_foc_if_offset_test_phase_elapsed_ms = 0U;
+  g_foc_if_offset_test_api_result = 0U;
+  g_foc_if_offset_test_state = 0U;
+  g_foc_if_offset_test_fault = 0U;
+  g_foc_if_offset_test_speed_fdb_rpm = 0;
+  g_foc_if_offset_test_id_cmd_mA = 0;
+  g_foc_if_offset_test_iq_cmd_mA = 0;
+  g_foc_if_offset_test_id_ref_mA = 0;
+  g_foc_if_offset_test_iq_ref_mA = 0;
+  g_foc_if_offset_test_id_mA_fdb = 0;
+  g_foc_if_offset_test_iq_mA_fdb = 0;
+  g_foc_if_offset_test_current_peak_mA = 0U;
+  g_foc_if_offset_test_cmd_angle_u16 = 0U;
+  g_foc_if_offset_test_cmd_angle_mrad = 0;
+  g_foc_if_offset_test_start_offset_mrad = g_foc_hall_angle_offset_mrad;
+  g_foc_if_offset_test_calib_done = 0U;
+  g_foc_if_offset_test_calib_samples = 0U;
+  g_foc_if_offset_test_calib_skipped = 0U;
+  g_foc_if_offset_test_calib_avg_diff_mrad = 0;
+  g_foc_if_offset_test_calib_abs_avg_diff_mrad = 0U;
+  g_foc_if_offset_test_calib_min_diff_mrad = 0;
+  g_foc_if_offset_test_calib_max_diff_mrad = 0;
+  g_foc_if_offset_test_calib_recommended_mrad = g_foc_hall_angle_offset_mrad;
+  g_foc_if_offset_test_sync_count = 0U;
+  g_foc_if_offset_test_sync_sector = 0U;
+  g_foc_if_offset_test_sync_diff_mrad = 0;
+  g_foc_if_offset_test_fwd_valid = 0U;
+  g_foc_if_offset_test_fwd_count = 0U;
+  g_foc_if_offset_test_fwd_samples = 0U;
+  g_foc_if_offset_test_fwd_avg_diff_mrad = 0;
+  g_foc_if_offset_test_fwd_abs_avg_diff_mrad = 0U;
+  g_foc_if_offset_test_fwd_min_diff_mrad = 0;
+  g_foc_if_offset_test_fwd_max_diff_mrad = 0;
+  g_foc_if_offset_test_fwd_recommended_mrad = 0;
+  g_foc_if_offset_test_rev_valid = 0U;
+  g_foc_if_offset_test_rev_count = 0U;
+  g_foc_if_offset_test_rev_samples = 0U;
+  g_foc_if_offset_test_rev_avg_diff_mrad = 0;
+  g_foc_if_offset_test_rev_abs_avg_diff_mrad = 0U;
+  g_foc_if_offset_test_rev_min_diff_mrad = 0;
+  g_foc_if_offset_test_rev_max_diff_mrad = 0;
+  g_foc_if_offset_test_rev_recommended_mrad = 0;
+  g_foc_if_offset_test_recommended_mrad = g_foc_hall_angle_offset_mrad;
+  g_foc_if_offset_test_dir_delta_mrad = 0;
+  FOC_IFOffsetTest_ClearAngleLog();
+  s_foc_if_offset_test_start_us = 0U;
+  s_foc_if_offset_test_phase_start_us = 0U;
+  s_foc_if_offset_test_last_sync_count = 0U;
+}
+
+static void FOC_IFOffsetTest_Finish(uint8_t motor_id, uint8_t result)
+{
+  FocError stop_result;
+
+  FOC_IFOffsetTest_RestoreCoreCalibConfig();
+
+  g_foc_if_offset_test_result = result;
+  g_foc_if_offset_test_done = 1U;
+  g_foc_if_offset_test_active = 0U;
+  g_foc_if_offset_test_phase = FOC_IF_OFFSET_TEST_PHASE_DONE;
+
+  if ((result == FOC_IF_OFFSET_TEST_RESULT_SUCCESS) &&
+      (g_foc_if_offset_test_apply_result != 0U) &&
+      ((g_foc_if_offset_test_fwd_valid != 0U) ||
+       (g_foc_if_offset_test_rev_valid != 0U))) {
+    g_foc_hall_angle_offset_mrad =
+        g_foc_if_offset_test_recommended_mrad;
+    g_foc_if_offset_test_applied = 1U;
+  }
+
+  if (g_foc_if_offset_test_disable_on_done != 0U) {
+    stop_result = Foc_DisableFocControl(motor_id);
+  } else {
+    (void)FOC_AI_SelectMotor(motor_id);
+    stop_result = FOC_AI_MapResult(
+        FOC_SetOpenAngleCurrentRef(0.0f, 0.0f, 0.0f));
+  }
+
+  if (stop_result != FOC_SUCCESS) {
+    g_foc_if_offset_test_api_result = (uint16_t)stop_result;
+  }
+}
+
+static void FOC_IFOffsetTest_Start(uint8_t motor_id)
+{
+  FocError result;
+  uint32_t now_us = FOC_HAL_GetTimestampUs();
+
+  FOC_IFOffsetTest_ResetRuntime();
+
+  FOC_IFOffsetTest_SaveCoreCalibConfig();
+
+  g_foc_if_offset_test_active = 1U;
+  g_foc_if_offset_test_phase = FOC_IF_OFFSET_TEST_PHASE_LOCK_FORWARD;
+  s_foc_if_offset_test_start_us = now_us;
+  s_foc_if_offset_test_phase_start_us = now_us;
+
+  result = Foc_EnableFocControl(motor_id);
+  if (result == FOC_SUCCESS) {
+    result = FOC_IFOffsetTest_CommandLock(motor_id, FOC_APP_DIR_FORWARD);
+  }
+  if (result != FOC_SUCCESS) {
+    g_foc_if_offset_test_api_result = (uint16_t)result;
+    FOC_IFOffsetTest_Finish(motor_id,
+                            FOC_IF_OFFSET_TEST_RESULT_API_ERR);
+    return;
+  }
+
+  FOC_IFOffsetTest_UpdateMonitor(motor_id, now_us);
+}
+
+static void FOC_IFOffsetTest_Service(uint8_t motor_id)
+{
+  const FOC_Context_t *ctx;
+  uint32_t now_us;
+  uint16_t target_edges;
+  FocError result;
+
+  if (g_foc_if_offset_test_active == 0U) {
+    return;
+  }
+
+  now_us = FOC_HAL_GetTimestampUs();
+  ctx = FOC_Core_GetContextByMotor(motor_id);
+  FOC_IFOffsetTest_UpdateMonitor(motor_id, now_us);
+
+  if ((ctx->state == FOC_STATE_FAULT) || (ctx->fault != FOC_FAULT_NONE)) {
+    FOC_IFOffsetTest_Finish(motor_id, FOC_IF_OFFSET_TEST_RESULT_FAULT);
+    return;
+  }
+
+  target_edges = FOC_IFOffsetTest_TargetEdges();
+
+  if (g_foc_if_offset_test_phase ==
+      FOC_IF_OFFSET_TEST_PHASE_LOCK_FORWARD) {
+    if ((now_us - s_foc_if_offset_test_phase_start_us) >=
+        FOC_IFOffsetTest_LockUs()) {
+      g_foc_if_offset_test_phase = FOC_IF_OFFSET_TEST_PHASE_SCAN_FORWARD;
+      s_foc_if_offset_test_phase_start_us = now_us;
+      result = FOC_IFOffsetTest_CommandScan(motor_id, FOC_APP_DIR_FORWARD);
+      if (result != FOC_SUCCESS) {
+        FOC_IFOffsetTest_Finish(motor_id,
+                                FOC_IF_OFFSET_TEST_RESULT_API_ERR);
+      }
+    }
+    return;
+  }
+
+  if (g_foc_if_offset_test_phase ==
+      FOC_IF_OFFSET_TEST_PHASE_SCAN_FORWARD) {
+    FOC_IFOffsetTest_RecordEdge(ctx);
+    if (g_foc_if_offset_test_fwd_count >= target_edges) {
+      FOC_IFOffsetTest_RecordDirectionResult(FOC_APP_DIR_FORWARD);
+      g_foc_if_offset_test_phase = FOC_IF_OFFSET_TEST_PHASE_LOCK_REVERSE;
+      s_foc_if_offset_test_phase_start_us = now_us;
+      result = FOC_IFOffsetTest_CommandLock(motor_id, FOC_APP_DIR_REVERSE);
+      if (result != FOC_SUCCESS) {
+        FOC_IFOffsetTest_Finish(motor_id,
+                                FOC_IF_OFFSET_TEST_RESULT_API_ERR);
+      }
+    }
+    if (FOC_IFOffsetTest_PhaseTimedOut(now_us) != 0U) {
+      FOC_IFOffsetTest_Finish(motor_id, FOC_IF_OFFSET_TEST_RESULT_TIMEOUT);
+    }
+    return;
+  }
+
+  if (g_foc_if_offset_test_phase ==
+      FOC_IF_OFFSET_TEST_PHASE_LOCK_REVERSE) {
+    if ((now_us - s_foc_if_offset_test_phase_start_us) >=
+        FOC_IFOffsetTest_LockUs()) {
+      g_foc_if_offset_test_phase = FOC_IF_OFFSET_TEST_PHASE_SCAN_REVERSE;
+      s_foc_if_offset_test_phase_start_us = now_us;
+      result = FOC_IFOffsetTest_CommandScan(motor_id, FOC_APP_DIR_REVERSE);
+      if (result != FOC_SUCCESS) {
+        FOC_IFOffsetTest_Finish(motor_id,
+                                FOC_IF_OFFSET_TEST_RESULT_API_ERR);
+      }
+    }
+    return;
+  }
+
+  if (g_foc_if_offset_test_phase ==
+      FOC_IF_OFFSET_TEST_PHASE_SCAN_REVERSE) {
+    FOC_IFOffsetTest_RecordEdge(ctx);
+    if (g_foc_if_offset_test_rev_count >= target_edges) {
+      FOC_IFOffsetTest_RecordDirectionResult(FOC_APP_DIR_REVERSE);
+      FOC_IFOffsetTest_Finish(motor_id,
+                              FOC_IF_OFFSET_TEST_RESULT_SUCCESS);
+      return;
+    }
+    if (FOC_IFOffsetTest_PhaseTimedOut(now_us) != 0U) {
+      FOC_IFOffsetTest_Finish(motor_id, FOC_IF_OFFSET_TEST_RESULT_TIMEOUT);
+      return;
+    }
+    return;
+  }
+
+  if ((s_foc_if_offset_test_phase_start_us != 0U) &&
+      ((now_us - s_foc_if_offset_test_phase_start_us) >=
+       FOC_IFOffsetTest_TimeoutUs())) {
+    FOC_IFOffsetTest_Finish(motor_id, FOC_IF_OFFSET_TEST_RESULT_TIMEOUT);
   }
 }
 
@@ -2702,6 +3375,7 @@ static void FOC_TestCase_ClearAutoModes(void)
   speed_ref = -1.0f;
   FOC_TestCase_ClearFixedStartupLimits();
   FOC_IqStartTest_ResetRuntime();
+  FOC_IFOffsetTest_ResetRuntime();
   g_foc_dyn_speed_enable = 0U;
   g_foc_dyn_speed_reverse = 0U;
   g_foc_dyn_speed_reset_stats = 0U;
@@ -2802,6 +3476,16 @@ static void FOC_TestCase_Apply(uint8_t test_case)
     FOC_IqStartTest_Start(unId);
     g_foc_detail_log_start_now = 1U;
 
+  }else if(test_case == FOC_TEST_CASE_IF_EDGE_OFFSET){
+
+    FOC_TestCase_ClearAutoModes();
+    FOC_TestCase_PrepareFixedSpeedDetailLog();
+
+    g_foc_detail_log_zero_window_enable = 0U;
+    g_foc_detail_log_zero_post_ms = 0U;
+    FOC_IFOffsetTest_Start(unId);
+    g_foc_detail_log_start_now = 1U;
+
   }else if(test_case == FOC_TEST_CASE_DYN_SPEED_CW){
 
     Foc_EnableFocControl(unId);
@@ -2900,6 +3584,8 @@ static void FOC_TestCase_Service(void)
       }
     } else if (test_case == FOC_TEST_CASE_IQ_START_SWEEP) {
       FOC_IqStartTest_Service(motor_id);
+    } else if (test_case == FOC_TEST_CASE_IF_EDGE_OFFSET) {
+      FOC_IFOffsetTest_Service(motor_id);
     } else if (test_case == FOC_TEST_CASE_SIGNED_CURVE_1000) {
       FOC_TestCase_KeepSignedCurveDetailLog();
     }
