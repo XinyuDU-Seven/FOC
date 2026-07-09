@@ -395,11 +395,11 @@ extern "C" {
 #endif
 
 #ifndef FOC_SPEED_ERROR_BOOST_MIN_RPM
-#define FOC_SPEED_ERROR_BOOST_MIN_RPM   650.0f
+#define FOC_SPEED_ERROR_BOOST_MIN_RPM   500.0f
 #endif
 
 #ifndef FOC_SPEED_ERROR_BOOST_KP
-#define FOC_SPEED_ERROR_BOOST_KP        0.0030f
+#define FOC_SPEED_ERROR_BOOST_KP        0.0040f
 #endif
 
 #ifndef FOC_SPEED_ERROR_BOOST_DEADBAND_RPM
@@ -407,7 +407,7 @@ extern "C" {
 #endif
 
 #ifndef FOC_SPEED_ERROR_BOOST_MAX_A
-#define FOC_SPEED_ERROR_BOOST_MAX_A     1.00f
+#define FOC_SPEED_ERROR_BOOST_MAX_A     1.60f
 #endif
 
 #ifndef FOC_SPEED_ERROR_BOOST_REF_RISE_MIN_RPM
