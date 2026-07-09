@@ -1035,6 +1035,7 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
 
         uint32_t no_edge_elapsed_us = 0U;
         float no_edge_limit_rpm = 0.0f;
+        uint8_t startup_hold_active = 0U;
 
         ctx->sector_no_change_count++;
 
@@ -1046,7 +1047,6 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
             uint32_t startup_stop_timeout_us =
                 FOC_Observer_StartupStopTimeoutUs(pole_pairs);
             uint32_t startup_hold_timeout_us = 0U;
-            uint8_t startup_hold_active;
 
             if (FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
                                            &no_edge_elapsed_us,
@@ -1085,36 +1085,35 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
             if ((ctx->hall_sector_dt_us != 0U) &&
                 (elapsed_us >= stop_timeout_us)) {
                 ctx->sector_no_change_count = FOC_SECTOR_NO_CHANGE_THRESHOLD;
-            } else if ((startup_hold_active != 0U) &&
-                       (ctx->sector_no_change_count >=
-                        FOC_SECTOR_NO_CHANGE_THRESHOLD)) {
-                ctx->sector_no_change_count =
-                    FOC_SECTOR_NO_CHANGE_THRESHOLD - 1U;
-                if (g_foc_observer_startup_no_edge_hold_count < 0xFFFFFFFFU) {
-                    g_foc_observer_startup_no_edge_hold_count++;
-                }
             } else if (startup_hold_active == 0U) {
                 g_foc_observer_startup_no_edge_hold_active = 0U;
             }
         }
 
         if (ctx->sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {
+            if (startup_hold_active != 0U) {
+                ctx->sector_no_change_count = FOC_SECTOR_NO_CHANGE_THRESHOLD;
+                if (g_foc_observer_startup_no_edge_hold_count < 0xFFFFFFFFU) {
+                    g_foc_observer_startup_no_edge_hold_count++;
+                }
+            } else {
 
-            /* 长时间无跳变，电机已停止，速度衰减到零 */
+                /* 长时间无跳变，电机已停止，速度衰减到零 */
 
-            if (no_edge_elapsed_us == 0U) {
-                no_edge_elapsed_us = FOC_HAL_GetTimestampUs() -
-                                     ctx->timestamp_prev;
+                if (no_edge_elapsed_us == 0U) {
+                    no_edge_elapsed_us = FOC_HAL_GetTimestampUs() -
+                                         ctx->timestamp_prev;
+                }
+                speed_rpm = 0.0f;
+                ctx->speed_raw = 0.0f;
+                ctx->speed_filtered = 0.0f;
+                if (ctx->hall_sector.sector != 0U) {
+                    ctx->theta_e_predicted = ctx->hall_sector.theta_e;
+                }
+                FOC_Observer_ResetAnglePredictPll(ctx->theta_e_predicted);
+                ctx->hall_sector_prev = cur_sector;
+                return 0.0f;
             }
-            speed_rpm = 0.0f;
-            ctx->speed_raw = 0.0f;
-            ctx->speed_filtered = 0.0f;
-            if (ctx->hall_sector.sector != 0U) {
-                ctx->theta_e_predicted = ctx->hall_sector.theta_e;
-            }
-            FOC_Observer_ResetAnglePredictPll(ctx->theta_e_predicted);
-            ctx->hall_sector_prev = cur_sector;
-            return 0.0f;
 
         }
 
