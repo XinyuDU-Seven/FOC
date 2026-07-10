@@ -1047,7 +1047,7 @@ static int16_t FOC_AI_GetHallAngleOffsetMrad(uint8_t motor_id)
   if (motor_id >= FOC_PHY_MOTOR_COUNT) {
     motor_id = 0U;
   }
-  return g_foc_hall_angle_offset_mrad_motor[motor_id];
+  return FOC_Observer_GetHallAngleOffsetMradByMotor(motor_id);
 }
 
 static void FOC_AI_SetHallAngleOffsetMrad(uint8_t motor_id,

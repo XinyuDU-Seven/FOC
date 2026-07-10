@@ -205,6 +205,15 @@ int16_t FOC_Observer_GetHallAngleOffsetMrad(void)
     return g_foc_hall_angle_offset_mrad_motor[motor];
 }
 
+int16_t FOC_Observer_GetHallAngleOffsetMradByMotor(uint8_t motor_id)
+{
+    if (motor_id >= FOC_OBSERVER_MOTOR_COUNT) {
+        motor_id = 0U;
+    }
+
+    return g_foc_hall_angle_offset_mrad_motor[motor_id];
+}
+
 void FOC_Observer_SetHallAngleOffsetMrad(uint8_t motor_id,
                                          int16_t offset_mrad)
 {

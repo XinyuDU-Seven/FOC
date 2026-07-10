@@ -132,6 +132,7 @@ float FOC_Observer_HallEdgeSyncAngle(const FOC_Context_t *ctx,
 /* Runtime Hall angle offsets, in mrad. Indexed by physical motor id. */
 extern volatile int16_t g_foc_hall_angle_offset_mrad_motor[];
 int16_t FOC_Observer_GetHallAngleOffsetMrad(void);
+int16_t FOC_Observer_GetHallAngleOffsetMradByMotor(uint8_t motor_id);
 void FOC_Observer_SetHallAngleOffsetMrad(uint8_t motor_id,
                                          int16_t offset_mrad);
 
