@@ -1465,6 +1465,8 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          float sync_step;
          float recovery_step_max = FOC_ANGLE_SYNC_RECOVERY_STEP_MAX_RAD;
          uint8_t startup_sync_boost = 0U;
+         float startup_sync_boost_max_rpm =
+             FOC_STARTUP_EDGE_SYNC_BOOST_MAX_RPM;
 
 #if FOC_HALL_EDGE_SYNC_ENABLE
          float edge_advance_max = FOC_HALL_EDGE_SYNC_ADVANCE_MAX_RAD;
@@ -1496,9 +1498,15 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
              sync_step_max = FOC_LATE_PERIOD_ANGLE_SYNC_STEP_MAX_RAD;
          }
 
+         if (startup_sync_boost_max_rpm < 0.0f) {
+             startup_sync_boost_max_rpm = -startup_sync_boost_max_rpm;
+         }
+
          if (g_foc_observer_startup_ref_active != 0U) {
-             if (s_startup_sync_edge_count <
-                 (uint8_t)FOC_STARTUP_EDGE_SYNC_BOOST_COUNT) {
+             if ((s_startup_sync_edge_count <
+                  (uint8_t)FOC_STARTUP_EDGE_SYNC_BOOST_COUNT) ||
+                 ((startup_sync_boost_max_rpm > 0.0f) &&
+                  (speed_filtered_abs < startup_sync_boost_max_rpm))) {
                  startup_sync_boost = 1U;
                  sync_factor = FOC_STARTUP_EDGE_SYNC_BOOST_FACTOR;
                  sync_step_max = FOC_STARTUP_EDGE_SYNC_BOOST_STEP_MAX_RAD;
