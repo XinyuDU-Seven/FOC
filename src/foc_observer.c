@@ -737,23 +737,32 @@ static uint8_t FOC_Observer_StartupNoEdgeHoldEnabled(const FOC_Context_t *ctx,
                                                      uint32_t *timeout_us)
 {
 #if FOC_STARTUP_NO_EDGE_HOLD_ENABLE
-    float enter_rpm = FOC_ANGLE_PREDICT_PLL_ENTER_RPM;
+    float release_rpm = (float)g_foc_observer_startup_release_rpm;
     float speed_abs;
+    float ref_abs;
+    float ref_ctrl_abs;
     uint32_t timeout = (uint32_t)FOC_STARTUP_NO_EDGE_HOLD_MS * 1000U;
 
     if ((ctx == 0) ||
         (pole_pairs == 0U) ||
-        (ctx->hall_sector.sector == 0U) ||
-        (ctx->speed_ref <= 0.5f) ||
-        (g_foc_observer_startup_ref_active == 0U)) {
+        (ctx->hall_sector.sector == 0U)) {
         return 0U;
     }
 
-    if (enter_rpm < 0.0f) {
-        enter_rpm = -enter_rpm;
+    ref_abs = FOC_FABS(ctx->speed_ref);
+    ref_ctrl_abs = FOC_FABS(ctx->speed_ref_ctrl);
+    if ((ref_abs <= 0.5f) && (ref_ctrl_abs <= 0.5f)) {
+        return 0U;
+    }
+
+    if (release_rpm < 0.0f) {
+        release_rpm = -release_rpm;
+    }
+    if (release_rpm < FOC_STARTUP_PREDICT_START_RPM) {
+        release_rpm = FOC_STARTUP_PREDICT_START_RPM;
     }
     speed_abs = FOC_FABS(ctx->speed_filtered);
-    if ((enter_rpm > 0.0f) && (speed_abs > enter_rpm)) {
+    if ((release_rpm > 0.0f) && (speed_abs > release_rpm)) {
         return 0U;
     }
 
