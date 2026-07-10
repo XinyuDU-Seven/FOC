@@ -317,9 +317,8 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_cw_angle_offset_mrad =
     FOC_CW_CONTROL_ANGLE_OFFSET_MRAD;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_angle_offset_mrad =
     FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD;
-FOC_DEBUG_ROOT volatile int16_t  g_foc_motor1_cw_angle_offset_mrad = 300;
-FOC_DEBUG_ROOT volatile int16_t  g_foc_motor1_ccw_angle_offset_mrad =
-    FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_motor1_cw_angle_offset_mrad = 0;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_motor1_ccw_angle_offset_mrad = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_control_angle_offset_mrad = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_used_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
