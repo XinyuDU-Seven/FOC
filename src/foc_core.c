@@ -481,6 +481,8 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_close_deadband_rpm = 5U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_soft_slew_mA_per_s = 2000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_ms = 260U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_slew_mA_per_s = 12000U;
+FOC_DEBUG_ROOT volatile uint16_t
+    g_foc_motor1_speed_start_catchup_handoff_slew_mA_per_s = 6000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_overspeed_rpm = 30U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_pid_iq_max_mA = 1800U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_max_rpm = 650U;
@@ -2003,6 +2005,8 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
      uint32_t elapsed_step_us;
      float decay_step;
      float floor_iq;
+     uint16_t handoff_slew_mA_per_s =
+         g_foc_speed_start_handoff_slew_mA_per_s;
      uint8_t catchup_active =
          FOC_SpeedStart_ClosedCatchupActive(speed_ref_ctrl, speed_error);
      float catchup_iq =
@@ -2054,9 +2058,16 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
          return iq_ref;
      }
 
-     decay_step =
-         (float)g_foc_speed_start_handoff_slew_mA_per_s *
-         0.001f * speed_dt;
+     /* Keep motor1 torque during loaded catch-up without changing motor0. */
+     if ((s_foc_core_active_motor == 1U) &&
+         (catchup_active != 0U) &&
+         (g_foc_motor1_speed_start_catchup_handoff_slew_mA_per_s > 0U) &&
+         (g_foc_motor1_speed_start_catchup_handoff_slew_mA_per_s <
+          handoff_slew_mA_per_s)) {
+         handoff_slew_mA_per_s =
+             g_foc_motor1_speed_start_catchup_handoff_slew_mA_per_s;
+     }
+     decay_step = (float)handoff_slew_mA_per_s * 0.001f * speed_dt;
      if (decay_step > 0.0f) {
          if (s_speed_start_iq_ref > decay_step) {
              s_speed_start_iq_ref -= decay_step;
