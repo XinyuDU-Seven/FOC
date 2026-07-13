@@ -13,8 +13,6 @@
 
 #include "foc_math.h"
 
-#include "foc_hal_if.h"
-
 #include "foc_config.h"
 
 #include <stddef.h>
@@ -24,22 +22,6 @@
 /** 当前生效的保护阈值（模块内部静态变量） */
 
 static FOC_Protection_Threshold_t s_threshold;
-
- 
-
-/** 霍尔无效扇区连续计数 */
-
-static uint32_t s_hall_invalid_counter_store[2U] = {0U, 0U};
-
-static uint8_t FOC_Protection_GetMotorIndex(void)
-{
-    uint8_t motor = FOC_HAL_GetSelectedMotor();
-
-    return (motor < 2U) ? motor : 0U;
-}
-
-#define s_hall_invalid_counter \
-    (s_hall_invalid_counter_store[FOC_Protection_GetMotorIndex()])
 
  
 
@@ -143,52 +125,6 @@ FOC_Fault_e FOC_Protection_Check(FOC_Context_t *ctx, float v_bus)
 #endif
 
 
-#if 0
-
-    /* ---- 堵转检测：速度误差持续超过阈值 ---- */
-
-    float speed_err = FOC_FABS(ctx->speed_ref_ctrl - ctx->speed_fdb);
-
-    if (ctx->state == FOC_STATE_RUNNING && speed_err > s_threshold.stall_speed_err) {
-
-        ctx->stall_counter++;
-
-        if (ctx->stall_counter >= s_threshold.stall_count) {
-
-            fault |= FOC_FAULT_STALL;
-
-        }
-
-    } else {
-
-        ctx->stall_counter = 0;
-
-    }
-
- 
-
- 
-
-    /* ---- 霍尔传感器异常检测：无效扇区持续计数 ---- */
-
-    if (ctx->hall_sector.sector == 0U) {
-
-        s_hall_invalid_counter++;
-
-        if (s_hall_invalid_counter >= s_threshold.hall_invalid_count) {
-
-            // fault |= FOC_FAULT_HALL;
-
-        }
-
-    } else {
-
-        s_hall_invalid_counter = 0;
-
-    }
-
-#endif
-
     /* 合并故障码到上下文 */
 
     if (fault != FOC_FAULT_NONE) {
@@ -212,8 +148,6 @@ void FOC_Protection_ClearFault(FOC_Context_t *ctx)
     ctx->fault = FOC_FAULT_NONE;
 
     ctx->stall_counter = 0U;
-
-    s_hall_invalid_counter = 0U;
 
 }
 
