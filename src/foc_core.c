@@ -2917,16 +2917,18 @@ static void FOC_UpdateHallTravelStallGuard(void)
         low_progress = 1U;
     }
 
-    /* Hall can keep jittering at the mechanical stop, so a sustained severe
-     * speed error under high current is allowed to latch without travel freeze.
+    /* A loaded motor can have a large speed error and high current while it is
+     * still making normal Hall progress.  Treat the speed-error path only as
+     * permission to evaluate a fresh-command hard stop; never let it bypass
+     * the rolling Hall-progress window.
      */
     if ((g_foc_hall_travel_stall_guard_enable != 0U) &&
         (s_ctx.state == FOC_STATE_RUNNING) &&
         (s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
         (ref_abs >= (float)g_foc_hall_travel_stall_min_ref_rpm) &&
         (endpoint_release_active == 0U) &&
-        (((low_progress != 0U) && (persistent_stall_allowed != 0U)) ||
-         (speed_error_stall != 0U)) &&
+        (low_progress != 0U) &&
+        (persistent_stall_allowed != 0U) &&
         (current_abs >= current_min) &&
         (command_sign != 0)) {
         condition = 1U;
@@ -2976,9 +2978,7 @@ static void FOC_UpdateHallTravelStallGuard(void)
 
     if (condition != 0U) {
         s_hall_travel_stall_reason = stall_reason;
-        if (speed_error_stall != 0U) {
-            threshold = 1U;
-        } else if (threshold == 0U) {
+        if (threshold == 0U) {
             threshold = 1U;
         }
         if (s_hall_travel_stall_counter < threshold) {
