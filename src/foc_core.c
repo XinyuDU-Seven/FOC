@@ -505,6 +505,8 @@ FOC_DEBUG_ROOT volatile uint16_t
     g_foc_speed_start_handoff_elapsed_ms = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_overspeed_rpm = 30U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_pid_iq_max_mA = 1800U;
+FOC_DEBUG_ROOT volatile uint16_t
+    g_foc_motor1_speed_start_handoff_pid_iq_max_mA = 3000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_max_rpm = 650U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_err_rpm = 120U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_track_hold_active = 0U;
@@ -1611,6 +1613,16 @@ static uint8_t FOC_SpeedStart_ClosedCatchupActive(float speed_ref_ctrl,
 {
      float max_rpm = (float)g_foc_speed_start_catchup_max_rpm;
      float err_rpm = (float)g_foc_speed_start_catchup_err_rpm;
+     float catchup_gate_rpm = speed_ref_ctrl;
+
+     /*
+      * Motor1 catch-up must follow the motor, not the ramp command.  Using
+      * speed_ref_ctrl here used to end catch-up as soon as the command crossed
+      * 650 rpm even though the loaded motor was still near 525 rpm.
+      */
+     if (FOC_SpeedStart_Motor1BumplessEnabled() != 0U) {
+         catchup_gate_rpm = FOC_FABS(s_ctx.speed_ctrl_fdb);
+     }
 
      if (err_rpm < 1.0f) {
          err_rpm = 1.0f;
@@ -1619,7 +1631,7 @@ static uint8_t FOC_SpeedStart_ClosedCatchupActive(float speed_ref_ctrl,
          (s_speed_start_state != FOC_SPEED_START_STATE_CLOSED) ||
          (max_rpm < 1.0f) ||
          (speed_ref_ctrl < 1.0f) ||
-         (speed_ref_ctrl > max_rpm) ||
+         (catchup_gate_rpm > max_rpm) ||
          (speed_error <= err_rpm)) {
          return 0U;
      }
@@ -1869,6 +1881,8 @@ static void FOC_SpeedStart_Close(float speed_error,
      float pid_seed_iq;
      float pid_seed_max;
      float p_term;
+     float motor1_seed_err_rpm =
+         (float)g_foc_speed_start_catchup_err_rpm;
 
      if (speed_iq_ref_max < 0.0f) {
          speed_iq_ref_max = 0.0f;
@@ -1878,7 +1892,17 @@ static void FOC_SpeedStart_Close(float speed_error,
                                                 speed_iq_ref_max);
 
      pid_seed_iq = handoff_iq;
-     pid_seed_max = (float)g_foc_speed_start_handoff_pid_iq_max_mA * 0.001f;
+     if (motor1_seed_err_rpm < 1.0f) {
+         motor1_seed_err_rpm = 1.0f;
+     }
+     if ((FOC_SpeedStart_Motor1BumplessEnabled() != 0U) &&
+         (speed_error > motor1_seed_err_rpm)) {
+         pid_seed_max =
+             (float)g_foc_motor1_speed_start_handoff_pid_iq_max_mA * 0.001f;
+     } else {
+         pid_seed_max =
+             (float)g_foc_speed_start_handoff_pid_iq_max_mA * 0.001f;
+     }
      if (pid_seed_max <= 0.0f) {
          pid_seed_iq = 0.0f;
      } else if (pid_seed_iq > pid_seed_max) {
@@ -2210,12 +2234,16 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
          return iq_ref;
      }
 
-     /* Keep motor1 torque during loaded catch-up without changing motor0. */
+     /*
+      * Keep the gentler motor1 decay through the whole bumpless handoff.
+      * Switching back to 12 A/s at the catch-up boundary made the torque floor
+      * fall below the loaded motor demand before the speed PID could take over.
+      */
      if ((motor1_bumpless != 0U) && (handoff_slew_mA_per_s == 0U)) {
          handoff_slew_mA_per_s = 12000U;
      }
      if ((s_foc_core_active_motor == 1U) &&
-         (catchup_active != 0U) &&
+         (motor1_bumpless != 0U) &&
          (g_foc_motor1_speed_start_catchup_handoff_slew_mA_per_s > 0U) &&
          (g_foc_motor1_speed_start_catchup_handoff_slew_mA_per_s <
           handoff_slew_mA_per_s)) {
