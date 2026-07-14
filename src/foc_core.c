@@ -466,6 +466,8 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_iq_slew_limited_mA = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_low_speed_iq_slew_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_enable = 1U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_state = FOC_SPEED_START_STATE_IDLE;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_start_reverse_wait_active = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_speed_start_reverse_wait_count = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_min_ref_rpm = 10U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_near_zero_rpm = 20U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_move_rpm = 20U;
@@ -860,6 +862,7 @@ static FOC_Dir_e s_speed_start_direction_store[FOC_CORE_MOTOR_COUNT] = {
     FOC_DIR_CW,
     FOC_DIR_CW
 };
+static uint8_t s_speed_start_reverse_wait_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static float s_low_speed_iq_slew_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
 static uint8_t s_low_speed_iq_slew_initialized_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static float s_speed_error_boost_prev_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
@@ -892,6 +895,7 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
     (s_speed_start_handoff_tail_latched_store[s_foc_core_active_motor])
 #define s_speed_start_iq_ref             (s_speed_start_iq_ref_store[s_foc_core_active_motor])
 #define s_speed_start_direction          (s_speed_start_direction_store[s_foc_core_active_motor])
+#define s_speed_start_reverse_wait       (s_speed_start_reverse_wait_store[s_foc_core_active_motor])
 #define s_low_speed_iq_slew_ref          (s_low_speed_iq_slew_ref_store[s_foc_core_active_motor])
 #define s_low_speed_iq_slew_initialized  (s_low_speed_iq_slew_initialized_store[s_foc_core_active_motor])
 #define s_speed_error_boost_prev_ref     (s_speed_error_boost_prev_ref_store[s_foc_core_active_motor])
@@ -1027,6 +1031,7 @@ static void FOC_UpdateCurrentAngleTrim(float dt);
 static void FOC_UpdateSpeedControlFeedback(void);
 static void FOC_DecaySpeedControlFeedback(float target_fdb);
 static void FOC_SpeedStart_Reset(void);
+static void FOC_SpeedStart_OnDirectionChanged(void);
 static void FOC_EndpointRelease_Reset(uint8_t clear_timeout);
 static uint8_t FOC_EndpointReleaseActive(void);
 static float FOC_EndpointRelease_Service(float theta_ctrl,
@@ -1454,6 +1459,7 @@ static void FOC_SpeedStart_UpdateDebug(void)
                      : s_speed_start_iq_ref;
 
      g_foc_speed_start_state = s_speed_start_state;
+     g_foc_speed_start_reverse_wait_active = s_speed_start_reverse_wait;
      g_foc_speed_start_elapsed_ms =
          FOC_SpeedStartElapsedMs(s_speed_start_elapsed_us);
      g_foc_speed_start_soft_elapsed_ms =
@@ -1478,8 +1484,11 @@ static void FOC_SpeedStart_UpdateDebug(void)
      }
 }
 
-static void FOC_SpeedStart_Reset(void)
+static void FOC_SpeedStart_ResetInternal(uint8_t clear_reverse_wait)
 {
+     if (clear_reverse_wait != 0U) {
+         s_speed_start_reverse_wait = 0U;
+     }
      s_speed_start_state = FOC_SPEED_START_STATE_IDLE;
      s_speed_start_elapsed_us = 0U;
      s_speed_start_soft_elapsed_us = 0U;
@@ -1501,6 +1510,11 @@ static void FOC_SpeedStart_Reset(void)
      g_foc_motor1_speed_start_bumpless_release_count = 0U;
      g_foc_motor1_speed_start_bumpless_delta_mA = 0;
      FOC_SpeedStart_UpdateDebug();
+}
+
+static void FOC_SpeedStart_Reset(void)
+{
+     FOC_SpeedStart_ResetInternal(1U);
 }
 
 static uint8_t FOC_SpeedStart_CommandActive(float speed_ref_ctrl)
@@ -1544,6 +1558,33 @@ static uint8_t FOC_SpeedStart_IsNearZero(void)
 
      return ((FOC_FABS(s_ctx.speed_fdb) <= near_zero) &&
              (FOC_SpeedStart_MotionFdbAbs() <= near_zero)) ? 1U : 0U;
+}
+
+static void FOC_SpeedStart_OnDirectionChanged(void)
+{
+     uint8_t wait_for_zero = 0U;
+
+     /* A direct reversal may still be coasting in the old direction. */
+     if ((s_foc_ctrl_source == FOC_CTRL_SOURCE_SPEED) &&
+         (g_foc_speed_start_enable != 0U) &&
+         (FOC_FABS(s_ctx.speed_ref) > 0.0f) &&
+         (FOC_BidirZeroTransfer_Active() == 0U) &&
+         (FOC_SpeedStart_IsNearZero() == 0U)) {
+         wait_for_zero = 1U;
+     }
+
+     /* Remove the old-direction command immediately; the next speed-loop
+      * tick may be several control periods away. */
+     s_ctx.iq_ref = 0.0f;
+     FOC_PID_Reset(&s_ctx.pid_speed);
+     FOC_PID_Reset(&s_ctx.pid_iq);
+     FOC_SpeedStart_ResetInternal(1U);
+     s_speed_start_reverse_wait = wait_for_zero;
+     if ((wait_for_zero != 0U) &&
+         (g_foc_speed_start_reverse_wait_count < 0xFFFFFFFFU)) {
+         g_foc_speed_start_reverse_wait_count++;
+     }
+     FOC_SpeedStart_UpdateDebug();
 }
 
 static void FOC_LowSpeedIqSlew_Prime(float iq_ref)
@@ -1920,6 +1961,7 @@ static void FOC_SpeedStart_Close(float speed_error,
      FOC_LowSpeedIqSlew_Prime(handoff_iq);
 
      s_speed_start_state = FOC_SPEED_START_STATE_CLOSED;
+     s_speed_start_reverse_wait = 0U;
      s_speed_start_handoff_elapsed_us = 0U;
      s_speed_start_handoff_release_count = 0U;
      s_speed_start_handoff_tail_latched = 0U;
@@ -1932,6 +1974,7 @@ static void FOC_SpeedStart_Close(float speed_error,
 
 static void FOC_SpeedStart_BeginBreakaway(float speed_iq_ref_max)
 {
+     s_speed_start_reverse_wait = 0U;
      s_speed_start_state = FOC_SPEED_START_STATE_BREAKAWAY;
      s_speed_start_elapsed_us = 0U;
      s_speed_start_soft_elapsed_us = 0U;
@@ -1984,30 +2027,60 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
                                       uint8_t zero_speed_pid_frozen,
                                       uint8_t zero_output_held)
 {
-     uint8_t inhibited =
-         ((blocked != 0U) ||
-          (zero_speed_pid_frozen != 0U) ||
-          (zero_output_held != 0U)) ? 1U : 0U;
-
      if (s_ctx.direction > FOC_DIR_CCW) {
          FOC_SpeedStart_Reset();
          return s_speed_start_state;
      }
      if (s_speed_start_direction != s_ctx.direction) {
-         FOC_SpeedStart_Reset();
+         FOC_SpeedStart_OnDirectionChanged();
      }
 
-     if ((FOC_SpeedStart_CommandActive(speed_ref_ctrl) == 0U) ||
-         (inhibited != 0U)) {
+     if ((g_foc_speed_start_enable == 0U) ||
+         (FOC_FABS(s_ctx.speed_ref) <= 0.0f)) {
          FOC_SpeedStart_Reset();
+         return s_speed_start_state;
+     }
+
+     if ((blocked != 0U) ||
+         (zero_speed_pid_frozen != 0U) ||
+         (zero_output_held != 0U)) {
+         /* A transient torque inhibit must not erase a pending reversal;
+          * otherwise the remaining old-direction motion can later be
+          * misclassified as a valid CLOSED catch. */
+         FOC_SpeedStart_ResetInternal(0U);
+         return s_speed_start_state;
+     }
+
+     if (FOC_SpeedStart_CommandActive(speed_ref_ctrl) == 0U) {
+         if (s_speed_start_reverse_wait != 0U) {
+             if ((FOC_SpeedStart_CommandActive(
+                      FOC_FABS(s_ctx.speed_ref)) != 0U) ||
+                 (FOC_SpeedStart_IsNearZero() == 0U)) {
+                 /* Preserve the reversal intent while a normal startup
+                  * command is still ramping, or until a sub-threshold
+                  * command has safely coasted to zero. */
+                 FOC_SpeedStart_ResetInternal(0U);
+             } else {
+                 /* Sub-threshold commands use the regular speed PID once
+                  * the old-direction motion has stopped. */
+                 FOC_SpeedStart_Reset();
+             }
+         } else {
+             FOC_SpeedStart_Reset();
+         }
          return s_speed_start_state;
      }
 
      if (s_speed_start_state == FOC_SPEED_START_STATE_IDLE) {
          if (FOC_SpeedStart_IsNearZero() != 0U) {
              FOC_SpeedStart_BeginBreakaway(speed_iq_ref_max);
-         } else {
+         } else if (s_speed_start_reverse_wait == 0U) {
              s_speed_start_state = FOC_SPEED_START_STATE_CLOSED;
+         } else {
+             /* Stay IDLE and coast with zero torque while the old-direction
+              * motion decays. Once feedback reaches zero, the branch above
+              * relaunches via BREAKAWAY instead of treating that residual
+              * motion as a successful catch-on-fly. */
          }
      }
 
@@ -2996,7 +3069,7 @@ static void FOC_ApplyHallTravelStallCurrentCut(uint8_t reset_pid)
     g_foc_low_speed_iq_slew_active = 0U;
     g_foc_low_speed_iq_slew_limited_mA = 0;
     FOC_ResetLiftCurrentLimitDebug();
-    FOC_SpeedStart_Reset();
+    FOC_SpeedStart_ResetInternal(0U);
 
     if (reset_pid != 0U) {
         FOC_PID_Reset(&s_ctx.pid_speed);
@@ -3473,10 +3546,14 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
  static void FOC_NormalizeSignedSpeedRef(void)
  {
      uint8_t reset_loop = 0U;
+     uint8_t direction_changed = 0U;
 
      if (s_ctx.speed_ref < 0.0f) {
          s_ctx.speed_ref = -s_ctx.speed_ref;
          if (s_ctx.direction != FOC_DIR_CCW) {
+             if (s_ctx.direction == FOC_DIR_CW) {
+                 direction_changed = 1U;
+             }
              s_ctx.direction = FOC_DIR_CCW;
              reset_loop = 1U;
          }
@@ -3498,7 +3575,11 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
          s_speed_loop_accum_us = 0U;
          s_speed_error_boost_prev_ref = 0.0f;
          FOC_ResetSpeedRefRamp();
-         FOC_SpeedStart_Reset();
+         if (direction_changed != 0U) {
+             FOC_SpeedStart_OnDirectionChanged();
+         } else {
+             FOC_SpeedStart_Reset();
+         }
      }
  }
 
@@ -3518,7 +3599,7 @@ static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
          s_speed_ref_ctrl = 0.0f;
          FOC_PID_Reset(&s_ctx.pid_speed);
          s_speed_error_boost_prev_ref = 0.0f;
-         FOC_SpeedStart_Reset();
+         FOC_SpeedStart_OnDirectionChanged();
      }
 
      delta = target - s_speed_ref_ctrl;
@@ -6354,7 +6435,7 @@ static void FOC_Prof_Reset(void)
      s_speed_loop_accum_us = 0U;
      s_speed_error_boost_prev_ref = 0.0f;
      FOC_ResetSpeedRefRamp();
-     FOC_SpeedStart_Reset();
+     FOC_SpeedStart_ResetInternal(0U);
 
      s_ctx.v_dq.d = 0.0f;
      s_ctx.v_dq.q = 0.0f;
@@ -6434,7 +6515,7 @@ static void FOC_Prof_Reset(void)
      s_ctx.speed_loop_counter = 0U;
      s_speed_loop_accum_us = 0U;
      s_speed_error_boost_prev_ref = 0.0f;
-     FOC_SpeedStart_Reset();
+     FOC_SpeedStart_ResetInternal(0U);
 
 
      s_ctx.v_dq.d = FOC_PID_Update(&s_ctx.pid_id,
@@ -6669,6 +6750,7 @@ static void FOC_Prof_Reset(void)
      s_recovery_zero_vector_min_cycles = 0U;
      g_foc_recovery_zero_vector_remaining = 0U;
      g_foc_recovery_current_wait_active = 0U;
+     FOC_SpeedStart_Reset();
      s_ctx.state = FOC_STATE_FAULT;
  }
 
@@ -6967,6 +7049,7 @@ static void FOC_Prof_Reset(void)
          s_foc_hall_travel_stall_command_start_store[motor] = 0;
          s_foc_hall_travel_stall_command_dir_store[motor] = 0;
          s_foc_hall_travel_stall_command_progress_store[motor] = 0;
+         s_speed_start_reverse_wait_store[motor] = 0U;
          g_foc_hall_travel_stall_active[motor] = 0U;
          g_foc_hall_travel_stall_counter[motor] = 0U;
          g_foc_hall_travel_stall_dir[motor] = 0;
@@ -7045,6 +7128,7 @@ static void FOC_Prof_Reset(void)
      /* 默认方向正转 */
 
      s_ctx.direction = FOC_DIR_CW;
+     FOC_SpeedStart_Reset();
 
  
 
@@ -7076,6 +7160,7 @@ static void FOC_Prof_Reset(void)
          s_ctx.iq_ref = 0.0f;
          s_foc_ctrl_source = FOC_CTRL_SOURCE_SPEED;
          s_ctx.direction = FOC_DIR_CW;
+         FOC_SpeedStart_Reset();
          s_ctx.state = FOC_STATE_IDLE;
          s_ctx.fault = FOC_FAULT_NONE;
      }
@@ -7103,6 +7188,7 @@ static void FOC_Prof_Reset(void)
          }
 
          FOC_HAL_DisablePWM();
+         FOC_SpeedStart_Reset();
          memset(&s_ctx, 0, sizeof(FOC_Context_t));
          s_ctx.state = FOC_STATE_INIT;
      }
@@ -7479,7 +7565,7 @@ static void FOC_Prof_Reset(void)
          s_ctx.speed_ctrl_fdb = 0.0f;
          g_foc_speed_ctrl_fdb_rpm = 0;
          s_ctx.speed_loop_counter = 0U;
-         FOC_SpeedStart_Reset();
+         FOC_SpeedStart_ResetInternal(0U);
 
          FOC_Protection_Check(&s_ctx, s_ctx.v_bus);
          if (s_ctx.fault != FOC_FAULT_NONE) {
@@ -7653,6 +7739,16 @@ static void FOC_Prof_Reset(void)
                  speed_pid_i = s_ctx.pid_speed.ki * s_ctx.pid_speed.integral;
                  FOC_PID_Reset(&s_ctx.pid_speed);
                  g_foc_speed_error_boost_mA = 0;
+             } else if (s_speed_start_reverse_wait != 0U) {
+                 /* The observer cannot determine the sign of the old
+                  * direction once the command has flipped.  Any speed-loop
+                  * torque here can therefore reinforce a stale Hall angle.
+                  * Coast to a verified standstill before BREAKAWAY. */
+                 speed_iq_ref = 0.0f;
+                 speed_pid_iq = 0.0f;
+                 speed_pid_i = 0.0f;
+                 FOC_PID_Reset(&s_ctx.pid_speed);
+                 g_foc_speed_error_boost_mA = 0;
              } else if (speed_start_state == FOC_SPEED_START_STATE_BREAKAWAY) {
                  speed_iq_ref = FOC_CLAMP(s_speed_start_iq_ref,
                                           0.0f,
@@ -7724,6 +7820,7 @@ static void FOC_Prof_Reset(void)
                  FOC_Log_ToI16(FOC_DebugSignedIq(speed_pid_i), 1000.0f);
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
+                 (s_speed_start_reverse_wait == 0U) &&
                  (g_foc_bidir_speed_enable != 0U) &&
                  (g_foc_bidir_zero_cross_state != FOC_BIDIR_ZERO_STATE_HOLD) &&
                  (g_foc_bidir_zero_approach_active != 0U)) {
@@ -7748,6 +7845,7 @@ static void FOC_Prof_Reset(void)
              }
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
+                 (s_speed_start_reverse_wait == 0U) &&
                  (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
                  (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref = FOC_ApplySmoothBrakeLimit(speed_iq_ref,
@@ -7759,6 +7857,7 @@ static void FOC_Prof_Reset(void)
 
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
+                 (s_speed_start_reverse_wait == 0U) &&
                  (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY)) {
                  speed_iq_ref = FOC_ApplyLowSpeedTorqueAssist(speed_iq_ref,
                                                               speed_ref_ctrl,
@@ -7790,7 +7889,8 @@ static void FOC_Prof_Reset(void)
                                                              speed_dt);
              }
              if ((speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
-                 (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
+                 (speed_start_state != FOC_SPEED_START_STATE_SOFT_START) &&
+                 (s_speed_start_reverse_wait == 0U)) {
                  speed_iq_ref = FOC_BidirZeroTransfer_ApplyIq(speed_iq_ref,
                                                               speed_dt);
              } else if (speed_start_state == FOC_SPEED_START_STATE_SOFT_START) {
@@ -7803,6 +7903,7 @@ static void FOC_Prof_Reset(void)
              }
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
+                 (s_speed_start_reverse_wait == 0U) &&
                  (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
                  (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref = FOC_ApplyLowSpeedIqSlew(speed_iq_ref,
@@ -7824,6 +7925,7 @@ static void FOC_Prof_Reset(void)
              }
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
+                 (s_speed_start_reverse_wait == 0U) &&
                  (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
                  (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref =
@@ -7832,6 +7934,28 @@ static void FOC_Prof_Reset(void)
              } else {
                  g_foc_no_edge_decel_coast_active = 0U;
                  g_foc_no_edge_decel_coast_limited_mA = 0;
+             }
+             if (s_speed_start_reverse_wait != 0U) {
+                 /* Keep every downstream assist from re-introducing torque
+                  * during the reverse coast interval. */
+                 speed_iq_ref = 0.0f;
+                 FOC_PID_Reset(&s_ctx.pid_speed);
+                 FOC_LowSpeedIqSlew_Prime(0.0f);
+                 FOC_ResetSmoothBrakeDebug();
+                 g_foc_speed_error_boost_mA = 0;
+                 g_foc_low_speed_torque_active = 0U;
+                 g_foc_low_speed_torque_applied_mA = 0;
+                 g_foc_bidir_decel_hold_active = 0U;
+                 g_foc_bidir_decel_hold_applied_mA = 0;
+                 g_foc_bidir_decel_hold_raw_err_rpm = 0;
+                 g_foc_bidir_zero_soft_active = 0U;
+                 g_foc_bidir_zero_soft_scale_percent = 100U;
+                 g_foc_bidir_zero_soft_limited_mA = 0;
+                 g_foc_low_speed_iq_slew_active = 0U;
+                 g_foc_low_speed_iq_slew_limited_mA = 0;
+                 g_foc_no_edge_decel_coast_active = 0U;
+                 g_foc_no_edge_decel_coast_limited_mA = 0;
+                 FOC_ResetLiftCurrentLimitDebug();
              }
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
