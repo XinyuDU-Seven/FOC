@@ -496,6 +496,8 @@ FOC_DEBUG_ROOT volatile uint8_t
 FOC_DEBUG_ROOT volatile uint8_t
     g_foc_motor1_speed_start_bumpless_active = 0U;
 FOC_DEBUG_ROOT volatile uint8_t
+    g_foc_motor1_speed_start_bumpless_hold_active = 0U;
+FOC_DEBUG_ROOT volatile uint8_t
     g_foc_motor1_speed_start_bumpless_latched = 0U;
 FOC_DEBUG_ROOT volatile uint8_t
     g_foc_motor1_speed_start_bumpless_timeout_active = 0U;
@@ -1477,6 +1479,7 @@ static void FOC_SpeedStart_UpdateDebug(void)
              s_speed_start_handoff_release_count;
      } else {
          g_foc_motor1_speed_start_bumpless_active = 0U;
+         g_foc_motor1_speed_start_bumpless_hold_active = 0U;
          g_foc_motor1_speed_start_bumpless_latched = 0U;
          g_foc_motor1_speed_start_bumpless_timeout_active = 0U;
          g_foc_motor1_speed_start_bumpless_release_count = 0U;
@@ -1505,6 +1508,7 @@ static void FOC_SpeedStart_ResetInternal(uint8_t clear_reverse_wait)
      g_foc_speed_start_breakaway_boost_mA = 0;
      g_foc_speed_start_unstuck_active = 0U;
      g_foc_motor1_speed_start_bumpless_active = 0U;
+     g_foc_motor1_speed_start_bumpless_hold_active = 0U;
      g_foc_motor1_speed_start_bumpless_latched = 0U;
      g_foc_motor1_speed_start_bumpless_timeout_active = 0U;
      g_foc_motor1_speed_start_bumpless_release_count = 0U;
@@ -1968,6 +1972,7 @@ static void FOC_SpeedStart_Close(float speed_error,
      s_speed_start_iq_ref = handoff_iq;
      g_foc_speed_start_track_hold_active = 0U;
      g_foc_motor1_speed_start_bumpless_active = 0U;
+     g_foc_motor1_speed_start_bumpless_hold_active = 0U;
      g_foc_motor1_speed_start_bumpless_latched = 0U;
      g_foc_motor1_speed_start_bumpless_delta_mA = 0;
 }
@@ -1990,6 +1995,7 @@ static void FOC_SpeedStart_BeginBreakaway(float speed_iq_ref_max)
      g_foc_speed_start_track_hold_active = 0U;
      g_foc_speed_start_breakaway_boost_mA = 0;
      g_foc_motor1_speed_start_bumpless_active = 0U;
+     g_foc_motor1_speed_start_bumpless_hold_active = 0U;
      g_foc_motor1_speed_start_bumpless_latched = 0U;
      g_foc_motor1_speed_start_bumpless_delta_mA = 0;
      if (g_foc_speed_start_breakaway_count < 0xFFFFFFFFU) {
@@ -2012,6 +2018,7 @@ static void FOC_SpeedStart_BeginSoftStart(float speed_iq_ref_max)
      FOC_PID_Reset(&s_ctx.pid_speed);
      g_foc_speed_start_track_hold_active = 0U;
      g_foc_motor1_speed_start_bumpless_active = 0U;
+     g_foc_motor1_speed_start_bumpless_hold_active = 0U;
      g_foc_motor1_speed_start_bumpless_latched = 0U;
      g_foc_motor1_speed_start_bumpless_delta_mA = 0;
      if (g_foc_speed_start_soft_count < 0xFFFFFFFFU) {
@@ -2235,6 +2242,7 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
      uint32_t elapsed_step_us;
      float decay_step;
      float floor_iq;
+     float pre_decay_floor;
      float candidate_iq;
      float release_margin;
      uint16_t handoff_slew_mA_per_s =
@@ -2245,10 +2253,13 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
          FOC_SpeedStart_ClosedCatchupActive(speed_ref_ctrl, speed_error);
      uint8_t confirm_cycles =
          g_foc_motor1_speed_start_bumpless_confirm_cycles;
+     uint8_t hold_floor_decay = 0U;
      float catchup_iq =
          (catchup_active != 0U)
          ? FOC_SpeedStart_CatchupIq(speed_iq_ref_max)
          : 0.0f;
+
+     g_foc_motor1_speed_start_bumpless_hold_active = 0U;
 
      if (s_speed_start_state != FOC_SPEED_START_STATE_CLOSED) {
          return iq_ref;
@@ -2323,8 +2334,36 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
          handoff_slew_mA_per_s =
              g_foc_motor1_speed_start_catchup_handoff_slew_mA_per_s;
      }
+
+     candidate_iq = FOC_CLAMP(iq_ref, 0.0f, speed_iq_ref_max);
+     release_margin =
+         (float)g_foc_motor1_speed_start_bumpless_release_margin_mA * 0.001f;
+     pre_decay_floor =
+         FOC_SpeedStart_ScaleHandoffIq(s_speed_start_iq_ref,
+                                       speed_error,
+                                       speed_iq_ref_max);
+     if ((catchup_active != 0U) && (pre_decay_floor < catchup_iq)) {
+         pre_decay_floor = catchup_iq;
+     }
+
+     /*
+      * Do not withdraw startup torque before the closed-loop candidate has
+      * actually caught it.  The previous unconditional 6 A/s decay could
+      * pull the loaded motor below its running torque while the speed PID was
+      * still seeded near 3 A.  The existing timeout remains the hard upper
+      * bound for this hold, so a bad sensor or an untunable load cannot freeze
+      * this floor forever.
+      */
+     if ((motor1_bumpless != 0U) &&
+         (FOC_SpeedStart_Motor1CatchupTimedOut() == 0U) &&
+         (speed_error > 0.0f) &&
+         (pre_decay_floor > (candidate_iq + release_margin))) {
+         hold_floor_decay = 1U;
+         g_foc_motor1_speed_start_bumpless_hold_active = 1U;
+     }
+
      decay_step = (float)handoff_slew_mA_per_s * 0.001f * speed_dt;
-     if (decay_step > 0.0f) {
+     if ((decay_step > 0.0f) && (hold_floor_decay == 0U)) {
          if (s_speed_start_iq_ref > decay_step) {
              s_speed_start_iq_ref -= decay_step;
          } else {
@@ -2343,7 +2382,6 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
          floor_iq = catchup_iq;
      }
 
-     candidate_iq = FOC_CLAMP(iq_ref, 0.0f, speed_iq_ref_max);
      if (motor1_bumpless != 0U) {
          if (speed_error <= 0.0f) {
              s_speed_start_iq_ref = 0.0f;
@@ -2356,9 +2394,6 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
 
          if ((FOC_SpeedStart_HandoffMinElapsed() != 0U) &&
              (catchup_active == 0U)) {
-             release_margin =
-                 (float)g_foc_motor1_speed_start_bumpless_release_margin_mA *
-                 0.001f;
              if (confirm_cycles == 0U) {
                  confirm_cycles = 1U;
              }

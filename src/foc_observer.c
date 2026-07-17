@@ -120,6 +120,14 @@ static uint8_t s_startup_sync_edge_count_store[FOC_OBSERVER_MOTOR_COUNT] = {
     0U,
     0U
 };
+static uint8_t s_startup_ref_seen_store[FOC_OBSERVER_MOTOR_COUNT] = {
+    0U,
+    0U
+};
+static uint8_t s_startup_ref_released_store[FOC_OBSERVER_MOTOR_COUNT] = {
+    0U,
+    0U
+};
 
 static uint8_t FOC_Observer_GetMotorIndex(void)
 {
@@ -134,6 +142,10 @@ static uint8_t FOC_Observer_GetMotorIndex(void)
     (s_predict_direction_store[FOC_Observer_GetMotorIndex()])
 #define s_startup_sync_edge_count \
     (s_startup_sync_edge_count_store[FOC_Observer_GetMotorIndex()])
+#define s_startup_ref_seen \
+    (s_startup_ref_seen_store[FOC_Observer_GetMotorIndex()])
+#define s_startup_ref_released \
+    (s_startup_ref_released_store[FOC_Observer_GetMotorIndex()])
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_direction_reset_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_decay_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_no_edge_elapsed_us = 0U;
@@ -144,6 +156,7 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_no_edge_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_resync_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_resync_diff_mrad = 0;
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_ref_active = 0U;
+FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_startup_ref_released = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_predict_speed_rpm = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_startup_release_rpm =
     (uint16_t)FOC_STARTUP_PREDICT_RELEASE_RPM;
@@ -611,6 +624,8 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
      s_startup_predict_speed_rpm   = 0.0f;
      s_predict_direction           = FOC_Observer_GetHallMotionDir(ctx);
      s_startup_sync_edge_count     = 0U;
+     s_startup_ref_seen            = 0U;
+     s_startup_ref_released        = 0U;
      g_foc_observer_direction_reset_count = 0U;
      g_foc_observer_no_edge_decay_count = 0U;
      g_foc_observer_no_edge_elapsed_us = 0U;
@@ -622,6 +637,7 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
      g_foc_observer_resync_diff_mrad = 0;
      g_foc_observer_startup_sync_boost_active = 0U;
      g_foc_observer_startup_sync_edge_count = 0U;
+     g_foc_observer_startup_ref_released = 0U;
      g_foc_observer_startup_pre_edge_clamp_active = 0U;
      g_foc_observer_startup_pre_edge_clamp_count = 0U;
      g_foc_observer_startup_pre_edge_clamp_step_mrad = 0;
@@ -920,6 +936,7 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
      float speed_ref_ctrl_abs = FOC_FABS(ctx->speed_ref_ctrl);
      float startup_track_err_rpm = speed_ref_ctrl_abs - speed_filtered_abs;
      FOC_Dir_e hall_dir;
+     uint8_t startup_ref_candidate;
      uint8_t use_startup_ref_predict;
      uint8_t startup_release_blend_active = 0U;
      uint8_t no_edge_overdue = FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
@@ -941,13 +958,6 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
      if (release_blend_done_rpm < 0.0f) {
          release_blend_done_rpm = -release_blend_done_rpm;
      }
-     use_startup_ref_predict =
-         ((ctx->hall_sector_dt_us == 0U) ||
-          (speed_filtered_abs < startup_release_rpm) ||
-          ((speed_filtered_abs < FOC_STARTUP_PREDICT_MAX_RPM) &&
-           (speed_ref_ctrl_abs > startup_release_rpm) &&
-           (startup_track_err_rpm > startup_release_err_rpm)))
-         ? 1U : 0U;
      g_foc_observer_startup_ref_active = 0U;
      g_foc_observer_startup_sync_active = 0U;
      g_foc_observer_startup_sync_boost_active = 0U;
@@ -967,17 +977,54 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          s_startup_sync_edge_count = 0U;
          g_foc_observer_startup_sync_edge_count = 0U;
      }
+     if (ctx->speed_ref <= 0.5f) {
+         s_startup_predict_speed_rpm = 0.0f;
+         s_startup_ref_seen = 0U;
+         s_startup_ref_released = 0U;
+     }
 
      if (s_predict_direction != hall_dir) {
          s_predict_direction = hall_dir;
          s_startup_predict_speed_rpm = 0.0f;
          s_startup_sync_edge_count = 0U;
+         s_startup_ref_seen = 0U;
+         s_startup_ref_released = 0U;
          if (cur_sector != 0U) {
              ctx->theta_e_predicted = ctx->hall_sector.theta_e;
              ctx->theta_e_prev = ctx->theta_e_predicted;
          }
          g_foc_observer_direction_reset_count++;
      }
+
+     startup_ref_candidate =
+         ((ctx->hall_sector_dt_us == 0U) ||
+          (speed_filtered_abs < startup_release_rpm) ||
+          ((speed_filtered_abs < FOC_STARTUP_PREDICT_MAX_RPM) &&
+           (speed_ref_ctrl_abs > startup_release_rpm) &&
+           (startup_track_err_rpm > startup_release_err_rpm)))
+         ? 1U : 0U;
+
+     /*
+      * Startup reference prediction is a one-shot assist.  Once valid Hall
+      * feedback has caught it and the normal release condition is reached,
+      * keep using measured speed for the rest of this run.  Without this
+      * latch, a loaded CLOSED loop could cross the tracking-error threshold
+      * and re-enter reference prediction, advancing the control angle faster
+      * than the rotor until Hall edges stopped.
+      */
+     if ((s_startup_ref_released == 0U) &&
+         (s_startup_ref_seen != 0U) &&
+         (startup_ref_candidate == 0U) &&
+         (ctx->hall_sector_dt_us != 0U) &&
+         (cur_sector != 0U) &&
+         (ctx->speed_ref > 0.5f)) {
+         s_startup_ref_released = 1U;
+     }
+     use_startup_ref_predict =
+         ((s_startup_ref_released == 0U) &&
+          (startup_ref_candidate != 0U)) ? 1U : 0U;
+     g_foc_observer_startup_ref_released = s_startup_ref_released;
+
      if (no_edge_overdue != 0U) {
          if (speed_for_predict > no_edge_limit_rpm) {
              speed_for_predict = no_edge_limit_rpm;
@@ -1021,6 +1068,7 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          }
          speed_for_predict = s_startup_predict_speed_rpm;
          g_foc_observer_startup_ref_active = 1U;
+         s_startup_ref_seen = 1U;
      } else {
          float release_target = speed_for_predict;
          float release_delta = release_target - s_startup_predict_speed_rpm;
@@ -1162,6 +1210,11 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
 #endif
 
          float diff = target - ctx->theta_e_predicted;
+
+         if (ctx->speed_ref > 0.5f) {
+             /* A matching edge also completes a same-direction flying start. */
+             s_startup_ref_seen = 1U;
+         }
 
          /* 处理角度环绕 */
 

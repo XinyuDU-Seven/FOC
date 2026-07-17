@@ -3082,6 +3082,16 @@ FocError Foc_EnableFocControl_AI(uint8_t unId)
   return FOC_AI_MapResult(FOC_Start());
 }
 
+static FocError FOC_AI_EnableForActiveReference(uint8_t unId,
+                                                 uint8_t command_active)
+{
+  if (command_active == 0U) {
+    return FOC_SUCCESS;
+  }
+
+  return Foc_EnableFocControl_AI(unId);
+}
+
  
 
 /*******************************************************************************************
@@ -3139,6 +3149,11 @@ FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq)
   /* err保存电机选择、fault状态检查和底层设置结果。 */
   FocError err;
 
+  err = FOC_AI_EnsureInitialized();
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
   err = FOC_AI_SelectMotor(unId);
 
   if (err != FOC_SUCCESS) {
@@ -3146,6 +3161,14 @@ FocError Foc_SetCurrentReference_AI(uint8_t unId, float fId, float fIq)
   }
 
   err = FOC_AI_CheckReferenceState();
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  err = FOC_AI_EnableForActiveReference(
+      unId,
+      (((fId > 0.0f) || (fId < 0.0f) ||
+        (fIq > 0.0f) || (fIq < 0.0f))) ? 1U : 0U);
   if (err != FOC_SUCCESS) {
     return err;
   }
@@ -3168,6 +3191,13 @@ static FocError FOC_AI_SetHybridSpeedReference(uint8_t unId, float fSpeed)
   }
 
   err = FOC_AI_CheckReferenceState();
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  err = FOC_AI_EnableForActiveReference(
+      unId,
+      (((fSpeed > 0.0f) || (fSpeed < 0.0f))) ? 1U : 0U);
   if (err != FOC_SUCCESS) {
     return err;
   }
@@ -3282,12 +3312,24 @@ FocError Foc_SetSpeedReference_AI(uint8_t unId, float fSpeed)
   /* err保存电机选择、fault状态检查和速度目标设置结果。 */
   FocError err;
 
+  err = FOC_AI_EnsureInitialized();
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
   err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
     return err;
   }
 
   err = FOC_AI_CheckReferenceState();
+  if (err != FOC_SUCCESS) {
+    return err;
+  }
+
+  err = FOC_AI_EnableForActiveReference(
+      unId,
+      (((fSpeed > 0.0f) || (fSpeed < 0.0f))) ? 1U : 0U);
   if (err != FOC_SUCCESS) {
     return err;
   }

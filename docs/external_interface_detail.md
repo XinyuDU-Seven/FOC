@@ -41,7 +41,6 @@ FocError err;
 
 err = Foc_GetMotorNum(car_id, seat_id, app_sub_motor_id, &foc_motor_id);
 if (err == FOC_SUCCESS) {
-    (void)Foc_EnableFocControl(foc_motor_id);
     (void)Foc_SetHybridControlReference(foc_motor_id, 1U, 1U, 0U, 0U, 2000U, 0U);
 }
 ```
@@ -156,7 +155,7 @@ Watch 建议：
 - 选择目标电机：`FOC_Core_SelectMotor(unId)`。
 - 更新 `g_foc_selected_motor_id`。
 - 如果当前电机已经是 `FOC_STATE_RUNNING`，直接返回成功。
-- 如果当前电机是 `FOC_STATE_FAULT`，按 fault 位映射成对外错误码返回。
+- 如果当前电机是 `FOC_STATE_FAULT`，先调用 `FOC_ClearFault()`。
 - 其他状态下调用 `FOC_Start()` 启动该电机的 FOC 输出。
 
 返回值：
@@ -167,7 +166,7 @@ Watch 建议：
 - `FOC_MOTOR_DISABLED`：底层启动返回 busy/fault。
 - `FOC_INPUT_PARAMETER_INVALID`：底层返回其他异常。
 
-注意：`SetSpeedReference` 或 `SetHybridControlReference` 只写目标，不等价于启动 PWM。应用层通常应在按键动作开始时先调用 `Foc_EnableFocControl()`。
+注意：该接口仍可由应用层显式调用。当前非零速度/电流参考接口会在 fault 检查通过后自动复用该接口启动 PWM，因此常规应用层不再需要先调用 `Foc_EnableFocControl()`。
 
 ### 4.2 `FocError Foc_DisableFocControl(uint8_t unId)`
 
@@ -224,6 +223,7 @@ Watch 建议：
   - 目标幅值非 `0` 时，方向 `1` 输出正目标，方向 `2` 输出负目标。
   - 目标幅值非 `0` 且方向不是 `1/2`，返回 `FOC_INVALID_DIRECITON`。
 - 根据 mode 分发到速度、电流或电压接口。
+- 非零速度或电流目标会自动复用 `Foc_EnableFocControl()`；全零关闭指令不会触发自动使能。
 
 返回值：
 
@@ -241,7 +241,7 @@ Foc_SetHybridControlReference(foc_motor_id, 1U, 1U, 0U, 0U, 2000U, 0U);
 /* 反向 2000 rpm */
 Foc_SetHybridControlReference(foc_motor_id, 1U, 2U, 0U, 0U, 2000U, 0U);
 
-/* 目标速度 0，全 0 调用当前会落入 mode 0，并设置速度目标 0 */
+/* 全零关闭指令：停止 FOC 输出，不会重新自动使能 */
 Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 ```
 
@@ -258,6 +258,7 @@ Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 
 - 选择电机。
 - 如果当前电机处于 fault 状态，返回 fault 映射错误码。
+- 目标速度非零时，自动调用 `Foc_EnableFocControl()`；已经运行时该调用直接成功。
 - 清除内部测试/自动模式。
 - 调用 `FOC_SetSpeedRef(fSpeed)` 写入速度目标。
 
@@ -268,7 +269,7 @@ Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 - fault 映射错误码：当前电机处于 fault。
 - `FOC_MOTOR_DISABLED` 或 `FOC_INPUT_PARAMETER_INVALID`：底层设置失败。
 
-注意：该接口本身不调用 `FOC_Start()`。如果电机处于 idle，速度目标可以写入上下文，但不会自动产生 PWM 输出。
+注意：`fSpeed == 0` 不会使能处于 idle 的电机；电机已经运行时仍会正常写入零速度目标。
 
 ### 5.3 `FocError Foc_SetCurrentReference(uint8_t unId, float fId, float fIq)`
 
@@ -282,6 +283,7 @@ Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 
 - 选择电机。
 - 如果当前电机处于 fault 状态，返回 fault 映射错误码。
+- `fId` 或 `fIq` 非零时，自动调用 `Foc_EnableFocControl()`；已经运行时该调用直接成功。
 - 清除内部测试/自动模式。
 - 调用 `FOC_SetCurrentRef(fId, fIq)`。
 
@@ -509,8 +511,7 @@ g_foc_hall_travel_offset[unId] = hall_position - g_foc_hall_travel_count[unId];
 
 1. 应用层根据座椅对象拿到 `m_eSeatSubMotorID`。
 2. 调用 `Foc_GetMotorNum()` 转成 FOC 物理电机号。
-3. 调用 `Foc_EnableFocControl(foc_motor_id)`。
-4. 调用 `Foc_SetHybridControlReference(foc_motor_id, 1, direction, 0, 0, speed_rpm, 0)`。
+3. 调用 `Foc_SetHybridControlReference(foc_motor_id, 1, direction, 0, 0, speed_rpm, 0)`；非零目标会自动使能对应电机。
 
 ### 8.2 按键保持
 
@@ -526,7 +527,7 @@ g_foc_hall_travel_offset[unId] = hall_position - g_foc_hall_travel_count[unId];
 Foc_SetHybridControlReference(foc_motor_id, 0U, 0U, 0U, 0U, 0U, 0U);
 ```
 
-会进入 mode 0，并设置速度目标为 0。它不是 `Disable`，也不是完全无控制滑行，而是给速度环一个 0 目标。若座椅舒适性要求“软减速到接近 0”，应用层更适合先按斜坡逐步降低 `unParam4`，最后再决定是否调用 `Foc_DisableFocControl()`。
+会直接停止对应电机的 FOC 输出，并且不会触发自动使能。若座椅舒适性要求“软减速到接近 0”，应用层应先按斜坡逐步降低 `unParam4`，最后再发送全零关闭指令。
 
 ### 8.4 位置同步
 
@@ -588,6 +589,6 @@ Foc_ReadMotorHallStates(foc_motor_id, &foc_pos);
 1. `Foc_SetVoltageReference()`、`Foc_SetTorqueReference()`、`Foc_SetIFReference()`、`Foc_SetVFReference()` 当前未实现实际控制，合法参数下也会返回 `FOC_INPUT_PARAMETER_INVALID`。
 2. `Foc_SetHybridControlReference()` 的 mode 0 和 mode 2 当前没有实现 Vq 比例前馈，`unParam2` 当前完全未使用。
 3. 控制接口应传 FOC 物理电机号 `0/1`。不要把应用层子电机 ID 直接传给控制接口；当前控制接口会直接返回 `FOC_MOTOR_ID_INVALID`。
-4. `Foc_SetSpeedReference()` 和 `Foc_SetCurrentReference()` 当前不会因为 idle 直接报错，但也不会自动启动 PWM。需要应用层调用 `Foc_EnableFocControl()`。
+4. `Foc_SetSpeedReference()` 和 `Foc_SetCurrentReference()` 收到非零目标时会自动复用 `Foc_EnableFocControl()`；零目标不会使能处于 idle 的电机。
 5. `Foc_DisableFocControl()` 是关闭 FOC 输出，不是舒适性软停。
 6. `Foc_WriteMotorHallStates()` 的第三个参数当前表示应用层绝对 Hall 位置，不是增量 offset。
