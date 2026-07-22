@@ -490,6 +490,12 @@ FOC_DEBUG_ROOT volatile uint8_t
 FOC_DEBUG_ROOT volatile uint16_t
     g_foc_motor1_speed_start_catchup_timeout_ms = 800U;
 FOC_DEBUG_ROOT volatile uint16_t
+    g_foc_motor1_speed_start_catchup_max_ms = 3000U;
+FOC_DEBUG_ROOT volatile uint16_t
+    g_foc_motor1_speed_start_progress_rpm = 20U;
+FOC_DEBUG_ROOT volatile uint16_t
+    g_foc_motor1_speed_start_catchup_max_rpm = 1100U;
+FOC_DEBUG_ROOT volatile uint16_t
     g_foc_motor1_speed_start_bumpless_release_margin_mA = 150U;
 FOC_DEBUG_ROOT volatile uint8_t
     g_foc_motor1_speed_start_bumpless_confirm_cycles = 3U;
@@ -502,13 +508,18 @@ FOC_DEBUG_ROOT volatile uint8_t
 FOC_DEBUG_ROOT volatile uint8_t
     g_foc_motor1_speed_start_bumpless_timeout_active = 0U;
 FOC_DEBUG_ROOT volatile uint8_t
+    g_foc_motor1_speed_start_bumpless_hard_timeout_active = 0U;
+FOC_DEBUG_ROOT volatile uint8_t
     g_foc_motor1_speed_start_bumpless_release_count = 0U;
 FOC_DEBUG_ROOT volatile int16_t
     g_foc_motor1_speed_start_bumpless_delta_mA = 0;
 FOC_DEBUG_ROOT volatile uint16_t
+    g_foc_motor1_speed_start_no_progress_elapsed_ms = 0U;
+FOC_DEBUG_ROOT volatile uint16_t
     g_foc_speed_start_handoff_elapsed_ms = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_overspeed_rpm = 30U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_handoff_pid_iq_max_mA = 1800U;
+/* Retained for debugger compatibility; motor1 now seeds from actual handoff iq. */
 FOC_DEBUG_ROOT volatile uint16_t
     g_foc_motor1_speed_start_handoff_pid_iq_max_mA = 3000U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_start_track_hold_max_rpm = 650U;
@@ -857,6 +868,10 @@ static uint32_t s_speed_start_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_speed_start_soft_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_speed_start_release_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint32_t s_speed_start_handoff_elapsed_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint32_t s_speed_start_catchup_no_progress_us_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static float s_speed_start_catchup_progress_fdb_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
+static uint8_t s_speed_start_catchup_progress_active_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
+static uint8_t s_speed_start_catchup_timeout_latched_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint8_t s_speed_start_handoff_release_count_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static uint8_t s_speed_start_handoff_tail_latched_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 static float s_speed_start_iq_ref_store[FOC_CORE_MOTOR_COUNT] = {0.0f, 0.0f};
@@ -891,6 +906,14 @@ static uint32_t s_hall_event_seq_seen_store[FOC_CORE_MOTOR_COUNT] = {0U, 0U};
 #define s_speed_start_soft_elapsed_us    (s_speed_start_soft_elapsed_us_store[s_foc_core_active_motor])
 #define s_speed_start_release_elapsed_us (s_speed_start_release_elapsed_us_store[s_foc_core_active_motor])
 #define s_speed_start_handoff_elapsed_us (s_speed_start_handoff_elapsed_us_store[s_foc_core_active_motor])
+#define s_speed_start_catchup_no_progress_us \
+    (s_speed_start_catchup_no_progress_us_store[s_foc_core_active_motor])
+#define s_speed_start_catchup_progress_fdb \
+    (s_speed_start_catchup_progress_fdb_store[s_foc_core_active_motor])
+#define s_speed_start_catchup_progress_active \
+    (s_speed_start_catchup_progress_active_store[s_foc_core_active_motor])
+#define s_speed_start_catchup_timeout_latched \
+    (s_speed_start_catchup_timeout_latched_store[s_foc_core_active_motor])
 #define s_speed_start_handoff_release_count \
     (s_speed_start_handoff_release_count_store[s_foc_core_active_motor])
 #define s_speed_start_handoff_tail_latched \
@@ -1046,6 +1069,9 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
                                       uint8_t zero_speed_pid_frozen,
                                       uint8_t zero_output_held);
 static float FOC_SpeedStart_MotionFdbAbs(void);
+static void FOC_SpeedStart_ResetCatchupProgress(void);
+static void FOC_SpeedStart_UpdateCatchupProgress(float speed_error,
+                                                 uint32_t elapsed_us);
 static float FOC_SpeedStart_BreakawayIq(float speed_iq_ref_max);
 static float FOC_SpeedStart_UnstuckIqMax(float speed_iq_ref_max);
 static uint8_t FOC_SpeedStart_ClosedCatchupActive(float speed_ref_ctrl,
@@ -1073,6 +1099,7 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
                                                float speed_ref_ctrl,
                                                float speed_error,
                                                float speed_iq_ref_max,
+                                               float speed_iq_ref_base_max,
                                                float speed_dt);
 static float FOC_GetSpeedIqPositiveLimit(float speed_ref_ctrl,
                                          float speed_error);
@@ -1439,9 +1466,24 @@ static uint8_t FOC_SpeedStart_Motor1CatchupTimedOut(void)
      }
 
      timeout_us =
-         (uint32_t)g_foc_motor1_speed_start_catchup_timeout_ms * 1000U;
+          (uint32_t)g_foc_motor1_speed_start_catchup_timeout_ms * 1000U;
      /* A zero timeout safely disables the catch-up floor immediately. */
      return ((timeout_us == 0U) ||
+              (s_speed_start_catchup_timeout_latched != 0U)) ? 1U : 0U;
+}
+
+static uint8_t FOC_SpeedStart_Motor1CatchupHardTimedOut(void)
+{
+     uint32_t timeout_us;
+
+     if ((FOC_SpeedStart_Motor1BumplessEnabled() == 0U) ||
+         (s_speed_start_state != FOC_SPEED_START_STATE_CLOSED)) {
+         return 0U;
+     }
+
+     timeout_us =
+         (uint32_t)g_foc_motor1_speed_start_catchup_max_ms * 1000U;
+     return ((timeout_us != 0U) &&
              (s_speed_start_handoff_elapsed_us >= timeout_us)) ? 1U : 0U;
 }
 
@@ -1467,12 +1509,16 @@ static void FOC_SpeedStart_UpdateDebug(void)
      g_foc_speed_start_soft_elapsed_ms =
          FOC_SpeedStartElapsedMs(s_speed_start_soft_elapsed_us);
      g_foc_speed_start_handoff_elapsed_ms =
-         FOC_SpeedStartElapsedMs(s_speed_start_handoff_elapsed_us);
+          FOC_SpeedStartElapsedMs(s_speed_start_handoff_elapsed_us);
+     g_foc_motor1_speed_start_no_progress_elapsed_ms =
+         FOC_SpeedStartElapsedMs(s_speed_start_catchup_no_progress_us);
      g_foc_speed_start_applied_iq_mA =
          FOC_Log_ToI16(signed_iq, 1000.0f);
      if (FOC_SpeedStart_Motor1BumplessEnabled() != 0U) {
-         g_foc_motor1_speed_start_bumpless_timeout_active =
-             FOC_SpeedStart_Motor1CatchupTimedOut();
+          g_foc_motor1_speed_start_bumpless_timeout_active =
+              FOC_SpeedStart_Motor1CatchupTimedOut();
+          g_foc_motor1_speed_start_bumpless_hard_timeout_active =
+              FOC_SpeedStart_Motor1CatchupHardTimedOut();
          g_foc_motor1_speed_start_bumpless_latched =
              s_speed_start_handoff_tail_latched;
          g_foc_motor1_speed_start_bumpless_release_count =
@@ -1481,9 +1527,11 @@ static void FOC_SpeedStart_UpdateDebug(void)
          g_foc_motor1_speed_start_bumpless_active = 0U;
          g_foc_motor1_speed_start_bumpless_hold_active = 0U;
          g_foc_motor1_speed_start_bumpless_latched = 0U;
-         g_foc_motor1_speed_start_bumpless_timeout_active = 0U;
-         g_foc_motor1_speed_start_bumpless_release_count = 0U;
-         g_foc_motor1_speed_start_bumpless_delta_mA = 0;
+          g_foc_motor1_speed_start_bumpless_timeout_active = 0U;
+          g_foc_motor1_speed_start_bumpless_hard_timeout_active = 0U;
+          g_foc_motor1_speed_start_bumpless_release_count = 0U;
+          g_foc_motor1_speed_start_bumpless_delta_mA = 0;
+          g_foc_motor1_speed_start_no_progress_elapsed_ms = 0U;
      }
 }
 
@@ -1497,6 +1545,10 @@ static void FOC_SpeedStart_ResetInternal(uint8_t clear_reverse_wait)
      s_speed_start_soft_elapsed_us = 0U;
      s_speed_start_release_elapsed_us = 0U;
      s_speed_start_handoff_elapsed_us = 0U;
+     s_speed_start_catchup_no_progress_us = 0U;
+     s_speed_start_catchup_progress_fdb = 0.0f;
+     s_speed_start_catchup_progress_active = 0U;
+     s_speed_start_catchup_timeout_latched = 0U;
      s_speed_start_handoff_release_count = 0U;
      s_speed_start_handoff_tail_latched = 0U;
      s_speed_start_iq_ref = 0.0f;
@@ -1511,8 +1563,10 @@ static void FOC_SpeedStart_ResetInternal(uint8_t clear_reverse_wait)
      g_foc_motor1_speed_start_bumpless_hold_active = 0U;
      g_foc_motor1_speed_start_bumpless_latched = 0U;
      g_foc_motor1_speed_start_bumpless_timeout_active = 0U;
+     g_foc_motor1_speed_start_bumpless_hard_timeout_active = 0U;
      g_foc_motor1_speed_start_bumpless_release_count = 0U;
      g_foc_motor1_speed_start_bumpless_delta_mA = 0;
+     g_foc_motor1_speed_start_no_progress_elapsed_ms = 0U;
      FOC_SpeedStart_UpdateDebug();
 }
 
@@ -1545,6 +1599,79 @@ static float FOC_SpeedStart_MotionFdbAbs(void)
      }
 
      return (ctrl_abs > fdb_abs) ? ctrl_abs : fdb_abs;
+}
+
+static void FOC_SpeedStart_ResetCatchupProgress(void)
+{
+     s_speed_start_catchup_no_progress_us = 0U;
+     s_speed_start_catchup_progress_fdb = FOC_FABS(s_ctx.speed_ctrl_fdb);
+     s_speed_start_catchup_progress_active = 0U;
+     s_speed_start_catchup_timeout_latched = 0U;
+}
+
+static void FOC_SpeedStart_UpdateCatchupProgress(float speed_error,
+                                                 uint32_t elapsed_us)
+{
+     float progress_rpm =
+         (float)g_foc_motor1_speed_start_progress_rpm;
+     float catchup_err_rpm = (float)g_foc_speed_start_catchup_err_rpm;
+     float fdb_abs = FOC_FABS(s_ctx.speed_ctrl_fdb);
+     uint32_t timeout_us =
+         (uint32_t)g_foc_motor1_speed_start_catchup_timeout_ms * 1000U;
+
+     if (progress_rpm < 1.0f) {
+         progress_rpm = 1.0f;
+     }
+     if (catchup_err_rpm < 1.0f) {
+         catchup_err_rpm = 1.0f;
+     }
+
+     if ((FOC_SpeedStart_Motor1BumplessEnabled() == 0U) ||
+         (s_speed_start_state != FOC_SPEED_START_STATE_CLOSED)) {
+         s_speed_start_catchup_no_progress_us = 0U;
+         s_speed_start_catchup_progress_fdb = fdb_abs;
+         s_speed_start_catchup_progress_active = 0U;
+         return;
+     }
+     if (s_speed_start_catchup_timeout_latched != 0U) {
+         /* Preserve the elapsed value that caused the latched timeout. */
+         return;
+     }
+     if ((s_speed_start_iq_ref <= 0.0f) ||
+         (speed_error <= catchup_err_rpm)) {
+         s_speed_start_catchup_no_progress_us = 0U;
+         s_speed_start_catchup_progress_fdb = fdb_abs;
+         s_speed_start_catchup_progress_active = 0U;
+         return;
+     }
+     if (s_speed_start_catchup_progress_active == 0U) {
+         /* Start a fresh progress window after every normal tail re-entry. */
+         s_speed_start_catchup_no_progress_us = 0U;
+         s_speed_start_catchup_progress_fdb = fdb_abs;
+         s_speed_start_catchup_progress_active = 1U;
+         return;
+     }
+
+     /*
+      * This timer measures failure to catch up, not merely time spent in
+      * CLOSED.  A loaded motor that is still gaining speed keeps its startup
+      * torque; a motor that plateaus for the configured interval releases it
+      * through the normal slew path instead of holding excess current forever.
+      */
+     if (fdb_abs >= (s_speed_start_catchup_progress_fdb + progress_rpm)) {
+         s_speed_start_catchup_progress_fdb = fdb_abs;
+         s_speed_start_catchup_no_progress_us = 0U;
+     } else if ((0xFFFFFFFFU - s_speed_start_catchup_no_progress_us) >=
+                elapsed_us) {
+         s_speed_start_catchup_no_progress_us += elapsed_us;
+     } else {
+         s_speed_start_catchup_no_progress_us = 0xFFFFFFFFU;
+     }
+     if ((timeout_us != 0U) &&
+         (s_speed_start_catchup_no_progress_us >= timeout_us)) {
+         /* A real no-progress timeout cannot be undone by a later Hall spike. */
+         s_speed_start_catchup_timeout_latched = 1U;
+     }
 }
 
 static uint8_t FOC_SpeedStart_IsNearZero(void)
@@ -1666,7 +1793,8 @@ static uint8_t FOC_SpeedStart_ClosedCatchupActive(float speed_ref_ctrl,
       * 650 rpm even though the loaded motor was still near 525 rpm.
       */
      if (FOC_SpeedStart_Motor1BumplessEnabled() != 0U) {
-         catchup_gate_rpm = FOC_FABS(s_ctx.speed_ctrl_fdb);
+          max_rpm = (float)g_foc_motor1_speed_start_catchup_max_rpm;
+          catchup_gate_rpm = FOC_FABS(s_ctx.speed_ctrl_fdb);
      }
 
      if (err_rpm < 1.0f) {
@@ -1681,10 +1809,10 @@ static uint8_t FOC_SpeedStart_ClosedCatchupActive(float speed_ref_ctrl,
          return 0U;
      }
      if ((FOC_SpeedStart_Motor1BumplessEnabled() != 0U) &&
-         ((s_speed_start_handoff_tail_latched != 0U) ||
-          (FOC_SpeedStart_Motor1CatchupTimedOut() != 0U) ||
-          ((FOC_SpeedStart_HandoffMinElapsed() != 0U) &&
-           (s_speed_start_iq_ref <= 0.0f)))) {
+          ((FOC_SpeedStart_Motor1CatchupTimedOut() != 0U) ||
+           (FOC_SpeedStart_Motor1CatchupHardTimedOut() != 0U) ||
+           ((FOC_SpeedStart_HandoffMinElapsed() != 0U) &&
+            (s_speed_start_iq_ref <= 0.0f)))) {
          return 0U;
      }
 
@@ -1710,32 +1838,39 @@ static float FOC_SpeedStart_EffectiveIqMax(float speed_iq_ref_max,
 {
      float max_iq = speed_iq_ref_max;
      uint8_t catchup_active =
-         FOC_SpeedStart_ClosedCatchupActive(speed_ref_ctrl, speed_error);
-     uint8_t motor1_bumpless_tail = 0U;
+          FOC_SpeedStart_ClosedCatchupActive(speed_ref_ctrl, speed_error);
+     uint8_t motor1_bumpless_closed =
+         ((FOC_SpeedStart_Motor1BumplessEnabled() != 0U) &&
+          (s_speed_start_state == FOC_SPEED_START_STATE_CLOSED)) ? 1U : 0U;
 
-     if ((FOC_SpeedStart_Motor1BumplessEnabled() != 0U) &&
-         (s_speed_start_state == FOC_SPEED_START_STATE_CLOSED) &&
-         (FOC_SpeedStart_HandoffMinElapsed() != 0U) &&
-         (catchup_active == 0U)) {
-         /* Return to the normal limit while any excess floor ramps down. */
-         s_speed_start_handoff_tail_latched = 1U;
-         motor1_bumpless_tail = 1U;
+     if ((motor1_bumpless_closed != 0U) && (catchup_active != 0U)) {
+          /* A transient near-target sample must not permanently end catch-up. */
+          s_speed_start_handoff_tail_latched = 0U;
+     } else if ((motor1_bumpless_closed != 0U) &&
+                (FOC_SpeedStart_HandoffMinElapsed() != 0U) &&
+                (s_speed_start_iq_ref > 0.0f)) {
+          /* Let the residual floor slew back to the normal current limit. */
+          s_speed_start_handoff_tail_latched = 1U;
      }
 
-     if ((s_speed_start_state == FOC_SPEED_START_STATE_BREAKAWAY) ||
-         (s_speed_start_state == FOC_SPEED_START_STATE_SOFT_START) ||
-         ((s_speed_start_state == FOC_SPEED_START_STATE_CLOSED) &&
-          (motor1_bumpless_tail == 0U) &&
-          ((s_speed_start_iq_ref > 0.0f) ||
-           (catchup_active != 0U)))) {
-         max_iq = FOC_SpeedStart_UnstuckIqMax(speed_iq_ref_max);
-         if (max_iq < s_speed_start_iq_ref) {
-             max_iq = s_speed_start_iq_ref;
-         }
-     } else if ((motor1_bumpless_tail != 0U) &&
-                (s_speed_start_iq_ref > max_iq)) {
-         /* Do not hard-cut an above-base residual; only let its ceiling fall. */
-         max_iq = s_speed_start_iq_ref;
+     if (motor1_bumpless_closed != 0U) {
+          /*
+           * CLOSED never needs the full unstuck ceiling.  Preserve only the
+           * current that was already being applied at handoff, so bumpless
+           * tracking cannot silently raise the physical current command.
+           */
+          if (max_iq < s_speed_start_iq_ref) {
+              max_iq = s_speed_start_iq_ref;
+          }
+     } else if ((s_speed_start_state == FOC_SPEED_START_STATE_BREAKAWAY) ||
+          (s_speed_start_state == FOC_SPEED_START_STATE_SOFT_START) ||
+          ((s_speed_start_state == FOC_SPEED_START_STATE_CLOSED) &&
+           ((s_speed_start_iq_ref > 0.0f) ||
+            (catchup_active != 0U)))) {
+          max_iq = FOC_SpeedStart_UnstuckIqMax(speed_iq_ref_max);
+          if (max_iq < s_speed_start_iq_ref) {
+              max_iq = s_speed_start_iq_ref;
+          }
      }
      g_foc_speed_start_catchup_active = catchup_active;
      g_foc_speed_start_catchup_iq_mA =
@@ -1926,8 +2061,7 @@ static void FOC_SpeedStart_Close(float speed_error,
      float pid_seed_iq;
      float pid_seed_max;
      float p_term;
-     float motor1_seed_err_rpm =
-         (float)g_foc_speed_start_catchup_err_rpm;
+     float i_term;
 
      if (speed_iq_ref_max < 0.0f) {
          speed_iq_ref_max = 0.0f;
@@ -1937,16 +2071,12 @@ static void FOC_SpeedStart_Close(float speed_error,
                                                 speed_iq_ref_max);
 
      pid_seed_iq = handoff_iq;
-     if (motor1_seed_err_rpm < 1.0f) {
-         motor1_seed_err_rpm = 1.0f;
-     }
-     if ((FOC_SpeedStart_Motor1BumplessEnabled() != 0U) &&
-         (speed_error > motor1_seed_err_rpm)) {
-         pid_seed_max =
-             (float)g_foc_motor1_speed_start_handoff_pid_iq_max_mA * 0.001f;
+     if (FOC_SpeedStart_Motor1BumplessEnabled() != 0U) {
+          /* Seed the controller to the current that is already on the motor. */
+          pid_seed_max = speed_iq_ref_max;
      } else {
-         pid_seed_max =
-             (float)g_foc_speed_start_handoff_pid_iq_max_mA * 0.001f;
+          pid_seed_max =
+              (float)g_foc_speed_start_handoff_pid_iq_max_mA * 0.001f;
      }
      if (pid_seed_max <= 0.0f) {
          pid_seed_iq = 0.0f;
@@ -1955,11 +2085,23 @@ static void FOC_SpeedStart_Close(float speed_error,
      }
 
      p_term = s_ctx.pid_speed.kp * speed_error;
-     if ((s_ctx.pid_speed.ki > 0.0f) && (pid_seed_iq > p_term)) {
-         s_ctx.pid_speed.integral = (pid_seed_iq - p_term) /
-                                    s_ctx.pid_speed.ki;
+     if ((FOC_SpeedStart_Motor1BumplessEnabled() != 0U) &&
+         (speed_error > 0.0f) &&
+         (pid_seed_iq > 0.0f) &&
+         (s_ctx.pid_speed.ki > 1.0e-6f)) {
+          /* Motor1 needs an exact bumpless seed, including a negative I term. */
+          i_term = FOC_CLAMP(pid_seed_iq - p_term,
+                             -p_term,
+                             pid_seed_max - p_term);
+          s_ctx.pid_speed.integral = i_term / s_ctx.pid_speed.ki;
+     } else if ((FOC_SpeedStart_Motor1BumplessEnabled() == 0U) &&
+                (s_ctx.pid_speed.ki > 0.0f) &&
+                (pid_seed_iq > p_term)) {
+          /* Preserve the established motor0 startup behavior. */
+          s_ctx.pid_speed.integral = (pid_seed_iq - p_term) /
+                                     s_ctx.pid_speed.ki;
      } else {
-         s_ctx.pid_speed.integral = 0.0f;
+          s_ctx.pid_speed.integral = 0.0f;
      }
      s_ctx.pid_speed.prev_error = speed_error;
      FOC_LowSpeedIqSlew_Prime(handoff_iq);
@@ -1970,6 +2112,7 @@ static void FOC_SpeedStart_Close(float speed_error,
      s_speed_start_handoff_release_count = 0U;
      s_speed_start_handoff_tail_latched = 0U;
      s_speed_start_iq_ref = handoff_iq;
+     FOC_SpeedStart_ResetCatchupProgress();
      g_foc_speed_start_track_hold_active = 0U;
      g_foc_motor1_speed_start_bumpless_active = 0U;
      g_foc_motor1_speed_start_bumpless_hold_active = 0U;
@@ -1985,6 +2128,7 @@ static void FOC_SpeedStart_BeginBreakaway(float speed_iq_ref_max)
      s_speed_start_soft_elapsed_us = 0U;
      s_speed_start_release_elapsed_us = 0U;
      s_speed_start_handoff_elapsed_us = 0U;
+     FOC_SpeedStart_ResetCatchupProgress();
      s_speed_start_handoff_release_count = 0U;
      s_speed_start_handoff_tail_latched = 0U;
      s_speed_start_direction = s_ctx.direction;
@@ -2010,6 +2154,7 @@ static void FOC_SpeedStart_BeginSoftStart(float speed_iq_ref_max)
      s_speed_start_soft_elapsed_us = 0U;
      s_speed_start_release_elapsed_us = 0U;
      s_speed_start_handoff_elapsed_us = 0U;
+     FOC_SpeedStart_ResetCatchupProgress();
      s_speed_start_handoff_release_count = 0U;
      s_speed_start_handoff_tail_latched = 0U;
      s_speed_start_iq_ref =
@@ -2157,8 +2302,11 @@ static uint8_t FOC_SpeedStart_Service(float speed_ref_ctrl,
          (s_speed_start_state == FOC_SPEED_START_STATE_CLOSED) &&
          ((FOC_SpeedStart_HandoffMinElapsed() == 0U) ||
           (s_speed_start_iq_ref > 0.0f))) {
-         /* Keep a finite startup window even while no floor is being applied. */
-         FOC_SpeedStart_AdvanceHandoffElapsed(elapsed_us);
+          /* Keep total duration and lack-of-progress duration independent. */
+          FOC_SpeedStart_AdvanceHandoffElapsed(elapsed_us);
+          FOC_SpeedStart_UpdateCatchupProgress(
+              speed_ref_ctrl - s_ctx.speed_ctrl_fdb,
+              elapsed_us);
      }
      FOC_SpeedStart_UpdateDebug();
      return s_speed_start_state;
@@ -2235,6 +2383,7 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
                                                float speed_ref_ctrl,
                                                float speed_error,
                                                float speed_iq_ref_max,
+                                               float speed_iq_ref_base_max,
                                                float speed_dt)
 {
      uint32_t handoff_max_us =
@@ -2245,6 +2394,7 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
      float pre_decay_floor;
      float candidate_iq;
      float release_margin;
+     float release_limit;
      uint16_t handoff_slew_mA_per_s =
          g_foc_speed_start_handoff_slew_mA_per_s;
      uint8_t motor1_bumpless =
@@ -2252,8 +2402,12 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
      uint8_t catchup_active =
          FOC_SpeedStart_ClosedCatchupActive(speed_ref_ctrl, speed_error);
      uint8_t confirm_cycles =
-         g_foc_motor1_speed_start_bumpless_confirm_cycles;
+          g_foc_motor1_speed_start_bumpless_confirm_cycles;
      uint8_t hold_floor_decay = 0U;
+     uint8_t no_progress_timeout =
+         FOC_SpeedStart_Motor1CatchupTimedOut();
+     uint8_t hard_timeout =
+         FOC_SpeedStart_Motor1CatchupHardTimedOut();
      float catchup_iq =
          (catchup_active != 0U)
          ? FOC_SpeedStart_CatchupIq(speed_iq_ref_max)
@@ -2261,12 +2415,17 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
 
      g_foc_motor1_speed_start_bumpless_hold_active = 0U;
 
+     if (speed_iq_ref_base_max < 0.0f) {
+         speed_iq_ref_base_max = 0.0f;
+     }
+
      if (s_speed_start_state != FOC_SPEED_START_STATE_CLOSED) {
          return iq_ref;
      }
      if ((s_speed_start_iq_ref <= 0.0f) && (catchup_active == 0U)) {
          s_speed_start_handoff_release_count = 0U;
          if (motor1_bumpless != 0U) {
+             s_speed_start_handoff_tail_latched = 0U;
              g_foc_motor1_speed_start_bumpless_active = 0U;
              g_foc_motor1_speed_start_bumpless_delta_mA = 0;
              FOC_SpeedStart_UpdateDebug();
@@ -2276,6 +2435,9 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
      if (speed_iq_ref_max <= 0.0f) {
          s_speed_start_iq_ref = 0.0f;
          s_speed_start_handoff_release_count = 0U;
+         if (motor1_bumpless != 0U) {
+             s_speed_start_handoff_tail_latched = 0U;
+         }
          if (motor1_bumpless == 0U) {
              s_speed_start_handoff_elapsed_us = 0U;
          }
@@ -2347,17 +2509,16 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
      }
 
      /*
-      * Do not withdraw startup torque before the closed-loop candidate has
-      * actually caught it.  The previous unconditional 6 A/s decay could
-      * pull the loaded motor below its running torque while the speed PID was
-      * still seeded near 3 A.  The existing timeout remains the hard upper
-      * bound for this hold, so a bad sensor or an untunable load cannot freeze
-      * this floor forever.
+      * Keep the startup floor while the motor is genuinely catching up.  The
+      * short timeout now means "no speed progress", not "800 ms since CLOSED";
+      * the separate hard timeout still bounds total elevated-current time.
       */
      if ((motor1_bumpless != 0U) &&
-         (FOC_SpeedStart_Motor1CatchupTimedOut() == 0U) &&
+         (no_progress_timeout == 0U) &&
+         (hard_timeout == 0U) &&
          (speed_error > 0.0f) &&
-         (pre_decay_floor > (candidate_iq + release_margin))) {
+         ((catchup_active != 0U) ||
+          (pre_decay_floor > (candidate_iq + release_margin)))) {
          hold_floor_decay = 1U;
          g_foc_motor1_speed_start_bumpless_hold_active = 1U;
      }
@@ -2375,6 +2536,9 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
      }
      s_speed_start_iq_ref =
          FOC_CLAMP(s_speed_start_iq_ref, 0.0f, speed_iq_ref_max);
+     if ((motor1_bumpless != 0U) && (s_speed_start_iq_ref <= 0.0f)) {
+         s_speed_start_handoff_tail_latched = 0U;
+     }
      floor_iq = FOC_SpeedStart_ScaleHandoffIq(s_speed_start_iq_ref,
                                               speed_error,
                                               speed_iq_ref_max);
@@ -2383,11 +2547,16 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
      }
 
      if (motor1_bumpless != 0U) {
-         if (speed_error <= 0.0f) {
-             s_speed_start_iq_ref = 0.0f;
-             s_speed_start_handoff_release_count = 0U;
-             g_foc_motor1_speed_start_bumpless_active = 0U;
-             g_foc_motor1_speed_start_bumpless_delta_mA = 0;
+          if (speed_error <= 0.0f) {
+              /*
+               * The scaled floor is already zero during overspeed.  Keep the
+               * stored tail and let it decay normally so one noisy crossing
+               * cannot make the next positive-error sample jump straight to
+               * the lower steady-state ceiling.
+               */
+              s_speed_start_handoff_release_count = 0U;
+              g_foc_motor1_speed_start_bumpless_active = 0U;
+              g_foc_motor1_speed_start_bumpless_delta_mA = 0;
              FOC_SpeedStart_UpdateDebug();
              return iq_ref;
          }
@@ -2401,8 +2570,15 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
              g_foc_motor1_speed_start_bumpless_delta_mA =
                  FOC_Log_ToI16(floor_iq - candidate_iq, 1000.0f);
 
-             /* Release only after the closed loop has caught the decaying floor. */
-             if (floor_iq <= (candidate_iq + release_margin)) {
+             release_limit = speed_iq_ref_base_max + 0.001f;
+
+             /*
+              * Release only after the PID has caught the tail and the tail is
+              * already at the normal running limit.  This prevents a final
+              * one-cycle drop from an above-base startup value to 6 A.
+              */
+              if ((floor_iq <= (candidate_iq + release_margin)) &&
+                  (s_speed_start_iq_ref <= release_limit)) {
                  if (s_speed_start_handoff_release_count < 0xFFU) {
                      s_speed_start_handoff_release_count++;
                  }
@@ -2413,6 +2589,7 @@ static float FOC_SpeedStart_ApplyClosedHandoff(float iq_ref,
              if (s_speed_start_handoff_release_count >= confirm_cycles) {
                  s_speed_start_iq_ref = 0.0f;
                  s_speed_start_handoff_release_count = 0U;
+                 s_speed_start_handoff_tail_latched = 0U;
                  g_foc_motor1_speed_start_bumpless_active = 0U;
                  g_foc_motor1_speed_start_bumpless_delta_mA = 0;
                  FOC_SpeedStart_UpdateDebug();
@@ -7735,8 +7912,9 @@ static void FOC_Prof_Reset(void)
              float speed_inv_dt = 1000000.0f / (float)speed_elapsed_us;
              float speed_ref_ctrl = s_speed_ref_ctrl;
              float speed_error = speed_ref_ctrl - s_ctx.speed_ctrl_fdb;
-             float speed_iq_ref_max =
+             float speed_iq_ref_base_max =
                  FOC_GetSpeedIqPositiveLimit(speed_ref_ctrl, speed_error);
+             float speed_iq_ref_max = speed_iq_ref_base_max;
              float speed_iq_ref_min_saved = s_ctx.pid_speed.out_min;
              float speed_iq_ref_max_saved = s_ctx.pid_speed.out_max;
              float speed_iq_ref;
@@ -7754,6 +7932,7 @@ static void FOC_Prof_Reset(void)
                                         hall_travel_stall_blocked,
                                         zero_speed_pid_frozen,
                                         zero_output_held);
+
              speed_iq_ref_max = FOC_SpeedStart_EffectiveIqMax(
                  speed_iq_ref_max, speed_ref_ctrl, speed_error);
 
@@ -7956,6 +8135,7 @@ static void FOC_Prof_Reset(void)
                                                        speed_ref_ctrl,
                                                        speed_error,
                                                        speed_iq_ref_max,
+                                                       speed_iq_ref_base_max,
                                                        speed_dt);
              }
              if ((hall_travel_stall_blocked == 0U) &&
