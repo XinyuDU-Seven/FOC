@@ -286,17 +286,20 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_app_speed_cmd_log_direction[FOC_APP_SP
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_app_speed_cmd_log_speed_rpm[FOC_APP_SPEED_CMD_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_app_speed_cmd_log_target_rpm[FOC_APP_SPEED_CMD_LOG_SIZE];
 
-/* Continuous speed trace enabled by successful sethybrid speed commands. */
+/*
+ * Continuous speed trace enabled by successful sethybrid speed commands.
+ * Valid samples are always stored chronologically from oldest to newest.
+ */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_sethybrid_speed_log_enable = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_sethybrid_speed_log_reset = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_sethybrid_speed_log_active = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_sethybrid_speed_log_motor_id = 0xFFU;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_sethybrid_speed_log_wrapped = 0U;
+/* Number of valid chronological samples; capped at FOC_SETHYBRID_SPEED_LOG_SIZE. */
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_sethybrid_speed_log_idx = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_sethybrid_speed_log_sample_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_sethybrid_speed_log_current_target_rpm = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_sethybrid_speed_log_target_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE];
-FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_reference_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_filtered_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_actual_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE];
 
@@ -1129,10 +1132,61 @@ static int16_t FOC_AI_LogToI16(float value, float scale)
 
 static void FOC_AI_SetHybridSpeedLogClearSamples(void)
 {
+  uint16_t idx;
+
+  for (idx = 0U; idx < FOC_SETHYBRID_SPEED_LOG_SIZE; idx++) {
+    g_foc_sethybrid_speed_log_target_rpm[idx] = 0U;
+    g_foc_sethybrid_speed_log_filtered_rpm[idx] = 0;
+    g_foc_sethybrid_speed_log_actual_rpm[idx] = 0;
+  }
+
   g_foc_sethybrid_speed_log_idx = 0U;
   g_foc_sethybrid_speed_log_wrapped = 0U;
   g_foc_sethybrid_speed_log_sample_count = 0U;
   s_foc_sethybrid_speed_log_decim_count = 0U;
+}
+
+static void FOC_AI_SetHybridSpeedLogAppend(uint16_t target_rpm,
+                                            int16_t filtered_rpm,
+                                            int16_t actual_rpm)
+{
+  uint16_t idx = g_foc_sethybrid_speed_log_idx;
+  uint16_t move_idx;
+
+  if (idx < FOC_SETHYBRID_SPEED_LOG_SIZE) {
+    g_foc_sethybrid_speed_log_target_rpm[idx] = target_rpm;
+    g_foc_sethybrid_speed_log_filtered_rpm[idx] = filtered_rpm;
+    g_foc_sethybrid_speed_log_actual_rpm[idx] = actual_rpm;
+    g_foc_sethybrid_speed_log_idx = (uint16_t)(idx + 1U);
+  } else {
+    /*
+     * Keep the exported arrays directly readable as oldest-to-newest data.
+     * Once full, discard the oldest point, shift the remaining history left,
+     * and append the latest point at the end.
+     */
+    for (move_idx = 1U;
+         move_idx < FOC_SETHYBRID_SPEED_LOG_SIZE;
+         move_idx++) {
+      g_foc_sethybrid_speed_log_target_rpm[move_idx - 1U] =
+          g_foc_sethybrid_speed_log_target_rpm[move_idx];
+      g_foc_sethybrid_speed_log_filtered_rpm[move_idx - 1U] =
+          g_foc_sethybrid_speed_log_filtered_rpm[move_idx];
+      g_foc_sethybrid_speed_log_actual_rpm[move_idx - 1U] =
+          g_foc_sethybrid_speed_log_actual_rpm[move_idx];
+    }
+
+    g_foc_sethybrid_speed_log_target_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE - 1U] =
+        target_rpm;
+    g_foc_sethybrid_speed_log_filtered_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE - 1U] =
+        filtered_rpm;
+    g_foc_sethybrid_speed_log_actual_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE - 1U] =
+        actual_rpm;
+    g_foc_sethybrid_speed_log_wrapped = 1U;
+  }
+
+  if (g_foc_sethybrid_speed_log_sample_count < 0xFFFFFFFFU) {
+    g_foc_sethybrid_speed_log_sample_count++;
+  }
 }
 
 static void FOC_AI_SetHybridSpeedLogStart(uint8_t motor_id,
@@ -1166,7 +1220,6 @@ static void FOC_AI_SetHybridSpeedLogService(void)
 {
   const FOC_Context_t *ctx;
   uint8_t motor_id;
-  uint16_t idx;
 
   if (g_foc_sethybrid_speed_log_reset != 0U) {
     FOC_AI_SetHybridSpeedLogClearSamples();
@@ -1206,28 +1259,10 @@ static void FOC_AI_SetHybridSpeedLogService(void)
   s_foc_sethybrid_speed_log_decim_count = 0U;
 
   ctx = FOC_Core_GetContextByMotor(motor_id);
-  idx = g_foc_sethybrid_speed_log_idx;
-  if (idx >= FOC_SETHYBRID_SPEED_LOG_SIZE) {
-    idx = 0U;
-    g_foc_sethybrid_speed_log_wrapped = 1U;
-  }
-
-  g_foc_sethybrid_speed_log_target_rpm[idx] =
-      g_foc_sethybrid_speed_log_current_target_rpm;
-  g_foc_sethybrid_speed_log_reference_rpm[idx] =
-      FOC_AI_LogToI16(ctx->speed_ref_ctrl, 1.0f);
-  g_foc_sethybrid_speed_log_filtered_rpm[idx] =
-      FOC_AI_LogToI16(ctx->speed_ctrl_fdb, 1.0f);
-  g_foc_sethybrid_speed_log_actual_rpm[idx] =
-      FOC_AI_LogToI16(ctx->speed_fdb, 1.0f);
-
-  idx++;
-  if (idx >= FOC_SETHYBRID_SPEED_LOG_SIZE) {
-    idx = 0U;
-    g_foc_sethybrid_speed_log_wrapped = 1U;
-  }
-  g_foc_sethybrid_speed_log_idx = idx;
-  g_foc_sethybrid_speed_log_sample_count++;
+  FOC_AI_SetHybridSpeedLogAppend(
+      g_foc_sethybrid_speed_log_current_target_rpm,
+      FOC_AI_LogToI16(ctx->speed_ctrl_fdb, 1.0f),
+      FOC_AI_LogToI16(ctx->speed_fdb, 1.0f));
 }
 
 static void FOC_AI_SpeedCmdLogResetIfNeeded(void)

@@ -156,23 +156,23 @@ fault_idx - 24  ...  fault_idx + 3
 ```
 
 Successful `Foc_SetHybridControlReference()` speed-mode calls also enable a
-dedicated 2500-point circular speed trace. It records one point after every 10
-FOC callbacks. The four rpm-magnitude curves are:
+dedicated 2500-point speed trace. It records one point after every 10 FOC
+callbacks. The three rpm-magnitude arrays are:
 
 ```text
 g_foc_sethybrid_speed_log_target_rpm       application target
-g_foc_sethybrid_speed_log_reference_rpm    ramped control reference
 g_foc_sethybrid_speed_log_filtered_rpm     speed-loop filtered feedback
 g_foc_sethybrid_speed_log_actual_rpm       actual speed feedback
 ```
 
-Use `g_foc_sethybrid_speed_log_idx` as the next write position and
-`g_foc_sethybrid_speed_log_wrapped` to detect wraparound. After wraparound, the
-oldest point is at `idx`. Set `g_foc_sethybrid_speed_log_reset` to `1` to clear
-the sample metadata while logging continues. With motor ID `0xFF`, the first
-successful speed-mode call selects `g_foc_sethybrid_speed_log_motor_id`. Set it
-to `0` or `1` in Watch to select another motor; the ring restarts when the
-selection changes.
+The valid range is `[0, g_foc_sethybrid_speed_log_idx)`, with `idx` capped at
+2500. Samples in all three arrays are always ordered from oldest to newest.
+After 2500 points, each new sample discards the oldest point and is appended at
+index 2499; `g_foc_sethybrid_speed_log_wrapped` becomes `1`. Set
+`g_foc_sethybrid_speed_log_reset` to `1` to clear the arrays and metadata while
+logging continues. With motor ID `0xFF`, the first successful speed-mode call
+selects `g_foc_sethybrid_speed_log_motor_id`. Set it to `0` or `1` in Watch to
+select another motor; the history restarts when the selection changes.
 
 Recommended compact row format:
 
