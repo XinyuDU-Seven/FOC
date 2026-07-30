@@ -107,6 +107,7 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_select = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_applied = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_last_error = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_test_case_exec_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_motor_id = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_enable = 1U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_reset = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_active = 0U;
@@ -1778,6 +1779,13 @@ static uint16_t FOC_TestCase_U32ToU16(uint32_t value)
   return (value > 65535U) ? 65535U : (uint16_t)value;
 }
 
+static uint8_t FOC_TestCase_GetMotorId(void)
+{
+  return (g_foc_test_case_motor_id < FOC_APP_MOTOR_COUNT)
+       ? g_foc_test_case_motor_id
+       : 1U;
+}
+
 static void FOC_TestCase_ClearFirstCycleLog(void)
 {
   g_foc_test_case_first_cycle_log_active = 0U;
@@ -1835,7 +1843,7 @@ static void FOC_TestCase_RecordFirstCycleLog(void)
     return;
   }
 
-  ctx = FOC_Core_GetContextByMotor(0U);
+  ctx = FOC_Core_GetContextByMotor(FOC_TestCase_GetMotorId());
   elapsed_ms =
       (FOC_HAL_GetTimestampUs() - s_foc_test_case_sethybrid_sine_start_us) /
       1000U;
@@ -1914,7 +1922,7 @@ static void FOC_TestCase_StartSetHybridSine(void)
 
 static void FOC_TestCase_ServiceSetHybridSine(void)
 {
-  uint8_t unId = 0U;
+  uint8_t unId = FOC_TestCase_GetMotorId();
   uint32_t now_us;
   uint32_t elapsed_us;
   uint32_t period_us =
@@ -1980,7 +1988,7 @@ static void FOC_TestCase_ClearAutoModes(void)
 
 static void FOC_TestCase_Apply(uint8_t test_case)
 {
-  uint8_t unId = 0U;
+  uint8_t unId = FOC_TestCase_GetMotorId();
 
   g_foc_test_case_last_error = 0U;
   speed_ref = -1.0f;
