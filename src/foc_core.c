@@ -431,6 +431,7 @@ FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_ctrl_rpm = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_ref_ramp_active = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_up_rpm_per_s = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_down_rpm_per_s = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_pure_speed_loop_enable = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_app_direction_invert_enable = 1U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_smooth_enable =
     FOC_LOW_SPEED_SMOOTH_ENABLE;
@@ -3576,7 +3577,11 @@ static float FOC_ApplyBidirZeroSoftLanding(float iq_ref,
          s_speed_error_boost_prev_ref = 0.0f;
          FOC_ResetSpeedRefRamp();
          if (direction_changed != 0U) {
-             FOC_SpeedStart_OnDirectionChanged();
+             if (g_foc_pure_speed_loop_enable != 0U) {
+                 FOC_SpeedStart_Reset();
+             } else {
+                 FOC_SpeedStart_OnDirectionChanged();
+             }
          } else {
              FOC_SpeedStart_Reset();
          }
@@ -3599,7 +3604,11 @@ static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
          s_speed_ref_ctrl = 0.0f;
          FOC_PID_Reset(&s_ctx.pid_speed);
          s_speed_error_boost_prev_ref = 0.0f;
-         FOC_SpeedStart_OnDirectionChanged();
+         if (g_foc_pure_speed_loop_enable != 0U) {
+             FOC_SpeedStart_Reset();
+         } else {
+             FOC_SpeedStart_OnDirectionChanged();
+         }
      }
 
      delta = target - s_speed_ref_ctrl;
@@ -6161,7 +6170,8 @@ static void FOC_UpdateSpeedControlFeedback(void)
     float tail_lead = (float)g_foc_bidir_zero_tail_fdb_lead_rpm;
 
     g_foc_low_speed_smooth_active = 0U;
-    if ((g_foc_low_speed_smooth_enable != 0U) &&
+    if ((g_foc_pure_speed_loop_enable == 0U) &&
+        (g_foc_low_speed_smooth_enable != 0U) &&
         (ref_abs >= 1.0f) &&
         (smooth_max >= 1.0f) &&
         (ref_abs <= smooth_max)) {
@@ -7707,20 +7717,27 @@ static void FOC_Prof_Reset(void)
              float speed_iq_ref;
              float speed_pid_iq = 0.0f;
              float speed_pid_i = 0.0f;
+             uint8_t pure_speed_loop = g_foc_pure_speed_loop_enable;
              uint8_t zero_speed_pid_frozen =
                  FOC_BidirZeroTransfer_SpeedPidFrozen();
              uint8_t zero_output_held = FOC_BidirZeroTransfer_PidFrozen();
              uint8_t hall_travel_stall_blocked =
                  FOC_HallTravelStallTorqueBlocked();
-             uint8_t speed_start_state =
-                 FOC_SpeedStart_Service(speed_ref_ctrl,
-                                        speed_elapsed_us,
-                                        speed_iq_ref_max,
-                                        hall_travel_stall_blocked,
-                                        zero_speed_pid_frozen,
-                                        zero_output_held);
-             speed_iq_ref_max = FOC_SpeedStart_EffectiveIqMax(
-                 speed_iq_ref_max, speed_ref_ctrl, speed_error);
+             uint8_t speed_start_state = FOC_SPEED_START_STATE_IDLE;
+
+             if (pure_speed_loop != 0U) {
+                 FOC_SpeedStart_Reset();
+             } else {
+                 speed_start_state =
+                     FOC_SpeedStart_Service(speed_ref_ctrl,
+                                            speed_elapsed_us,
+                                            speed_iq_ref_max,
+                                            hall_travel_stall_blocked,
+                                            zero_speed_pid_frozen,
+                                            zero_output_held);
+                 speed_iq_ref_max = FOC_SpeedStart_EffectiveIqMax(
+                     speed_iq_ref_max, speed_ref_ctrl, speed_error);
+             }
 
              s_speed_loop_accum_us = 0U;
              s_ctx.speed_loop_counter = 0U;
@@ -7793,7 +7810,8 @@ static void FOC_Prof_Reset(void)
                  s_ctx.pid_speed.out_max = speed_iq_ref_max_saved;
 
 #if FOC_SPEED_ERROR_BOOST_ENABLE
-                 if ((speed_ref_ctrl >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
+                 if ((pure_speed_loop == 0U) &&
+                     (speed_ref_ctrl >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
                      (speed_error > FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
                      ((speed_ref_ctrl - s_ctx.speed_fdb) >
                       FOC_SPEED_ERROR_BOOST_DEADBAND_RPM)) {
@@ -7846,6 +7864,7 @@ static void FOC_Prof_Reset(void)
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
                  (s_speed_start_reverse_wait == 0U) &&
+                 (pure_speed_loop == 0U) &&
                  (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
                  (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref = FOC_ApplySmoothBrakeLimit(speed_iq_ref,
@@ -7858,6 +7877,7 @@ static void FOC_Prof_Reset(void)
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
                  (s_speed_start_reverse_wait == 0U) &&
+                 (pure_speed_loop == 0U) &&
                  (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY)) {
                  speed_iq_ref = FOC_ApplyLowSpeedTorqueAssist(speed_iq_ref,
                                                               speed_ref_ctrl,
@@ -7882,6 +7902,7 @@ static void FOC_Prof_Reset(void)
              }
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
+                 (pure_speed_loop == 0U) &&
                  (speed_start_state == FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref = FOC_SpeedStart_ApplySoftRamp(speed_iq_ref,
                                                              speed_iq_ref_max,
@@ -7890,7 +7911,8 @@ static void FOC_Prof_Reset(void)
              }
              if ((speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
                  (speed_start_state != FOC_SPEED_START_STATE_SOFT_START) &&
-                 (s_speed_start_reverse_wait == 0U)) {
+                 (s_speed_start_reverse_wait == 0U) &&
+                 (pure_speed_loop == 0U)) {
                  speed_iq_ref = FOC_BidirZeroTransfer_ApplyIq(speed_iq_ref,
                                                               speed_dt);
              } else if (speed_start_state == FOC_SPEED_START_STATE_SOFT_START) {
@@ -7904,6 +7926,7 @@ static void FOC_Prof_Reset(void)
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
                  (s_speed_start_reverse_wait == 0U) &&
+                 (pure_speed_loop == 0U) &&
                  (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
                  (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref = FOC_ApplyLowSpeedIqSlew(speed_iq_ref,
@@ -7915,6 +7938,7 @@ static void FOC_Prof_Reset(void)
              }
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
+                 (pure_speed_loop == 0U) &&
                  (speed_start_state == FOC_SPEED_START_STATE_CLOSED)) {
                  speed_iq_ref =
                      FOC_SpeedStart_ApplyClosedHandoff(speed_iq_ref,
@@ -7926,6 +7950,7 @@ static void FOC_Prof_Reset(void)
              if ((hall_travel_stall_blocked == 0U) &&
                  (zero_output_held == 0U) &&
                  (s_speed_start_reverse_wait == 0U) &&
+                 (pure_speed_loop == 0U) &&
                  (speed_start_state != FOC_SPEED_START_STATE_BREAKAWAY) &&
                  (speed_start_state != FOC_SPEED_START_STATE_SOFT_START)) {
                  speed_iq_ref =

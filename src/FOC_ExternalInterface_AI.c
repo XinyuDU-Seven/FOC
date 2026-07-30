@@ -47,6 +47,7 @@ extern volatile uint8_t  g_foc_start_log_enable;
 extern volatile uint8_t  g_foc_start_log_reset;
 extern volatile uint16_t g_foc_speed_ref_ramp_up_rpm_per_s;
 extern volatile uint16_t g_foc_speed_ref_ramp_down_rpm_per_s;
+extern volatile uint8_t  g_foc_pure_speed_loop_enable;
 extern volatile uint8_t  g_foc_low_speed_iq_slew_enable;
 extern volatile uint16_t g_foc_low_speed_iq_slew_max_rpm;
 extern volatile uint16_t g_foc_low_speed_iq_slew_up_mA_per_s;
@@ -132,6 +133,7 @@ static void FOC_TestCase_ClearFixedStartupLimits(void)
   g_foc_low_speed_iq_slew_max_rpm = 0U;
   g_foc_low_speed_iq_slew_up_mA_per_s = 0U;
   g_foc_low_speed_iq_slew_down_mA_per_s = 0U;
+  g_foc_pure_speed_loop_enable = 0U;
   FOC_HAL_ExitCritical();
 }
 
@@ -162,6 +164,25 @@ static void FOC_AI_ApplySpeedStartupLimits(void)
   g_foc_low_speed_iq_slew_up_mA_per_s = iq_slew_up_mA_per_s;
   g_foc_low_speed_iq_slew_down_mA_per_s = iq_slew_down_mA_per_s;
   g_foc_low_speed_iq_slew_enable = iq_slew_enable;
+  g_foc_pure_speed_loop_enable = 0U;
+  FOC_HAL_ExitCritical();
+}
+
+static void FOC_AI_ApplyPureSpeedLoop(void)
+{
+  uint16_t iq_limit_mA = g_foc_testcase1_iq_limit_mA;
+
+  FOC_HAL_EnterCritical();
+  g_foc_lift_current_limit_base_mA = iq_limit_mA;
+  g_foc_lift_current_limit_boost_mA = iq_limit_mA;
+  g_foc_lift_start_overload_iq_mA = iq_limit_mA;
+  g_foc_speed_ref_ramp_up_rpm_per_s = 0U;
+  g_foc_speed_ref_ramp_down_rpm_per_s = 0U;
+  g_foc_low_speed_iq_slew_enable = 0U;
+  g_foc_low_speed_iq_slew_max_rpm = 0U;
+  g_foc_low_speed_iq_slew_up_mA_per_s = 0U;
+  g_foc_low_speed_iq_slew_down_mA_per_s = 0U;
+  g_foc_pure_speed_loop_enable = 1U;
   FOC_HAL_ExitCritical();
 }
 
@@ -3214,7 +3235,7 @@ static FocError FOC_AI_SetHybridSpeedReference(uint8_t unId, float fSpeed)
   }
 
   FOC_AI_ClearAutoModesForSpeedReference();
-  FOC_AI_ApplySpeedStartupLimits();
+  FOC_AI_ApplyPureSpeedLoop();
   return FOC_AI_MapResult(FOC_SetSpeedRef(fSpeed));
 }
 

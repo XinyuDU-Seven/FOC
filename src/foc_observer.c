@@ -28,6 +28,8 @@
 #else
 #define FOC_OBSERVER_DEBUG_ROOT
 #endif
+
+extern volatile uint8_t g_foc_pure_speed_loop_enable;
  
 
  /* ===================================================================
@@ -942,11 +944,12 @@ static uint32_t FOC_Observer_StartupStopTimeoutUs(uint8_t pole_pairs)
          release_blend_done_rpm = -release_blend_done_rpm;
      }
      use_startup_ref_predict =
-         ((ctx->hall_sector_dt_us == 0U) ||
+         ((g_foc_pure_speed_loop_enable == 0U) &&
+          ((ctx->hall_sector_dt_us == 0U) ||
           (speed_filtered_abs < startup_release_rpm) ||
           ((speed_filtered_abs < FOC_STARTUP_PREDICT_MAX_RPM) &&
            (speed_ref_ctrl_abs > startup_release_rpm) &&
-           (startup_track_err_rpm > startup_release_err_rpm)))
+           (startup_track_err_rpm > startup_release_err_rpm))))
          ? 1U : 0U;
      g_foc_observer_startup_ref_active = 0U;
      g_foc_observer_startup_sync_active = 0U;
