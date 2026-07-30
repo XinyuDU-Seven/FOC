@@ -299,6 +299,25 @@ extern "C" {
 #define FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S   6000.0f
 #endif
 
+/* Low-speed Hall feedback is event-limited. Avoid aggressive reverse torque
+ * when the speed loop is slowing toward zero on stale low-speed estimates.
+ */
+#ifndef FOC_LOW_SPEED_BRAKE_LIMIT_ENABLE
+#define FOC_LOW_SPEED_BRAKE_LIMIT_ENABLE    1
+#endif
+
+#ifndef FOC_LOW_SPEED_BRAKE_REF_RPM
+#define FOC_LOW_SPEED_BRAKE_REF_RPM         350.0f
+#endif
+
+#ifndef FOC_LOW_SPEED_BRAKE_FDB_RPM
+#define FOC_LOW_SPEED_BRAKE_FDB_RPM         500.0f
+#endif
+
+#ifndef FOC_LOW_SPEED_BRAKE_MAX_A
+#define FOC_LOW_SPEED_BRAKE_MAX_A           0.45f
+#endif
+
 /* Regenerative braking guard. Negative speed-loop iq is reduced before OV trips. */
 #ifndef FOC_REGEN_BRAKE_LIMIT_START_V
 #define FOC_REGEN_BRAKE_LIMIT_START_V       14.0f

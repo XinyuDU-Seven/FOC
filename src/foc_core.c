@@ -266,6 +266,9 @@ FOC_DEBUG_ROOT volatile uint16_t g_foc_last_fault_vbus_mV = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_vbus_brake_limit_mA = 0;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_vbus_brake_active = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_vbus_brake_limited_count = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_low_speed_brake_limit_mA = 0;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_brake_limit_active = 0U;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_low_speed_brake_limit_count = 0U;
 FOC_DEBUG_ROOT volatile float    speed_ref = -1.0f;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_start_on_max_fdb = 1U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_dyn_speed_start_fdb_margin_rpm = 50U;
@@ -641,6 +644,31 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      g_foc_vbus_brake_active = 0U;
      return iq_ref;
  }
+
+static float FOC_LimitLowSpeedBrakingIq(float iq_ref, float speed_ref_ctrl)
+{
+    float brake_limit = FOC_LOW_SPEED_BRAKE_MAX_A;
+
+    g_foc_low_speed_brake_limit_active = 0U;
+    g_foc_low_speed_brake_limit_mA = FOC_Log_ToI16(brake_limit, 1000.0f);
+
+#if FOC_LOW_SPEED_BRAKE_LIMIT_ENABLE
+    if ((brake_limit > 0.0f) &&
+        (iq_ref < -brake_limit) &&
+        (speed_ref_ctrl <= FOC_LOW_SPEED_BRAKE_REF_RPM) &&
+        (s_ctx.speed_ctrl_fdb <= FOC_LOW_SPEED_BRAKE_FDB_RPM)) {
+        g_foc_low_speed_brake_limit_active = 1U;
+        g_foc_low_speed_brake_limit_count++;
+        FOC_PID_Reset(&s_ctx.pid_speed);
+        FOC_PID_Reset(&s_ctx.pid_iq);
+        return -brake_limit;
+    }
+#else
+    (void)speed_ref_ctrl;
+#endif
+
+    return iq_ref;
+}
 
 static uint8_t FOC_DynSpeed_Near(float a, float b)
 {
@@ -1289,6 +1317,9 @@ static void FOC_Prof_Reset(void)
      g_foc_vbus_brake_limit_mA = 0;
      g_foc_vbus_brake_active = 0U;
      g_foc_vbus_brake_limited_count = 0U;
+     g_foc_low_speed_brake_limit_mA = 0;
+     g_foc_low_speed_brake_limit_active = 0U;
+     g_foc_low_speed_brake_limit_count = 0U;
      s_foc_prof_last_enter_us = 0U;
      s_foc_control_period_us = FOC_CONTROL_PERIOD_US;
      s_hall_recovery_accept_cycles = 0U;
@@ -2548,6 +2579,8 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
              s_speed_error_boost_prev_ref = speed_ref_ctrl;
 
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
+             speed_iq_ref =
+                 FOC_LimitLowSpeedBrakingIq(speed_iq_ref, speed_ref_ctrl);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
                                       s_ctx.pid_speed.out_min,
                                       s_ctx.pid_speed.out_max);
