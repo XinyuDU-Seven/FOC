@@ -3040,8 +3040,14 @@ static int FOC_AI_InitCore(void)
   config.current_q_pid.out_max = 10.0f;
   config.current_q_pid.out_min = -10.0f;
 
-  config.speed_pid.kp = 0.0052f;
-  config.speed_pid.ki = 0.0025f;
+  /*
+   * Keep proportional damping strong near the target while limiting the
+   * acceleration-phase integral energy that caused the 1000 rpm command to
+   * overshoot toward 1200 rpm.  Large-error tracking still has the dedicated
+   * speed-error boost in foc_core.c.
+   */
+  config.speed_pid.kp = 0.0065f;
+  config.speed_pid.ki = 0.0012f;
   config.speed_pid.kd = 0.0f;
   config.speed_pid.out_max = config.motor.max_current_a;
   config.speed_pid.out_min = -config.motor.max_current_a;
