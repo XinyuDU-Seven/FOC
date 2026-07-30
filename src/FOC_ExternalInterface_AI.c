@@ -92,7 +92,7 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_sethybrid_speed_log_wrapped = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_sethybrid_speed_log_idx = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_sethybrid_speed_log_sample_count = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_current_target_rpm = 0;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_sethybrid_speed_zero_deadband_rpm = 80U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_sethybrid_speed_zero_deadband_rpm = 40U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_sethybrid_speed_zero_deadband_count = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_target_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_actual_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE];

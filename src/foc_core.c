@@ -506,6 +506,17 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      g_foc_speed_ref_ctrl_rpm = 0;
      g_foc_speed_ref_ramp_active = 0U;
  }
+ static void FOC_ResetSpeedLoopCommand(void)
+ {
+     FOC_PID_Reset(&s_ctx.pid_speed);
+     FOC_PID_Reset(&s_ctx.pid_iq);
+     s_ctx.iq_ref = 0.0f;
+     s_ctx.speed_loop_counter = 0U;
+     s_speed_loop_accum_us = 0U;
+     s_speed_error_boost_prev_ref = 0.0f;
+     g_foc_speed_error_boost_mA = 0;
+     FOC_ResetSpeedRefRamp();
+ }
  static void FOC_NormalizeSignedSpeedRef(void)
  {
      uint8_t reset_loop = 0U;
@@ -527,13 +538,7 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      }
 
      if (reset_loop != 0U) {
-         FOC_PID_Reset(&s_ctx.pid_speed);
-         FOC_PID_Reset(&s_ctx.pid_iq);
-         s_ctx.iq_ref = 0.0f;
-         s_ctx.speed_loop_counter = 0U;
-         s_speed_loop_accum_us = 0U;
-         s_speed_error_boost_prev_ref = 0.0f;
-         FOC_ResetSpeedRefRamp();
+         FOC_ResetSpeedLoopCommand();
      }
  }
 
@@ -2746,7 +2751,11 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
 
      s_ctx.speed_ref = rpm;
 
- 
+     if (rpm == 0.0f) {
+         FOC_ResetSpeedLoopCommand();
+         FOC_HAL_ExitCritical();
+         return FOC_OK;
+     }
 
      /* 根据转速正负自动判断方向 */
 
