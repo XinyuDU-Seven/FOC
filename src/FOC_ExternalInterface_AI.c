@@ -2002,14 +2002,25 @@ static void FOC_TestCase_Apply(uint8_t test_case)
   }else if(test_case == FOC_TEST_CASE_FIXED_SPEED){
 
     float fixed_ref = gfSpeedTarget;
+    uint16_t direction =
+        (fixed_ref < 0.0f) ? FOC_APP_DIR_REVERSE : FOC_APP_DIR_FORWARD;
+    uint16_t magnitude_rpm = FOC_TestCase_AbsRpmToU16(fixed_ref);
+    FocError err;
 
     FOC_TestCase_ClearAutoModes();
     g_foc_dyn_speed_start_on_max_ref = 0U;
     g_foc_dyn_speed_start_on_max_fdb = 0U;
 
-    Foc_EnableFocControl(unId);
-
-    Foc_SetSpeedReference(unId, fixed_ref);
+    err = Foc_SetHybridControlReference_AI(unId,
+                                           FOC_APP_MODE_SPEED,
+                                           direction,
+                                           0U,
+                                           0U,
+                                           magnitude_rpm,
+                                           0U);
+    if (err != FOC_SUCCESS) {
+      g_foc_test_case_last_error = (uint8_t)err;
+    }
 
   }else if(test_case == FOC_TEST_CASE_DYN_SPEED_CW){
 
