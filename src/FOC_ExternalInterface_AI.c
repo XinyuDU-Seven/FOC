@@ -75,6 +75,8 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_sethybrid_speed_log_wrapped = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_sethybrid_speed_log_idx = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_sethybrid_speed_log_sample_count = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_current_target_rpm = 0;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_sethybrid_speed_zero_deadband_rpm = 80U;
+FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_sethybrid_speed_zero_deadband_count = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_target_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_actual_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_sethybrid_speed_log_filtered_rpm[FOC_SETHYBRID_SPEED_LOG_SIZE];
@@ -591,6 +593,25 @@ static FocError FOC_AI_MakeSignedTarget(uint16_t direction,
     return FOC_SUCCESS;
   }
   return FOC_INVALID_DIRECITON;
+}
+
+static FocError FOC_AI_MakeSetHybridSpeedTarget(uint16_t direction,
+                                                uint16_t magnitude_rpm,
+                                                float *target)
+{
+  uint16_t deadband = g_foc_sethybrid_speed_zero_deadband_rpm;
+
+  if (target == NULL) {
+    return FOC_POINTER_NULL;
+  }
+
+  if ((deadband != 0U) && (magnitude_rpm <= deadband)) {
+    *target = 0.0f;
+    g_foc_sethybrid_speed_zero_deadband_count++;
+    return FOC_SUCCESS;
+  }
+
+  return FOC_AI_MakeSignedTarget(direction, (float)magnitude_rpm, target);
 }
 
 static void FOC_AI_ClearAutoModes(void)
@@ -1410,7 +1431,7 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
   }
 
   if (unMode == FOC_APP_MODE_SPEED) {
-    err = FOC_AI_MakeSignedTarget(unParam1, (float)unParam4, &target);
+    err = FOC_AI_MakeSetHybridSpeedTarget(unParam1, unParam4, &target);
     if (err != FOC_SUCCESS) {
       return err;
     }

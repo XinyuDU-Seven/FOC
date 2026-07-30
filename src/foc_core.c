@@ -2730,11 +2730,11 @@ static void FOC_Prof_Reset(void)
 
      /* 根据转速正负自动判断方向 */
 
-     if (rpm >= 0.0f) {
+     if (rpm > 0.0f) {
 
          s_ctx.direction = FOC_DIR_CW;
 
-     } else {
+     } else if (rpm < 0.0f) {
 
          s_ctx.direction = FOC_DIR_CCW;
 
