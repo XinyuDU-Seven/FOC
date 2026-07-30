@@ -154,6 +154,22 @@ When sending logs for analysis, do not export the whole buffer unless needed. Us
 fault_idx - 24  ...  fault_idx + 3
 ```
 
+Successful `Foc_SetHybridControlReference()` speed-mode calls also enable a
+2500-point speed trace. It records one point after every 10 FOC callbacks.
+The three signed rpm arrays are:
+
+```text
+g_foc_sethybrid_speed_log_target_rpm
+g_foc_sethybrid_speed_log_actual_rpm
+g_foc_sethybrid_speed_log_filtered_rpm
+```
+
+The valid range is `[0, g_foc_sethybrid_speed_log_idx)`. Samples are kept in
+time order from oldest to newest. After 2500 points, each new sample discards
+the oldest point and appends the latest point at index 2499. Set
+`g_foc_sethybrid_speed_log_reset` to `1` to clear the arrays while logging
+continues.
+
 Recommended compact row format:
 
 ```text
