@@ -22,6 +22,12 @@ extern volatile uint8_t  g_foc_vbus_brake_active;
 extern volatile uint16_t g_foc_speed_drop_fault_count;
 extern volatile uint16_t g_foc_observer_no_edge_speed_limit_rpm;
 extern volatile uint8_t  g_foc_observer_no_edge_active;
+extern volatile uint32_t g_foc_observer_no_edge_elapsed_us;
+extern volatile uint32_t g_foc_hall_event_seq;
+extern volatile uint8_t  g_foc_hall_apply_candidate_sector;
+extern volatile uint8_t  g_foc_hall_apply_prev_sector;
+extern volatile uint8_t  g_foc_hall_apply_result;
+extern volatile uint8_t  g_foc_hall_apply_reject_reason;
 
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 #define FOC_SETHYBRID_SPEED_LOG_SIZE       2500U
@@ -37,6 +43,7 @@ extern volatile uint8_t  g_foc_observer_no_edge_active;
 #define FOC_TEST_CASE_SETHYBRID_SINE_AMP_RPM      1000U
 #define FOC_TEST_CASE_SETHYBRID_SINE_PERIOD_MS    3000U
 #define FOC_TEST_CASE_SETHYBRID_SINE_DECIMATION   10U
+#define FOC_TEST_CASE_FIXED_SPEED_DECIMATION      10U
 #define FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION  20U
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
@@ -123,8 +130,14 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_vbus_mV[FOC_
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_no_edge_limit_rpm[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_sector_no_change[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_flags[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_hall_dt_us[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_no_edge_elapsed_us[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_hall_event_seq[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_hall_debug[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
 
 static uint8_t s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
+static uint8_t s_foc_test_case_fixed_speed_active = 0U;
+static uint8_t s_foc_test_case_fixed_speed_decim_count = 0U;
 static uint8_t s_foc_test_case_sethybrid_sine_active = 0U;
 static uint8_t s_foc_test_case_sethybrid_sine_decim_count = 0U;
 static uint32_t s_foc_test_case_sethybrid_sine_start_us = 0U;
@@ -1779,11 +1792,69 @@ static uint16_t FOC_TestCase_U32ToU16(uint32_t value)
   return (value > 65535U) ? 65535U : (uint16_t)value;
 }
 
+static uint16_t FOC_TestCase_PackHallDebug(const FOC_Context_t *ctx)
+{
+  uint16_t raw = FOC_AI_HallRawToU8(&ctx->hall_raw) & 0x7U;
+  uint16_t current = (uint16_t)ctx->hall_sector.sector & 0x7U;
+  uint16_t candidate =
+      (uint16_t)g_foc_hall_apply_candidate_sector & 0x7U;
+  uint16_t previous =
+      (uint16_t)g_foc_hall_apply_prev_sector & 0x7U;
+  uint16_t accepted =
+      (g_foc_hall_apply_result != 0U) ? 1U : 0U;
+  uint16_t reason =
+      (uint16_t)g_foc_hall_apply_reject_reason & 0x7U;
+
+  return (uint16_t)(raw |
+                    (uint16_t)(current << 3) |
+                    (uint16_t)(candidate << 6) |
+                    (uint16_t)(previous << 9) |
+                    (uint16_t)(accepted << 12) |
+                    (uint16_t)(reason << 13));
+}
+
 static uint8_t FOC_TestCase_GetMotorId(void)
 {
   return (g_foc_test_case_motor_id < FOC_APP_MOTOR_COUNT)
        ? g_foc_test_case_motor_id
        : 1U;
+}
+
+static FocError FOC_TestCase_SetHybridSpeed(uint8_t unId, float target_rpm)
+{
+  uint16_t direction =
+      (target_rpm < 0.0f) ? FOC_APP_DIR_REVERSE : FOC_APP_DIR_FORWARD;
+  uint16_t magnitude_rpm = FOC_TestCase_AbsRpmToU16(target_rpm);
+
+  return Foc_SetHybridControlReference_AI(unId,
+                                          FOC_APP_MODE_SPEED,
+                                          direction,
+                                          0U,
+                                          0U,
+                                          magnitude_rpm,
+                                          0U);
+}
+
+static void FOC_TestCase_ServiceFixedSpeed(void)
+{
+  FocError err;
+
+  if (s_foc_test_case_fixed_speed_active == 0U) {
+    return;
+  }
+
+  s_foc_test_case_fixed_speed_decim_count++;
+  if (s_foc_test_case_fixed_speed_decim_count <
+      FOC_TEST_CASE_FIXED_SPEED_DECIMATION) {
+    return;
+  }
+  s_foc_test_case_fixed_speed_decim_count = 0U;
+
+  err = FOC_TestCase_SetHybridSpeed(FOC_TestCase_GetMotorId(),
+                                    gfSpeedTarget);
+  if (err != FOC_SUCCESS) {
+    g_foc_test_case_last_error = (uint8_t)err;
+  }
 }
 
 static void FOC_TestCase_ClearFirstCycleLog(void)
@@ -1887,6 +1958,14 @@ static void FOC_TestCase_RecordFirstCycleLog(void)
   g_foc_test_case_first_cycle_log_sector_no_change[idx] =
       FOC_TestCase_U32ToU16(ctx->sector_no_change_count);
   g_foc_test_case_first_cycle_log_flags[idx] = flags;
+  g_foc_test_case_first_cycle_log_hall_dt_us[idx] =
+      FOC_TestCase_U32ToU16(ctx->hall_sector_dt_us);
+  g_foc_test_case_first_cycle_log_no_edge_elapsed_us[idx] =
+      FOC_TestCase_U32ToU16(g_foc_observer_no_edge_elapsed_us);
+  g_foc_test_case_first_cycle_log_hall_event_seq[idx] =
+      (uint16_t)g_foc_hall_event_seq;
+  g_foc_test_case_first_cycle_log_hall_debug[idx] =
+      FOC_TestCase_PackHallDebug(ctx);
 
   idx++;
   g_foc_test_case_first_cycle_log_idx = idx;
@@ -1930,8 +2009,6 @@ static void FOC_TestCase_ServiceSetHybridSine(void)
   uint32_t phase_us;
   float phase;
   float target;
-  uint16_t magnitude_rpm;
-  uint16_t direction;
   FocError err;
 
   if (s_foc_test_case_sethybrid_sine_active == 0U) {
@@ -1959,15 +2036,7 @@ static void FOC_TestCase_ServiceSetHybridSine(void)
   }
   s_foc_test_case_sethybrid_sine_decim_count = 0U;
 
-  direction = (target < 0.0f) ? FOC_APP_DIR_REVERSE : FOC_APP_DIR_FORWARD;
-  magnitude_rpm = FOC_TestCase_AbsRpmToU16(target);
-  err = Foc_SetHybridControlReference_AI(unId,
-                                         FOC_APP_MODE_SPEED,
-                                         direction,
-                                         0U,
-                                         0U,
-                                         magnitude_rpm,
-                                         0U);
+  err = FOC_TestCase_SetHybridSpeed(unId, target);
   if (err != FOC_SUCCESS) {
     g_foc_test_case_last_error = (uint8_t)err;
   }
@@ -1982,6 +2051,8 @@ static void FOC_TestCase_ClearAutoModes(void)
   g_foc_bidir_speed_enable = 0U;
   g_foc_bidir_speed_step_enable = 0U;
   g_foc_bidir_speed_reset_stats = 0U;
+  s_foc_test_case_fixed_speed_active = 0U;
+  s_foc_test_case_fixed_speed_decim_count = 0U;
   s_foc_test_case_sethybrid_sine_active = 0U;
   s_foc_test_case_sethybrid_sine_decim_count = 0U;
 }
@@ -2001,23 +2072,16 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
   }else if(test_case == FOC_TEST_CASE_FIXED_SPEED){
 
-    float fixed_ref = gfSpeedTarget;
-    uint16_t direction =
-        (fixed_ref < 0.0f) ? FOC_APP_DIR_REVERSE : FOC_APP_DIR_FORWARD;
-    uint16_t magnitude_rpm = FOC_TestCase_AbsRpmToU16(fixed_ref);
     FocError err;
 
     FOC_TestCase_ClearAutoModes();
     g_foc_dyn_speed_start_on_max_ref = 0U;
     g_foc_dyn_speed_start_on_max_fdb = 0U;
 
-    err = Foc_SetHybridControlReference_AI(unId,
-                                           FOC_APP_MODE_SPEED,
-                                           direction,
-                                           0U,
-                                           0U,
-                                           magnitude_rpm,
-                                           0U);
+    s_foc_test_case_fixed_speed_active = 1U;
+    s_foc_test_case_fixed_speed_decim_count = 0U;
+
+    err = FOC_TestCase_SetHybridSpeed(unId, gfSpeedTarget);
     if (err != FOC_SUCCESS) {
       g_foc_test_case_last_error = (uint8_t)err;
     }
@@ -2080,6 +2144,7 @@ static void FOC_TestCase_Service(void)
   uint8_t test_case = g_foc_test_case_select;
 
   if(test_case == s_foc_test_case_last_select){
+    FOC_TestCase_ServiceFixedSpeed();
     FOC_TestCase_ServiceSetHybridSine();
     return;
   }
@@ -2087,6 +2152,7 @@ static void FOC_TestCase_Service(void)
   s_foc_test_case_last_select = test_case;
 
   FOC_TestCase_Apply(test_case);
+  FOC_TestCase_ServiceFixedSpeed();
   FOC_TestCase_ServiceSetHybridSine();
 }
 

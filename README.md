@@ -170,6 +170,34 @@ the oldest point and appends the latest point at index 2499. Set
 `g_foc_sethybrid_speed_log_reset` to `1` to clear the arrays while logging
 continues.
 
+For testcase 3, the first 3s sine cycle can be exported from
+`g_foc_test_case_first_cycle_log_*` after
+`g_foc_test_case_first_cycle_log_done == 1`. The Hall diagnosis fields are:
+
+```text
+g_foc_test_case_first_cycle_log_hall_dt_us
+g_foc_test_case_first_cycle_log_no_edge_elapsed_us
+g_foc_test_case_first_cycle_log_hall_event_seq
+g_foc_test_case_first_cycle_log_hall_debug
+```
+
+`hall_debug` bit layout:
+
+```text
+bits 0..2   raw Hall code: h1h2h3
+bits 3..5   currently accepted Hall sector
+bits 6..8   latest candidate Hall sector
+bits 9..11  previous sector used by the apply filter
+bit  12     latest candidate accepted
+bits 13..15 reject reason: 0 none, 1 invalid, 2 non-adjacent, 3 min-time
+```
+
+Recommended testcase 3 row format:
+
+```text
+idx,t_ms,target_rpm,actual_rpm,filtered_rpm,iq_ref_mA,iq_mA,vbus_mV,no_edge_limit_rpm,sector_no_change,flags,hall_dt_us,no_edge_elapsed_us,hall_event_seq,hall_debug
+```
+
 Recommended compact row format:
 
 ```text

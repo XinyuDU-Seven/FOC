@@ -238,6 +238,10 @@ FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_used_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_age_us = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_poll_count = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_apply_candidate_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_apply_prev_sector = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_apply_result = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_apply_reject_reason = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ctrl_fdb_rpm = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_error_boost_mA = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_speed_ref_cmd_rpm = 0;
@@ -1269,6 +1273,10 @@ static void FOC_Prof_Reset(void)
      g_foc_hall_event_seq = 0U;
      g_foc_hall_event_age_us = 0U;
      g_foc_hall_poll_count = 0U;
+     g_foc_hall_apply_candidate_sector = 0U;
+     g_foc_hall_apply_prev_sector = 0U;
+     g_foc_hall_apply_result = 0U;
+     g_foc_hall_apply_reject_reason = 0U;
      g_foc_speed_ctrl_fdb_rpm = 0;
      g_foc_speed_error_boost_mA = 0;
      FOC_ResetSpeedDropFaultMonitor();
@@ -1789,7 +1797,7 @@ static void FOC_Prof_Reset(void)
      return (uint32_t)min_us;
  }
 
- static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
+static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
                                     uint32_t timestamp_us,
                                     uint8_t timestamp_valid,
                                     uint8_t allow_missed_transition)
@@ -1801,7 +1809,13 @@ static void FOC_Prof_Reset(void)
                                   ? timestamp_us
                                   : FOC_HAL_GetTimestampUs();
 
+     g_foc_hall_apply_candidate_sector = cur_sector;
+     g_foc_hall_apply_prev_sector = prev_sector;
+     g_foc_hall_apply_result = 0U;
+     g_foc_hall_apply_reject_reason = 0U;
+
      if (cur_sector == 0U) {
+         g_foc_hall_apply_reject_reason = 1U;
          return 0U;
      }
 
@@ -1815,6 +1829,7 @@ static void FOC_Prof_Reset(void)
              s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
          }
          s_hall_illegal_transition_count = 0U;
+         g_foc_hall_apply_result = 1U;
          return 1U;
      }
 
@@ -1822,6 +1837,7 @@ static void FOC_Prof_Reset(void)
          s_ctx.hall_sector = *candidate;
          s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
          s_hall_illegal_transition_count = 0U;
+         g_foc_hall_apply_result = 1U;
          g_foc_hall_resync_count++;
          g_foc_hall_resync_period_us = (s_foc_control_period_us > 65535U)
                                      ? 65535U
@@ -1835,6 +1851,7 @@ static void FOC_Prof_Reset(void)
          if (s_hall_illegal_transition_count < 65535U) {
              s_hall_illegal_transition_count++;
          }
+         g_foc_hall_apply_reject_reason = 2U;
          if (s_hall_illegal_transition_count >= FOC_HALL_ILLEGAL_TRANSITION_FAULT_COUNT) {
              s_ctx.fault |= FOC_FAULT_HALL;
          }
@@ -1846,6 +1863,7 @@ static void FOC_Prof_Reset(void)
          s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
          s_ctx.theta_e_predicted = candidate->theta_e;
          s_hall_illegal_transition_count = 0U;
+         g_foc_hall_apply_result = 1U;
          g_foc_hall_recovery_accept_count++;
          g_foc_hall_recovery_accept_prev_sector = prev_sector;
          g_foc_hall_recovery_accept_cur_sector = cur_sector;
@@ -1862,6 +1880,7 @@ static void FOC_Prof_Reset(void)
              g_foc_hall_min_time_last_min_us = min_us;
              g_foc_hall_min_time_prev_sector = prev_sector;
              g_foc_hall_min_time_cur_sector = cur_sector;
+             g_foc_hall_apply_reject_reason = 3U;
              return 0U;
          }
      }
@@ -1869,6 +1888,7 @@ static void FOC_Prof_Reset(void)
      s_ctx.hall_sector = *candidate;
      s_ctx.hall_sector_timestamp_us = sector_timestamp_us;
      s_hall_illegal_transition_count = 0U;
+     g_foc_hall_apply_result = 1U;
      return 1U;
  }
 

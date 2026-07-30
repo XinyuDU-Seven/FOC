@@ -472,6 +472,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      float speed_rpm = ctx->speed_filtered;
 
      g_foc_observer_no_edge_active = 0U;
+     g_foc_observer_no_edge_elapsed_us = 0U;
+     g_foc_observer_no_edge_speed_limit_rpm = 0U;
 
  
 
