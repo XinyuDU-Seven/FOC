@@ -265,7 +265,7 @@ extern "C" {
 
 #ifndef FOC_SECTOR_NO_CHANGE_THRESHOLD
 
-#define FOC_SECTOR_NO_CHANGE_THRESHOLD  500U
+#define FOC_SECTOR_NO_CHANGE_THRESHOLD  1000U
 
 #endif
 
@@ -559,7 +559,7 @@ extern "C" {
 
 #ifndef FOC_SPEED_FILTER_ALPHA
 
-#define FOC_SPEED_FILTER_ALPHA          0.05f
+#define FOC_SPEED_FILTER_ALPHA          0.20f
 
 #endif
 
