@@ -3236,6 +3236,13 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
   /* err保存电机选择、方向转换和下游set接口返回值。 */
   FocError err;
 
+  if (unMode != 0U) {
+    err = Foc_EnableFocControl_AI(unId);
+    if (err != FOC_SUCCESS) {
+      return err;
+    }
+  }
+
   /* unParam2当前没有参与实际控制，保留是为了匹配外部接口定义。 */
   (void)unParam2;
 
