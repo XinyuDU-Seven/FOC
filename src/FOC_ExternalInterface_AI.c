@@ -18,16 +18,26 @@ FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_ai_callback_count = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_selected_motor_id = 0U;
 extern volatile uint8_t g_foc_dyn_speed_start_on_max_fdb;
 extern volatile float speed_ref;
+extern volatile uint8_t  g_foc_vbus_brake_active;
+extern volatile uint16_t g_foc_speed_drop_fault_count;
+extern volatile uint16_t g_foc_observer_no_edge_speed_limit_rpm;
+extern volatile uint8_t  g_foc_observer_no_edge_active;
 
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 #define FOC_SETHYBRID_SPEED_LOG_SIZE       2500U
 #define FOC_SETHYBRID_SPEED_LOG_DECIMATION 10U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE 1500U
 
 #define FOC_TEST_CASE_STOP              0U
 #define FOC_TEST_CASE_FIXED_SPEED       1U
 #define FOC_TEST_CASE_DYN_SPEED_CW      2U
 #define FOC_TEST_CASE_BIDIR_SWITCH      3U
 #define FOC_TEST_CASE_DYN_SPEED_CCW     4U
+
+#define FOC_TEST_CASE_SETHYBRID_SINE_AMP_RPM      1000U
+#define FOC_TEST_CASE_SETHYBRID_SINE_PERIOD_MS    3000U
+#define FOC_TEST_CASE_SETHYBRID_SINE_DECIMATION   10U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION  20U
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reverse = 0U;
@@ -91,14 +101,33 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_bidir_speed_phase_u16 = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_bidir_speed_ref_rpm = 0;
 
 /* LiveWatch: 0 stop, 1 fixed, 2 +1000..+4000 sine,
- * 3 -2000..+2000 sine, 4 -1000..-4000 sine.
+ * 3 sethybrid +/-1000rpm sine, 3s period, 4 -1000..-4000 sine.
  */
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_select = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_applied = FOC_TEST_CASE_STOP;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_last_error = 0U;
 FOC_AI_DEBUG_ROOT volatile uint32_t g_foc_test_case_exec_count = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_enable = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_reset = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_active = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_done = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_idx = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_t_ms[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_first_cycle_log_target_rpm[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_first_cycle_log_actual_rpm[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_first_cycle_log_filtered_rpm[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_first_cycle_log_iq_ref_mA[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_first_cycle_log_iq_mA[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_vbus_mV[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_no_edge_limit_rpm[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_sector_no_change[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_flags[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
 
 static uint8_t s_foc_test_case_last_select = FOC_TEST_CASE_STOP;
+static uint8_t s_foc_test_case_sethybrid_sine_active = 0U;
+static uint8_t s_foc_test_case_sethybrid_sine_decim_count = 0U;
+static uint32_t s_foc_test_case_sethybrid_sine_start_us = 0U;
+static uint8_t s_foc_test_case_first_cycle_log_decim_count = 0U;
 
 #define FOC_EXT_API_TEST_LOG_SIZE       24U
 
@@ -1211,6 +1240,7 @@ FocError Foc_GetAngleAndSpeed_AI(uint8_t unId, float *pfThetaElec, float *pfSpee
 FocError Foc_ReadMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset);
 FocError Foc_WriteMotorHallStates_AI(uint8_t unId, int16_t *pstHallStatesOffset, int16_t nHallDistanceOffset);
 static void FOC_TestCase_Service(void);
+static void FOC_TestCase_RecordFirstCycleLog(void);
 
 /*******************************************************************************************
 
@@ -1235,6 +1265,8 @@ void Foc_AlgorithmControlCallback_AI(void){
   FOC_CurrentCmd_Service();
 
   FOC_MainLoop();
+
+  FOC_TestCase_RecordFirstCycleLog();
 
   FOC_CurrentCmd_UpdateMonitor();
 
@@ -1702,6 +1734,237 @@ FOC_AI_DEBUG_ROOT volatile float gfSpeedTarget = 0.0f;
 
 FOC_AI_DEBUG_ROOT volatile uint8_t gunCtrl = 0U;
 
+static uint16_t FOC_TestCase_AbsRpmToU16(float rpm)
+{
+  float abs_rpm = FOC_FABS(rpm);
+
+  if (abs_rpm > 65535.0f) {
+    return 65535U;
+  }
+
+  return (uint16_t)(abs_rpm + 0.5f);
+}
+
+static uint16_t FOC_TestCase_PhaseToU16(float phase)
+{
+  float scaled = phase * (65535.0f / FOC_2PI);
+
+  if (scaled < 0.0f) {
+    return 0U;
+  }
+  if (scaled > 65535.0f) {
+    return 65535U;
+  }
+
+  return (uint16_t)scaled;
+}
+
+static uint16_t FOC_TestCase_FloatToU16(float value, float scale)
+{
+  float scaled = value * scale;
+
+  if (scaled < 0.0f) {
+    return 0U;
+  }
+  if (scaled > 65535.0f) {
+    return 65535U;
+  }
+
+  return (uint16_t)scaled;
+}
+
+static uint16_t FOC_TestCase_U32ToU16(uint32_t value)
+{
+  return (value > 65535U) ? 65535U : (uint16_t)value;
+}
+
+static void FOC_TestCase_ClearFirstCycleLog(void)
+{
+  g_foc_test_case_first_cycle_log_active = 0U;
+  g_foc_test_case_first_cycle_log_done = 0U;
+  g_foc_test_case_first_cycle_log_idx = 0U;
+  s_foc_test_case_first_cycle_log_decim_count = 0U;
+}
+
+static void FOC_TestCase_StartFirstCycleLog(void)
+{
+  FOC_TestCase_ClearFirstCycleLog();
+
+  if (g_foc_test_case_first_cycle_log_enable != 0U) {
+    g_foc_test_case_first_cycle_log_active = 1U;
+    s_foc_test_case_first_cycle_log_decim_count =
+        FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION - 1U;
+  }
+}
+
+static void FOC_TestCase_RecordFirstCycleLog(void)
+{
+  const FOC_Context_t *ctx;
+  uint16_t idx;
+  uint16_t flags = 0U;
+  uint32_t elapsed_ms;
+
+  if (g_foc_test_case_first_cycle_log_reset != 0U) {
+    FOC_TestCase_ClearFirstCycleLog();
+    g_foc_test_case_first_cycle_log_reset = 0U;
+    if ((g_foc_test_case_first_cycle_log_enable != 0U) &&
+        (s_foc_test_case_sethybrid_sine_active != 0U)) {
+      g_foc_test_case_first_cycle_log_active = 1U;
+      s_foc_test_case_first_cycle_log_decim_count =
+          FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION - 1U;
+    }
+  }
+
+  if ((g_foc_test_case_first_cycle_log_enable == 0U) ||
+      (g_foc_test_case_first_cycle_log_active == 0U) ||
+      (s_foc_test_case_sethybrid_sine_active == 0U)) {
+    return;
+  }
+
+  s_foc_test_case_first_cycle_log_decim_count++;
+  if (s_foc_test_case_first_cycle_log_decim_count <
+      FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION) {
+    return;
+  }
+  s_foc_test_case_first_cycle_log_decim_count = 0U;
+
+  idx = g_foc_test_case_first_cycle_log_idx;
+  if (idx >= FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE) {
+    g_foc_test_case_first_cycle_log_active = 0U;
+    g_foc_test_case_first_cycle_log_done = 1U;
+    return;
+  }
+
+  ctx = FOC_Core_GetContextByMotor(0U);
+  elapsed_ms =
+      (FOC_HAL_GetTimestampUs() - s_foc_test_case_sethybrid_sine_start_us) /
+      1000U;
+
+  if (g_foc_observer_no_edge_active != 0U) {
+    flags |= 0x0001U;
+  }
+  if (g_foc_vbus_brake_active != 0U) {
+    flags |= 0x0002U;
+  }
+  if (ctx->fault != FOC_FAULT_NONE) {
+    flags |= 0x0004U;
+  }
+  if (ctx->direction == FOC_DIR_CCW) {
+    flags |= 0x0008U;
+  }
+  if (g_foc_speed_drop_fault_count != 0U) {
+    flags |= 0x0010U;
+  }
+  if (FOC_FABS((float)g_foc_bidir_speed_ref_rpm) <=
+      (float)g_foc_sethybrid_speed_zero_deadband_rpm) {
+    flags |= 0x0020U;
+  }
+
+  g_foc_test_case_first_cycle_log_t_ms[idx] =
+      FOC_TestCase_U32ToU16(elapsed_ms);
+  g_foc_test_case_first_cycle_log_target_rpm[idx] =
+      g_foc_bidir_speed_ref_rpm;
+  g_foc_test_case_first_cycle_log_actual_rpm[idx] =
+      FOC_AI_SignedSpeedByDirection(ctx, ctx->speed_fdb);
+  g_foc_test_case_first_cycle_log_filtered_rpm[idx] =
+      FOC_AI_SignedSpeedByDirection(ctx, ctx->speed_ctrl_fdb);
+  g_foc_test_case_first_cycle_log_iq_ref_mA[idx] =
+      FOC_AI_SpeedLogToI16(FOC_AI_SignedIqRef(ctx) * 1000.0f);
+  g_foc_test_case_first_cycle_log_iq_mA[idx] =
+      FOC_AI_SpeedLogToI16(ctx->i_dq.q * 1000.0f);
+  g_foc_test_case_first_cycle_log_vbus_mV[idx] =
+      FOC_TestCase_FloatToU16(ctx->v_bus, 1000.0f);
+  g_foc_test_case_first_cycle_log_no_edge_limit_rpm[idx] =
+      g_foc_observer_no_edge_speed_limit_rpm;
+  g_foc_test_case_first_cycle_log_sector_no_change[idx] =
+      FOC_TestCase_U32ToU16(ctx->sector_no_change_count);
+  g_foc_test_case_first_cycle_log_flags[idx] = flags;
+
+  idx++;
+  g_foc_test_case_first_cycle_log_idx = idx;
+  if (idx >= FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE) {
+    g_foc_test_case_first_cycle_log_active = 0U;
+    g_foc_test_case_first_cycle_log_done = 1U;
+  }
+}
+
+static void FOC_TestCase_StartSetHybridSine(void)
+{
+  s_foc_test_case_sethybrid_sine_active = 1U;
+  s_foc_test_case_sethybrid_sine_decim_count =
+      FOC_TEST_CASE_SETHYBRID_SINE_DECIMATION - 1U;
+  s_foc_test_case_sethybrid_sine_start_us = FOC_HAL_GetTimestampUs();
+
+  g_foc_bidir_speed_period_ms = FOC_TEST_CASE_SETHYBRID_SINE_PERIOD_MS;
+  g_foc_bidir_speed_max_rpm = FOC_TEST_CASE_SETHYBRID_SINE_AMP_RPM;
+  g_foc_bidir_speed_step_enable = 0U;
+  g_foc_bidir_speed_enable = 0U;
+  g_foc_bidir_speed_reset_stats = 0U;
+  g_foc_bidir_speed_elapsed_ms = 0U;
+  g_foc_bidir_speed_phase_u16 = 0U;
+  g_foc_bidir_speed_ref_rpm = 0;
+
+  g_foc_dyn_speed_elapsed_ms = 0U;
+  g_foc_dyn_speed_phase_u16 = 0U;
+  g_foc_dyn_speed_ref_rpm = 0;
+  g_foc_dyn_speed_last_ext_ref_rpm = 0;
+
+  FOC_TestCase_StartFirstCycleLog();
+}
+
+static void FOC_TestCase_ServiceSetHybridSine(void)
+{
+  uint8_t unId = 0U;
+  uint32_t now_us;
+  uint32_t elapsed_us;
+  uint32_t period_us =
+      FOC_TEST_CASE_SETHYBRID_SINE_PERIOD_MS * 1000U;
+  uint32_t phase_us;
+  float phase;
+  float target;
+  uint16_t magnitude_rpm;
+  uint16_t direction;
+  FocError err;
+
+  if (s_foc_test_case_sethybrid_sine_active == 0U) {
+    return;
+  }
+
+  now_us = FOC_HAL_GetTimestampUs();
+  elapsed_us = now_us - s_foc_test_case_sethybrid_sine_start_us;
+  phase_us = (period_us > 0U) ? (elapsed_us % period_us) : 0U;
+  phase = ((float)phase_us / (float)period_us) * FOC_2PI;
+  target = (float)FOC_TEST_CASE_SETHYBRID_SINE_AMP_RPM * FOC_FastSin(phase);
+
+  g_foc_bidir_speed_elapsed_ms = elapsed_us / 1000U;
+  g_foc_bidir_speed_phase_u16 = FOC_TestCase_PhaseToU16(phase);
+  g_foc_bidir_speed_ref_rpm = FOC_AI_SpeedLogToI16(target);
+  g_foc_dyn_speed_elapsed_ms = g_foc_bidir_speed_elapsed_ms;
+  g_foc_dyn_speed_phase_u16 = g_foc_bidir_speed_phase_u16;
+  g_foc_dyn_speed_ref_rpm = g_foc_bidir_speed_ref_rpm;
+  g_foc_dyn_speed_last_ext_ref_rpm = g_foc_bidir_speed_ref_rpm;
+
+  s_foc_test_case_sethybrid_sine_decim_count++;
+  if (s_foc_test_case_sethybrid_sine_decim_count <
+      FOC_TEST_CASE_SETHYBRID_SINE_DECIMATION) {
+    return;
+  }
+  s_foc_test_case_sethybrid_sine_decim_count = 0U;
+
+  direction = (target < 0.0f) ? FOC_APP_DIR_REVERSE : FOC_APP_DIR_FORWARD;
+  magnitude_rpm = FOC_TestCase_AbsRpmToU16(target);
+  err = Foc_SetHybridControlReference_AI(unId,
+                                         FOC_APP_MODE_SPEED,
+                                         direction,
+                                         0U,
+                                         0U,
+                                         magnitude_rpm,
+                                         0U);
+  if (err != FOC_SUCCESS) {
+    g_foc_test_case_last_error = (uint8_t)err;
+  }
+}
+
 static void FOC_TestCase_ClearAutoModes(void)
 {
   speed_ref = -1.0f;
@@ -1711,6 +1974,8 @@ static void FOC_TestCase_ClearAutoModes(void)
   g_foc_bidir_speed_enable = 0U;
   g_foc_bidir_speed_step_enable = 0U;
   g_foc_bidir_speed_reset_stats = 0U;
+  s_foc_test_case_sethybrid_sine_active = 0U;
+  s_foc_test_case_sethybrid_sine_decim_count = 0U;
 }
 
 static void FOC_TestCase_Apply(uint8_t test_case)
@@ -1757,17 +2022,11 @@ static void FOC_TestCase_Apply(uint8_t test_case)
 
   }else if(test_case == FOC_TEST_CASE_BIDIR_SWITCH){
 
+    FOC_TestCase_ClearAutoModes();
+
     Foc_EnableFocControl(unId);
 
-    g_foc_dyn_speed_enable = 0U;
-    g_foc_dyn_speed_reverse = 0U;
-    g_foc_dyn_speed_reset_stats = 0U;
-
-    g_foc_bidir_speed_max_rpm = 4000U;
-    g_foc_bidir_speed_step_enable = 0U;
-    g_foc_bidir_speed_enable = 1U;
-
-    g_foc_bidir_speed_reset_stats = 1U;
+    FOC_TestCase_StartSetHybridSine();
 
   }else if(test_case == FOC_TEST_CASE_DYN_SPEED_CCW){
 
@@ -1802,12 +2061,14 @@ static void FOC_TestCase_Service(void)
   uint8_t test_case = g_foc_test_case_select;
 
   if(test_case == s_foc_test_case_last_select){
+    FOC_TestCase_ServiceSetHybridSine();
     return;
   }
 
   s_foc_test_case_last_select = test_case;
 
   FOC_TestCase_Apply(test_case);
+  FOC_TestCase_ServiceSetHybridSine();
 }
 
 void Foc_TestCase(void)
