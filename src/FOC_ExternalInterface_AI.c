@@ -123,9 +123,9 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_up_mA_per_s = 4000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_down_mA_per_s = 10000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_limit_mA = 10000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_unstuck_iq_max_mA = 10000U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_ramp_up_rpm_per_s = 5000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_ramp_up_rpm_per_s = 3000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_ramp_down_rpm_per_s = 5000U;
-FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_iq_limit_mA = 3000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_iq_limit_mA = 2500U;
 
 static void FOC_TestCase_ClearFixedStartupLimits(void)
 {

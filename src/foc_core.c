@@ -432,6 +432,12 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_speed_ref_ramp_active = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_up_rpm_per_s = 0U;
 FOC_DEBUG_ROOT volatile uint16_t g_foc_speed_ref_ramp_down_rpm_per_s = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_pure_speed_loop_enable = 0U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_pure_speed_iq_slew_enable = 1U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_iq_slew_up_mA_per_s = 5000U;
+FOC_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_iq_slew_down_mA_per_s = 30000U;
+FOC_DEBUG_ROOT volatile uint8_t  g_foc_pure_speed_iq_slew_active = 0U;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_pure_speed_iq_slew_limited_mA = 0;
+FOC_DEBUG_ROOT volatile uint32_t g_foc_pure_speed_iq_slew_count = 0U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_app_direction_invert_enable = 1U;
 FOC_DEBUG_ROOT volatile uint8_t  g_foc_low_speed_smooth_enable =
     FOC_LOW_SPEED_SMOOTH_ENABLE;
@@ -1086,6 +1092,11 @@ static float FOC_ApplySmoothBrakeLimit(float iq_ref,
                                        float speed_ref_ctrl);
 static float FOC_ApplyNoEdgeDecelCoastLimit(float iq_ref,
                                             float speed_ref_ctrl);
+static void FOC_ApplyPureSpeedPidOutputWindow(float speed_dt,
+                                              float hard_min,
+                                              float hard_max,
+                                              float *out_min,
+                                              float *out_max);
 static void FOC_ResetSpeedDropFaultMonitor(void);
 static void FOC_CheckSpeedDropFault(void);
 static void FOC_ResetSpeedFdbDropFaultMonitor(void);
@@ -2896,6 +2907,8 @@ static void FOC_ResetSmoothBrakeDebug(void)
      g_foc_speed_pid_iq_mA = 0;
      g_foc_speed_pid_i_mA = 0;
      g_foc_speed_iq_max_mA = 0U;
+     g_foc_pure_speed_iq_slew_active = 0U;
+     g_foc_pure_speed_iq_slew_limited_mA = 0;
      FOC_ResetSmoothBrakeDebug();
  }
 
@@ -4026,6 +4039,77 @@ static float FOC_ApplyLiftStartOverloadLimit(float limit,
                                             speed_ref_ctrl,
                                             lift_dir);
  }
+
+static void FOC_ApplyPureSpeedPidOutputWindow(float speed_dt,
+                                              float hard_min,
+                                              float hard_max,
+                                              float *out_min,
+                                              float *out_max)
+{
+     float prev_iq = s_ctx.iq_ref;
+     float min_iq = hard_min;
+     float max_iq = hard_max;
+     float up_rate = (float)g_foc_pure_speed_iq_slew_up_mA_per_s * 0.001f;
+     float down_rate = (float)g_foc_pure_speed_iq_slew_down_mA_per_s * 0.001f;
+     float up_step;
+     float down_step;
+
+     g_foc_pure_speed_iq_slew_active = 0U;
+     g_foc_pure_speed_iq_slew_limited_mA = 0;
+
+     if ((g_foc_pure_speed_iq_slew_enable == 0U) ||
+         (out_min == NULL) ||
+         (out_max == NULL) ||
+         (speed_dt <= 0.0f)) {
+         return;
+     }
+
+     if (hard_max < hard_min) {
+         hard_max = hard_min;
+     }
+     prev_iq = FOC_CLAMP(prev_iq, hard_min, hard_max);
+
+     if (up_rate > 0.0f) {
+         up_step = up_rate * speed_dt;
+         max_iq = prev_iq + up_step;
+         if (max_iq < hard_min) {
+             max_iq = hard_min;
+         }
+         if (max_iq > hard_max) {
+             max_iq = hard_max;
+         }
+     }
+     if (down_rate > 0.0f) {
+         down_step = down_rate * speed_dt;
+         min_iq = prev_iq - down_step;
+         if (min_iq < hard_min) {
+             min_iq = hard_min;
+         }
+         if (min_iq > hard_max) {
+             min_iq = hard_max;
+         }
+     }
+     if (min_iq > max_iq) {
+         min_iq = max_iq;
+     }
+
+     if ((max_iq < hard_max) || (min_iq > hard_min)) {
+         float limit_a = (hard_max - max_iq);
+
+         if ((min_iq - hard_min) > limit_a) {
+             limit_a = min_iq - hard_min;
+         }
+         g_foc_pure_speed_iq_slew_active = 1U;
+         g_foc_pure_speed_iq_slew_limited_mA =
+             FOC_Log_ToI16(limit_a, 1000.0f);
+         if (g_foc_pure_speed_iq_slew_count < 0xFFFFFFFFU) {
+             g_foc_pure_speed_iq_slew_count++;
+         }
+     }
+
+     *out_min = min_iq;
+     *out_max = max_iq;
+}
 
 static float FOC_ApplyLowSpeedIqSlew(float iq_ref,
                                      float speed_ref_ctrl,
@@ -7800,6 +7884,18 @@ static void FOC_Prof_Reset(void)
                          soft_out_max;
                  } else {
                      s_ctx.pid_speed.out_max = speed_iq_ref_max;
+                 }
+                 if (pure_speed_loop != 0U) {
+                     float pure_out_min = s_ctx.pid_speed.out_min;
+                     float pure_out_max = s_ctx.pid_speed.out_max;
+
+                     FOC_ApplyPureSpeedPidOutputWindow(speed_dt,
+                                                       pure_out_min,
+                                                       pure_out_max,
+                                                       &pure_out_min,
+                                                       &pure_out_max);
+                     s_ctx.pid_speed.out_min = pure_out_min;
+                     s_ctx.pid_speed.out_max = pure_out_max;
                  }
                  speed_iq_ref = FOC_PID_Update(&s_ctx.pid_speed,
                                                 speed_error,
