@@ -1267,8 +1267,8 @@ void Foc_Init_AI(void)
   config.current_q_pid.out_max = 10.0f;
   config.current_q_pid.out_min = -10.0f;
 
-  config.speed_pid.kp = 0.0065f;
-  config.speed_pid.ki = 0.0008f;
+  config.speed_pid.kp = 0.0090f;
+  config.speed_pid.ki = 0.0060f;
   config.speed_pid.kd = 0.0f;
   config.speed_pid.out_max = config.motor.max_current_a;
   config.speed_pid.out_min = -config.motor.max_current_a;
@@ -1396,6 +1396,13 @@ FocError Foc_SetHybridControlReference_AI(uint8_t unId, uint8_t unMode, uint16_t
 
   (void)unParam2;
   (void)unParam3;
+
+  if (unMode != 0U) {
+    err = Foc_EnableFocControl_AI(unId);
+    if (err != FOC_SUCCESS) {
+      return err;
+    }
+  }
 
   err = FOC_AI_SelectMotor(unId);
   if (err != FOC_SUCCESS) {
