@@ -123,6 +123,9 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_up_mA_per_s = 4000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_slew_down_mA_per_s = 10000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_iq_limit_mA = 10000U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_testcase1_unstuck_iq_max_mA = 10000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_ramp_up_rpm_per_s = 5000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_ramp_down_rpm_per_s = 5000U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_pure_speed_iq_limit_mA = 3000U;
 
 static void FOC_TestCase_ClearFixedStartupLimits(void)
 {
@@ -170,14 +173,14 @@ static void FOC_AI_ApplySpeedStartupLimits(void)
 
 static void FOC_AI_ApplyPureSpeedLoop(void)
 {
-  uint16_t iq_limit_mA = g_foc_testcase1_iq_limit_mA;
+  uint16_t iq_limit_mA = g_foc_pure_speed_iq_limit_mA;
 
   FOC_HAL_EnterCritical();
   g_foc_lift_current_limit_base_mA = iq_limit_mA;
   g_foc_lift_current_limit_boost_mA = iq_limit_mA;
   g_foc_lift_start_overload_iq_mA = iq_limit_mA;
-  g_foc_speed_ref_ramp_up_rpm_per_s = 0U;
-  g_foc_speed_ref_ramp_down_rpm_per_s = 0U;
+  g_foc_speed_ref_ramp_up_rpm_per_s = g_foc_pure_speed_ramp_up_rpm_per_s;
+  g_foc_speed_ref_ramp_down_rpm_per_s = g_foc_pure_speed_ramp_down_rpm_per_s;
   g_foc_low_speed_iq_slew_enable = 0U;
   g_foc_low_speed_iq_slew_max_rpm = 0U;
   g_foc_low_speed_iq_slew_up_mA_per_s = 0U;
