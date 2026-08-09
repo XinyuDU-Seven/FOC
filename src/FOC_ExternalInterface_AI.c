@@ -32,7 +32,7 @@ extern volatile uint8_t  g_foc_hall_apply_reject_reason;
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 #define FOC_SETHYBRID_SPEED_LOG_SIZE       2500U
 #define FOC_SETHYBRID_SPEED_LOG_DECIMATION 10U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE 1500U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE 3500U
 
 #define FOC_TEST_CASE_STOP              0U
 #define FOC_TEST_CASE_FIXED_SPEED       1U
@@ -44,9 +44,9 @@ extern volatile uint8_t  g_foc_hall_apply_reject_reason;
 #define FOC_TEST_CASE_SETHYBRID_SINE_PERIOD_MS    3000U
 #define FOC_TEST_CASE_SETHYBRID_SINE_DECIMATION   10U
 #define FOC_TEST_CASE_FIXED_SPEED_DECIMATION      10U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_START_MS    1200U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_END_MS      1800U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION  10U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_START_MS    1250U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_END_MS      1600U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION  1U
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reverse = 0U;
@@ -1883,6 +1883,7 @@ static void FOC_TestCase_RecordFirstCycleLog(void)
   const FOC_Context_t *ctx;
   uint16_t idx;
   uint16_t flags = 0U;
+  uint32_t elapsed_us;
   uint32_t elapsed_ms;
 
   if (g_foc_test_case_first_cycle_log_reset != 0U) {
@@ -1902,17 +1903,19 @@ static void FOC_TestCase_RecordFirstCycleLog(void)
     return;
   }
 
-  elapsed_ms =
-      (FOC_HAL_GetTimestampUs() - s_foc_test_case_sethybrid_sine_start_us) /
-      1000U;
+  elapsed_us =
+      FOC_HAL_GetTimestampUs() - s_foc_test_case_sethybrid_sine_start_us;
+  elapsed_ms = elapsed_us / 1000U;
 
-  if (elapsed_ms < FOC_TEST_CASE_FIRST_CYCLE_LOG_START_MS) {
+  if (elapsed_us < ((uint32_t)FOC_TEST_CASE_FIRST_CYCLE_LOG_START_MS *
+                    1000U)) {
     s_foc_test_case_first_cycle_log_decim_count =
         FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION - 1U;
     return;
   }
 
-  if (elapsed_ms > FOC_TEST_CASE_FIRST_CYCLE_LOG_END_MS) {
+  if (elapsed_us >= ((uint32_t)FOC_TEST_CASE_FIRST_CYCLE_LOG_END_MS *
+                     1000U)) {
     g_foc_test_case_first_cycle_log_active = 0U;
     g_foc_test_case_first_cycle_log_done = 1U;
     return;
