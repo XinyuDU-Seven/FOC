@@ -674,8 +674,12 @@ static float FOC_LimitLowSpeedNoEdgeIq(float iq_ref, float speed_ref_ctrl)
 {
 #if FOC_LOW_SPEED_NO_EDGE_LIMIT_ENABLE
     float limit = FOC_LOW_SPEED_NO_EDGE_MAX_A;
+    uint8_t stale_hall =
+        (uint8_t)((g_foc_observer_no_edge_active != 0U) ||
+                  (s_ctx.sector_no_change_count >=
+                   FOC_SECTOR_NO_CHANGE_THRESHOLD));
 
-    if ((g_foc_observer_no_edge_active != 0U) &&
+    if ((stale_hall != 0U) &&
         (limit > 0.0f) &&
         (speed_ref_ctrl <= FOC_LOW_SPEED_NO_EDGE_REF_RPM) &&
         (s_ctx.speed_ctrl_fdb <= FOC_LOW_SPEED_NO_EDGE_FDB_RPM)) {
