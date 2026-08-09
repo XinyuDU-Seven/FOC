@@ -492,47 +492,20 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
 
  static float FOC_ControlIqRef(void)
  {
-     return s_ctx.iq_ref;
+     return (s_ctx.direction == FOC_DIR_CCW) ? -s_ctx.iq_ref : s_ctx.iq_ref;
  }
-
- static FOC_Dir_e FOC_DirFromSignedValue(float value, FOC_Dir_e fallback)
- {
-     if (value < -0.5f) {
-         return FOC_DIR_CCW;
-     }
-     if (value > 0.5f) {
-         return FOC_DIR_CW;
-     }
-     return fallback;
- }
-
- static FOC_Dir_e FOC_EffectiveControlDirection(void)
- {
-     FOC_Dir_e dir = s_ctx.direction;
-
-     dir = FOC_DirFromSignedValue(s_ctx.speed_ctrl_fdb, dir);
-     dir = FOC_DirFromSignedValue(s_speed_ref_ctrl, dir);
-     dir = FOC_DirFromSignedValue(s_ctx.speed_ref, dir);
-     dir = FOC_DirFromSignedValue(s_ctx.iq_ref, dir);
-
-     return dir;
- }
-
- static void FOC_UpdateDirectionFromSignedRef(float signed_ref)
- {
-     s_ctx.direction = FOC_DirFromSignedValue(signed_ref, s_ctx.direction);
- }
-
  static float FOC_SignedSpeedRef(void)
  {
-     return s_ctx.speed_ref;
+     float ref = FOC_FABS(s_ctx.speed_ref);
+
+     return (s_ctx.direction == FOC_DIR_CCW) ? -ref : ref;
  }
  static void FOC_ResetSpeedRefRamp(void)
  {
      s_speed_ref_ctrl = 0.0f;
      s_ctx.speed_ref_ctrl = 0.0f;
      s_speed_ref_ctrl_direction = s_ctx.direction;
-     g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(s_ctx.speed_ref, 1.0f);
+     g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(FOC_FABS(s_ctx.speed_ref), 1.0f);
      g_foc_speed_ref_ctrl_rpm = 0;
      g_foc_speed_ref_ramp_active = 0U;
  }
@@ -549,30 +522,48 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
  }
  static void FOC_NormalizeSignedSpeedRef(void)
  {
-     if (s_ctx.direction > FOC_DIR_CCW) {
+     uint8_t reset_loop = 0U;
+
+     if (s_ctx.speed_ref < 0.0f) {
+         s_ctx.speed_ref = -s_ctx.speed_ref;
+         if (s_ctx.direction != FOC_DIR_CCW) {
+             s_ctx.direction = FOC_DIR_CCW;
+             reset_loop = 1U;
+         }
+         g_foc_signed_speed_ref_normalize_count++;
+     } else if (s_ctx.direction > FOC_DIR_CCW) {
          s_ctx.direction = FOC_DIR_CW;
+         reset_loop = 1U;
      }
 
      if (s_ctx.speed_ref > s_config.motor.max_speed_rpm) {
          s_ctx.speed_ref = s_config.motor.max_speed_rpm;
-         g_foc_signed_speed_ref_normalize_count++;
-     } else if (s_ctx.speed_ref < -s_config.motor.max_speed_rpm) {
-         s_ctx.speed_ref = -s_config.motor.max_speed_rpm;
-         g_foc_signed_speed_ref_normalize_count++;
+     }
+
+     if (reset_loop != 0U) {
+         FOC_ResetSpeedLoopCommand();
      }
  }
 
  static float FOC_UpdateSpeedRefRamp(uint32_t dt_us)
  {
-     float target = s_ctx.speed_ref;
+     float target = FOC_FABS(s_ctx.speed_ref);
      float rate;
      float step;
      float delta;
 
      if (target > s_config.motor.max_speed_rpm) {
          target = s_config.motor.max_speed_rpm;
-     } else if (target < -s_config.motor.max_speed_rpm) {
-         target = -s_config.motor.max_speed_rpm;
+     }
+
+     if (s_speed_ref_ctrl_direction != s_ctx.direction) {
+         s_speed_ref_ctrl = 0.0f;
+         s_speed_ref_ctrl_direction = s_ctx.direction;
+         FOC_PID_Reset(&s_ctx.pid_speed);
+         FOC_PID_Reset(&s_ctx.pid_iq);
+         s_ctx.iq_ref = 0.0f;
+         s_speed_loop_accum_us = 0U;
+         s_speed_error_boost_prev_ref = 0.0f;
      }
 
      if (dt_us == 0U) {
@@ -581,18 +572,21 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
          dt_us = FOC_CONTROL_PID_DT_MAX_US;
      }
 
-     delta = target - s_speed_ref_ctrl;
-     rate = (FOC_FABS(target) > FOC_FABS(s_speed_ref_ctrl))
-          ? FOC_SPEED_REF_RAMP_UP_RPM_PER_S
-          : FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S;
+     if (target > s_speed_ref_ctrl) {
+         rate = FOC_SPEED_REF_RAMP_UP_RPM_PER_S;
+         delta = target - s_speed_ref_ctrl;
+     } else {
+         rate = FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S;
+         delta = s_speed_ref_ctrl - target;
+     }
 
      if (rate <= 0.0f) {
          s_speed_ref_ctrl = target;
-     } else if (FOC_FABS(delta) > 0.0f) {
+     } else if (delta > 0.0f) {
          step = rate * ((float)dt_us * 1.0e-6f);
-         if (step >= FOC_FABS(delta)) {
+         if (step >= delta) {
              s_speed_ref_ctrl = target;
-         } else if (delta > 0.0f) {
+         } else if (target > s_speed_ref_ctrl) {
              s_speed_ref_ctrl += step;
          } else {
              s_speed_ref_ctrl -= step;
@@ -600,7 +594,6 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      }
 
      s_ctx.speed_ref_ctrl = s_speed_ref_ctrl;
-     FOC_UpdateDirectionFromSignedRef(s_speed_ref_ctrl);
      g_foc_speed_ref_cmd_rpm = FOC_Log_ToI16(target, 1.0f);
      g_foc_speed_ref_ctrl_rpm = FOC_Log_ToI16(s_speed_ref_ctrl, 1.0f);
      g_foc_speed_ref_ramp_active =
@@ -615,27 +608,16 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
      float disable_v = FOC_REGEN_BRAKE_DISABLE_V;
      float full_brake_min = s_ctx.pid_speed.out_min;
      float min_allowed = full_brake_min;
-     float signed_motion = s_ctx.speed_ctrl_fdb;
-     uint8_t braking_positive_motion;
-     uint8_t braking_negative_motion;
 
      if (full_brake_min > 0.0f) {
          full_brake_min = 0.0f;
      }
-     min_allowed = full_brake_min;
 
      if (disable_v <= start_v) {
          disable_v = start_v + 0.1f;
      }
 
-     braking_positive_motion =
-         (uint8_t)((signed_motion > 1.0f) && (iq_ref < 0.0f));
-     braking_negative_motion =
-         (uint8_t)((signed_motion < -1.0f) && (iq_ref > 0.0f));
-
-     if ((s_ctx.v_bus < start_v) ||
-         ((braking_positive_motion == 0U) &&
-          (braking_negative_motion == 0U))) {
+     if ((iq_ref >= 0.0f) || (s_ctx.v_bus < start_v)) {
          g_foc_vbus_brake_limit_mA = FOC_Log_ToI16(full_brake_min, 1000.0f);
          g_foc_vbus_brake_active = 0U;
          return iq_ref;
@@ -649,26 +631,14 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
          min_allowed = full_brake_min * ratio;
      }
 
-     if (braking_negative_motion != 0U) {
-         float max_allowed = -min_allowed;
+     g_foc_vbus_brake_limit_mA = FOC_Log_ToI16(min_allowed, 1000.0f);
 
-         g_foc_vbus_brake_limit_mA = FOC_Log_ToI16(max_allowed, 1000.0f);
-         if (iq_ref > max_allowed) {
-             g_foc_vbus_brake_active = 1U;
-             g_foc_vbus_brake_limited_count++;
-             FOC_PID_Reset(&s_ctx.pid_speed);
-             FOC_PID_Reset(&s_ctx.pid_iq);
-             return max_allowed;
-         }
-     } else if (iq_ref < min_allowed) {
-         g_foc_vbus_brake_limit_mA = FOC_Log_ToI16(min_allowed, 1000.0f);
+     if (iq_ref < min_allowed) {
          g_foc_vbus_brake_active = 1U;
          g_foc_vbus_brake_limited_count++;
          FOC_PID_Reset(&s_ctx.pid_speed);
          FOC_PID_Reset(&s_ctx.pid_iq);
          return min_allowed;
-     } else {
-         g_foc_vbus_brake_limit_mA = FOC_Log_ToI16(min_allowed, 1000.0f);
      }
 
      g_foc_vbus_brake_active = 0U;
@@ -678,54 +648,20 @@ static void FOC_BeginRecoveryZeroVectorHold(void);
 static float FOC_LimitLowSpeedBrakingIq(float iq_ref, float speed_ref_ctrl)
 {
     float brake_limit = FOC_LOW_SPEED_BRAKE_MAX_A;
-    float ref_abs = FOC_FABS(speed_ref_ctrl);
-    float fdb = s_ctx.speed_ctrl_fdb;
-    float fdb_abs = FOC_FABS(fdb);
-    uint8_t braking_positive_motion =
-        (uint8_t)((fdb > 1.0f) && (iq_ref < -brake_limit));
-    uint8_t braking_negative_motion =
-        (uint8_t)((fdb < -1.0f) && (iq_ref > brake_limit));
 
     g_foc_low_speed_brake_limit_active = 0U;
     g_foc_low_speed_brake_limit_mA = FOC_Log_ToI16(brake_limit, 1000.0f);
 
 #if FOC_LOW_SPEED_BRAKE_LIMIT_ENABLE
     if ((brake_limit > 0.0f) &&
-        (ref_abs <= FOC_LOW_SPEED_BRAKE_REF_RPM) &&
-        (fdb_abs <= FOC_LOW_SPEED_BRAKE_FDB_RPM) &&
-        ((braking_positive_motion != 0U) ||
-         (braking_negative_motion != 0U))) {
+        (iq_ref < -brake_limit) &&
+        (speed_ref_ctrl <= FOC_LOW_SPEED_BRAKE_REF_RPM) &&
+        (s_ctx.speed_ctrl_fdb <= FOC_LOW_SPEED_BRAKE_FDB_RPM)) {
         g_foc_low_speed_brake_limit_active = 1U;
         g_foc_low_speed_brake_limit_count++;
         FOC_PID_Reset(&s_ctx.pid_speed);
         FOC_PID_Reset(&s_ctx.pid_iq);
-        return (fdb > 0.0f) ? -brake_limit : brake_limit;
-    }
-#else
-    (void)speed_ref_ctrl;
-#endif
-
-    return iq_ref;
-}
-
-static float FOC_LimitLowSpeedIq(float iq_ref, float speed_ref_ctrl)
-{
-#if FOC_LOW_SPEED_IQ_LIMIT_ENABLE
-    float limit = FOC_LOW_SPEED_IQ_MAX_A;
-    float ref_abs = FOC_FABS(speed_ref_ctrl);
-    float fdb_abs = FOC_FABS(s_ctx.speed_ctrl_fdb);
-
-    if ((limit > 0.0f) &&
-        (ref_abs <= FOC_LOW_SPEED_IQ_REF_RPM) &&
-        (fdb_abs <= FOC_LOW_SPEED_IQ_FDB_RPM)) {
-        float limited = FOC_CLAMP(iq_ref, -limit, limit);
-
-        if (limited != iq_ref) {
-            FOC_PID_Reset(&s_ctx.pid_speed);
-            FOC_PID_Reset(&s_ctx.pid_iq);
-        }
-
-        return limited;
+        return -brake_limit;
     }
 #else
     (void)speed_ref_ctrl;
@@ -738,8 +674,6 @@ static float FOC_LimitLowSpeedNoEdgeIq(float iq_ref, float speed_ref_ctrl)
 {
 #if FOC_LOW_SPEED_NO_EDGE_LIMIT_ENABLE
     float limit = FOC_LOW_SPEED_NO_EDGE_MAX_A;
-    float ref_abs = FOC_FABS(speed_ref_ctrl);
-    float fdb_abs = FOC_FABS(s_ctx.speed_ctrl_fdb);
     uint8_t stale_hall =
         (uint8_t)((g_foc_observer_no_edge_active != 0U) ||
                   (s_ctx.sector_no_change_count >=
@@ -747,8 +681,8 @@ static float FOC_LimitLowSpeedNoEdgeIq(float iq_ref, float speed_ref_ctrl)
 
     if ((stale_hall != 0U) &&
         (limit > 0.0f) &&
-        (ref_abs <= FOC_LOW_SPEED_NO_EDGE_REF_RPM) &&
-        (fdb_abs <= FOC_LOW_SPEED_NO_EDGE_FDB_RPM)) {
+        (speed_ref_ctrl <= FOC_LOW_SPEED_NO_EDGE_REF_RPM) &&
+        (s_ctx.speed_ctrl_fdb <= FOC_LOW_SPEED_NO_EDGE_FDB_RPM)) {
         float limited = FOC_CLAMP(iq_ref, -limit, limit);
 
         if (limited != iq_ref) {
@@ -898,6 +832,7 @@ static void FOC_DynSpeed_WriteCoreRef(float rpm)
         s_ctx.direction = FOC_DIR_CW;
     } else {
         s_ctx.direction = FOC_DIR_CCW;
+        s_ctx.speed_ref = -rpm;
     }
     FOC_HAL_ExitCritical();
 }
@@ -945,8 +880,7 @@ static uint8_t FOC_DynSpeed_HandleSetRef(float rpm)
 static void FOC_DynSpeed_ServiceRef(void)
 {
     uint32_t now_us = FOC_HAL_GetTimestampUs();
-    uint8_t livewatch_ref_valid =
-        ((speed_ref >= -0.5f) || (speed_ref <= -1.5f)) ? 1U : 0U;
+    uint8_t livewatch_ref_valid = (speed_ref >= -0.5f) ? 1U : 0U;
     float current_ref = (livewatch_ref_valid != 0U) ? speed_ref : s_ctx.speed_ref;
     float current_fdb = s_ctx.speed_fdb;
     float start_fdb = (float)g_foc_dyn_speed_max_rpm -
@@ -1095,6 +1029,12 @@ static void FOC_DynSpeed_RecordLog(uint32_t now_us, int16_t err_rpm)
     float signed_speed_fdb = s_ctx.speed_fdb;
     float signed_speed_ctrl_fdb = s_ctx.speed_ctrl_fdb;
 
+    if ((g_foc_dyn_speed_ref_rpm < 0) &&
+        (s_ctx.direction == FOC_DIR_CCW)) {
+        signed_speed_fdb = -signed_speed_fdb;
+        signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
+    }
+
     if (g_foc_dyn_log_stop != 0U) {
         return;
     }
@@ -1146,6 +1086,11 @@ static void FOC_DynSpeed_ServiceMetrics(void)
     }
 
     now_us = FOC_HAL_GetTimestampUs();
+    if ((g_foc_dyn_speed_ref_rpm < 0) &&
+        (s_ctx.direction == FOC_DIR_CCW)) {
+        signed_speed_fdb = -signed_speed_fdb;
+        signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
+    }
 
     err = (float)g_foc_dyn_speed_ref_rpm - signed_speed_fdb;
     abs_err = FOC_FABS(err);
@@ -1185,7 +1130,7 @@ static void FOC_DynSpeed_ServiceMetrics(void)
  {
      float offset_rad = 0.0f;
 
-     if (FOC_EffectiveControlDirection() == FOC_DIR_CCW) {
+     if (s_ctx.direction == FOC_DIR_CCW) {
          offset_rad += (float)g_foc_ccw_angle_offset_mrad * 0.001f;
      }
 
@@ -1267,6 +1212,10 @@ static void FOC_CheckSpeedDropFault(void)
     }
 
     ref_rpm = g_foc_dyn_speed_ref_rpm;
+    if ((ref_rpm < 0) && (s_ctx.direction == FOC_DIR_CCW)) {
+        signed_speed_fdb = -signed_speed_fdb;
+        signed_speed_ctrl_fdb = -signed_speed_ctrl_fdb;
+    }
 
     fdb_rpm = FOC_Log_ToI16(signed_speed_fdb, 1.0f);
     ctrl_fdb_rpm = FOC_Log_ToI16(signed_speed_ctrl_fdb, 1.0f);
@@ -1816,9 +1765,9 @@ static void FOC_Prof_Reset(void)
              (uint32_t)FOC_Log_ToU16(s_ctx.current_peak, 1000.0f);
          g_foc_last_fault_vbus_mV = g_foc_vbus_mV;
          g_foc_last_fault_speed_ref_rpm =
-             FOC_Log_ToU16(FOC_FABS(s_ctx.speed_ref), 1.0f);
+             FOC_Log_ToU16(s_ctx.speed_ref, 1.0f);
          g_foc_last_fault_speed_fdb_rpm =
-             FOC_Log_ToU16(FOC_FABS(s_ctx.speed_fdb), 1.0f);
+             FOC_Log_ToU16(s_ctx.speed_fdb, 1.0f);
          g_foc_last_fault_speed_ctrl_fdb_rpm =
              FOC_Log_ToI16(s_ctx.speed_ctrl_fdb, 1.0f);
          g_foc_last_fault_iq_ref_mA =
@@ -2614,25 +2563,23 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
                                             speed_dt, speed_inv_dt);
 
 #if FOC_SPEED_ERROR_BOOST_ENABLE
-             if ((FOC_FABS(speed_ref_ctrl) >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
-                 (FOC_FABS(speed_error) > FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
-                 (FOC_FABS(speed_ref_ctrl - s_ctx.speed_fdb) >
+             if ((speed_ref_ctrl >= FOC_SPEED_ERROR_BOOST_MIN_RPM) &&
+                 (speed_error > FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
+                 ((speed_ref_ctrl - s_ctx.speed_fdb) >
                   FOC_SPEED_ERROR_BOOST_DEADBAND_RPM) &&
-                 (FOC_FABS(speed_ref_ctrl - s_speed_error_boost_prev_ref) >
-                  FOC_SPEED_ERROR_BOOST_REF_RISE_MIN_RPM)) {
+                 (speed_ref_ctrl >
+                  (s_speed_error_boost_prev_ref +
+                   FOC_SPEED_ERROR_BOOST_REF_RISE_MIN_RPM))) {
                  float boost =
                      FOC_SPEED_ERROR_BOOST_KP *
-                     (FOC_FABS(speed_error) -
-                      FOC_SPEED_ERROR_BOOST_DEADBAND_RPM);
-                 float signed_boost;
+                     (speed_error - FOC_SPEED_ERROR_BOOST_DEADBAND_RPM);
 
                  boost = FOC_CLAMP(boost, 0.0f,
                                    FOC_SPEED_ERROR_BOOST_MAX_A);
-                 signed_boost = (speed_error < 0.0f) ? -boost : boost;
 
-                 speed_iq_ref += signed_boost;
+                 speed_iq_ref += boost;
                  g_foc_speed_error_boost_mA =
-                     FOC_Log_ToI16(signed_boost, 1000.0f);
+                     FOC_Log_ToI16(boost, 1000.0f);
              } else {
                  g_foc_speed_error_boost_mA = 0;
              }
@@ -2644,8 +2591,6 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              speed_iq_ref =
                  FOC_LimitLowSpeedBrakingIq(speed_iq_ref, speed_ref_ctrl);
-             speed_iq_ref =
-                 FOC_LimitLowSpeedIq(speed_iq_ref, speed_ref_ctrl);
              speed_iq_ref =
                  FOC_LimitLowSpeedNoEdgeIq(speed_iq_ref, speed_ref_ctrl);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
@@ -2867,6 +2812,7 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
 
          s_ctx.direction = FOC_DIR_CCW;
 
+         s_ctx.speed_ref = -rpm; /* 速度绝对值用于PID，方向由电角度处理 */
 
      }
 
@@ -2920,8 +2866,13 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
      s_speed_error_boost_prev_ref = 0.0f;
 
      s_ctx.id_ref = id;
-     s_ctx.iq_ref = iq;
-     s_ctx.direction = (iq < 0.0f) ? FOC_DIR_CCW : FOC_DIR_CW;
+     if (iq < 0.0f) {
+         s_ctx.direction = FOC_DIR_CCW;
+         s_ctx.iq_ref = -iq;
+     } else {
+         s_ctx.direction = FOC_DIR_CW;
+         s_ctx.iq_ref = iq;
+     }
 
      FOC_HAL_ExitCritical();
 

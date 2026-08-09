@@ -318,22 +318,6 @@ extern "C" {
 #define FOC_LOW_SPEED_BRAKE_MAX_A           0.20f
 #endif
 
-#ifndef FOC_LOW_SPEED_IQ_LIMIT_ENABLE
-#define FOC_LOW_SPEED_IQ_LIMIT_ENABLE       1
-#endif
-
-#ifndef FOC_LOW_SPEED_IQ_REF_RPM
-#define FOC_LOW_SPEED_IQ_REF_RPM            350.0f
-#endif
-
-#ifndef FOC_LOW_SPEED_IQ_FDB_RPM
-#define FOC_LOW_SPEED_IQ_FDB_RPM            500.0f
-#endif
-
-#ifndef FOC_LOW_SPEED_IQ_MAX_A
-#define FOC_LOW_SPEED_IQ_MAX_A              0.60f
-#endif
-
 #ifndef FOC_LOW_SPEED_NO_EDGE_LIMIT_ENABLE
 #define FOC_LOW_SPEED_NO_EDGE_LIMIT_ENABLE  1
 #endif
@@ -617,14 +601,10 @@ extern "C" {
 /* Hall PLL speed observer.
  * The raw Hall edge speed is still logged as the instantaneous measurement.
  * The PLL state provides the continuous signed speed used as the filtered
- * estimate; the speed loop consumes this signed estimate directly.
+ * estimate; the speed loop consumes its absolute value.
  */
 #ifndef FOC_HALL_PLL_ENABLE
 #define FOC_HALL_PLL_ENABLE             1
-#endif
-
-#ifndef FOC_HALL_MOTION_SIGN_MIN_RPM
-#define FOC_HALL_MOTION_SIGN_MIN_RPM    5.0f
 #endif
 
 #ifndef FOC_HALL_PLL_SPEED_ALPHA

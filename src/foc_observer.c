@@ -211,35 +211,11 @@ static FOC_Dir_e FOC_Observer_GetConfiguredForwardHallDir(void)
 #endif
 }
 
-static float FOC_Observer_GetMotionSign(const FOC_Context_t *ctx)
-{
-    float signed_motion = ctx->speed_pll;
-
-    if (FOC_FABS(signed_motion) < FOC_HALL_MOTION_SIGN_MIN_RPM) {
-        signed_motion = ctx->speed_filtered;
-    }
-    if (FOC_FABS(signed_motion) < FOC_HALL_MOTION_SIGN_MIN_RPM) {
-        signed_motion = ctx->speed_ctrl_fdb;
-    }
-    if (FOC_FABS(signed_motion) < FOC_HALL_MOTION_SIGN_MIN_RPM) {
-        signed_motion = ctx->speed_ref_ctrl;
-    }
-    if (FOC_FABS(signed_motion) < FOC_HALL_MOTION_SIGN_MIN_RPM) {
-        signed_motion = ctx->speed_ref;
-    }
-    if (FOC_FABS(signed_motion) < FOC_HALL_MOTION_SIGN_MIN_RPM) {
-        signed_motion = ctx->iq_ref;
-    }
-
-    return signed_motion;
-}
-
 static FOC_Dir_e FOC_Observer_GetHallMotionDir(const FOC_Context_t *ctx)
 {
     FOC_Dir_e forward_dir = FOC_Observer_GetConfiguredForwardHallDir();
-    float signed_motion = FOC_Observer_GetMotionSign(ctx);
 
-    return (signed_motion < 0.0f)
+    return (ctx->direction == FOC_DIR_CCW)
          ? FOC_Observer_GetOppositeDir(forward_dir)
          : forward_dir;
 }
@@ -665,7 +641,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
  {
 
-     float speed_rpm = FOC_FABS(ctx->speed_filtered);
+     float speed_rpm = ctx->speed_filtered;
      float speed_raw_signed = ctx->speed_raw;
      float pll_speed_signed = ctx->speed_pll;
      uint8_t pll_edge_valid = 0U;
@@ -855,20 +831,14 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      }
 
      ctx->speed_pll = pll_speed_signed;
-     ctx->speed_filtered = pll_speed_signed;
+     ctx->speed_filtered = FOC_FABS(pll_speed_signed);
 #else
-     {
-         float filtered_abs =
-             FOC_SPEED_FILTER_ALPHA * speed_rpm +
-             (1.0f - FOC_SPEED_FILTER_ALPHA) *
-             FOC_FABS(ctx->speed_filtered);
+     ctx->speed_filtered = FOC_SPEED_FILTER_ALPHA * speed_rpm
 
-         ctx->speed_filtered =
-             FOC_Observer_PreserveRawSpeedSign(filtered_abs,
-                                               speed_raw_signed);
-     }
+                         + (1.0f - FOC_SPEED_FILTER_ALPHA) * ctx->speed_filtered;
      ctx->speed_pll =
-         ctx->speed_filtered;
+         FOC_Observer_PreserveRawSpeedSign(ctx->speed_filtered,
+                                           speed_raw_signed);
 #endif
      FOC_Observer_UpdateNoEdgeElapsedDebug(ctx);
      g_foc_observer_pll_speed_rpm =
@@ -895,7 +865,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
  {
 
      uint8_t cur_sector = ctx->hall_sector.sector;
-     float speed_for_predict = FOC_FABS(ctx->speed_filtered);
+     float speed_for_predict = ctx->speed_filtered;
      float omega_e = 0.0f;
      uint32_t no_edge_elapsed_us = 0U;
      float no_edge_limit_rpm = 0.0f;
@@ -929,9 +899,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      }
      /* Always extrapolate by the real control interval first. */
      if ((no_edge_overdue == 0U) &&
-         (FOC_FABS(ctx->speed_ref) > 0.0f) &&
+         (ctx->speed_ref > 0.0f) &&
          (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
-         float startup_target = FOC_FABS(ctx->speed_ref);
+         float startup_target = ctx->speed_ref;
          float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
 
          if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {

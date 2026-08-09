@@ -615,7 +615,7 @@ static uint16_t FOC_AI_DirectionToApp(FOC_Dir_e direction)
 
 static float FOC_AI_SignedIqRef(const FOC_Context_t *ctx)
 {
-  return ctx->iq_ref;
+  return (ctx->direction == FOC_DIR_CCW) ? -ctx->iq_ref : ctx->iq_ref;
 }
 
 static FocError FOC_AI_MakeSignedTarget(uint16_t direction,
@@ -969,7 +969,7 @@ static void FOC_CurrentCmd_UpdateMonitor(void)
   g_foc_current_cmd_state = (uint16_t)ctx->state;
   g_foc_current_cmd_fault = (uint16_t)ctx->fault;
   g_foc_current_cmd_id_ref_a = ctx->id_ref;
-  g_foc_current_cmd_iq_ref_a = ctx->iq_ref;
+  g_foc_current_cmd_iq_ref_a = (ctx->direction == FOC_DIR_CCW) ? -ctx->iq_ref : ctx->iq_ref;
   g_foc_current_cmd_id_fdb_a = ctx->i_dq.d;
   g_foc_current_cmd_iq_fdb_a = ctx->i_dq.q;
   g_foc_current_cmd_current_peak_a = ctx->current_peak;
@@ -1084,18 +1084,8 @@ static void FOC_ExtApiTest_Service(void)
   float vd_ref = g_foc_ext_api_test_vd_v;
   float vq_ref = g_foc_ext_api_test_vq_v;
   float torque_ref = g_foc_ext_api_test_torque_nm;
-  float hybrid_speed_abs = FOC_FABS(speed_ref);
-  float hybrid_iq_abs_mA = FOC_FABS(iq_ref) * 1000.0f;
-  uint16_t hybrid_speed_dir =
-      (speed_ref < 0.0f) ? FOC_APP_DIR_REVERSE : FOC_APP_DIR_FORWARD;
-  uint16_t hybrid_iq_dir =
-      (iq_ref < 0.0f) ? FOC_APP_DIR_REVERSE : FOC_APP_DIR_FORWARD;
-  uint16_t hybrid_speed =
-      (hybrid_speed_abs > 65535.0f) ? 65535U
-                                    : (uint16_t)(hybrid_speed_abs + 0.5f);
-  uint16_t hybrid_iq_mA =
-      (hybrid_iq_abs_mA > 65535.0f) ? 65535U
-                                    : (uint16_t)(hybrid_iq_abs_mA + 0.5f);
+  uint16_t hybrid_speed = (speed_ref > 0.0f) ? (uint16_t)speed_ref : 0U;
+  uint16_t hybrid_iq_mA = (iq_ref > 0.0f) ? (uint16_t)(iq_ref * 1000.0f) : 0U;
 
   memset(&full_states, 0, sizeof(full_states));
 
@@ -1140,7 +1130,7 @@ static void FOC_ExtApiTest_Service(void)
 
   case 3U:
     result = Foc_SetHybridControlReference(motor_id, FOC_APP_MODE_SPEED,
-                                           hybrid_speed_dir, 0U, 0U,
+                                           FOC_APP_DIR_FORWARD, 0U, 0U,
                                            hybrid_speed, 0U);
     ctx = FOC_Core_GetContext();
     FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_HYBRID_SPEED, result,
@@ -1150,7 +1140,7 @@ static void FOC_ExtApiTest_Service(void)
 
   case 4U:
     result = Foc_SetHybridControlReference(motor_id, FOC_APP_MODE_CURRENT,
-                                           hybrid_iq_dir, 0U, 0U,
+                                           FOC_APP_DIR_FORWARD, 0U, 0U,
                                            0U, hybrid_iq_mA);
     ctx = FOC_Core_GetContext();
     FOC_ExtApiTest_Record(FOC_EXT_API_ID_SET_HYBRID_IQ, result,
