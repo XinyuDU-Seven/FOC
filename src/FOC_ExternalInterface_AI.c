@@ -32,7 +32,7 @@ extern volatile uint8_t  g_foc_hall_apply_reject_reason;
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 #define FOC_SETHYBRID_SPEED_LOG_SIZE       2500U
 #define FOC_SETHYBRID_SPEED_LOG_DECIMATION 10U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE 3500U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE 1800U
 
 #define FOC_TEST_CASE_STOP              0U
 #define FOC_TEST_CASE_FIXED_SPEED       1U
@@ -46,7 +46,7 @@ extern volatile uint8_t  g_foc_hall_apply_reject_reason;
 #define FOC_TEST_CASE_FIXED_SPEED_DECIMATION      10U
 #define FOC_TEST_CASE_FIRST_CYCLE_LOG_START_MS    1250U
 #define FOC_TEST_CASE_FIRST_CYCLE_LOG_END_MS      1600U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION  1U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION  2U
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reverse = 0U;
