@@ -318,6 +318,22 @@ extern "C" {
 #define FOC_LOW_SPEED_BRAKE_MAX_A           0.20f
 #endif
 
+#ifndef FOC_LOW_SPEED_NO_EDGE_LIMIT_ENABLE
+#define FOC_LOW_SPEED_NO_EDGE_LIMIT_ENABLE  1
+#endif
+
+#ifndef FOC_LOW_SPEED_NO_EDGE_REF_RPM
+#define FOC_LOW_SPEED_NO_EDGE_REF_RPM       350.0f
+#endif
+
+#ifndef FOC_LOW_SPEED_NO_EDGE_FDB_RPM
+#define FOC_LOW_SPEED_NO_EDGE_FDB_RPM       500.0f
+#endif
+
+#ifndef FOC_LOW_SPEED_NO_EDGE_MAX_A
+#define FOC_LOW_SPEED_NO_EDGE_MAX_A         0.20f
+#endif
+
 /* Regenerative braking guard. Negative speed-loop iq is reduced before OV trips. */
 #ifndef FOC_REGEN_BRAKE_LIMIT_START_V
 #define FOC_REGEN_BRAKE_LIMIT_START_V       14.0f
