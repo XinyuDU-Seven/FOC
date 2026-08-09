@@ -115,6 +115,57 @@ FOC_OBSERVER_DEBUG_ROOT volatile uint16_t g_foc_observer_no_edge_speed_limit_rpm
 FOC_OBSERVER_DEBUG_ROOT volatile uint8_t  g_foc_observer_no_edge_active = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_resync_count = 0U;
 FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_resync_diff_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_pll_speed_rpm = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile int16_t  g_foc_observer_pll_phase_err_mrad = 0;
+FOC_OBSERVER_DEBUG_ROOT volatile uint32_t g_foc_observer_pll_reverse_edge_count = 0U;
+
+static float FOC_Observer_WrapPi(float angle)
+{
+    while (angle > FOC_PI) {
+        angle -= FOC_2PI;
+    }
+    while (angle < -FOC_PI) {
+        angle += FOC_2PI;
+    }
+
+    return angle;
+}
+
+static float FOC_Observer_ClampAlpha(float alpha)
+{
+    if (alpha < 0.0f) {
+        return 0.0f;
+    }
+    if (alpha > 1.0f) {
+        return 1.0f;
+    }
+
+    return alpha;
+}
+
+static float FOC_Observer_ClampSignedSpeed(float speed_rpm)
+{
+    if (speed_rpm > FOC_SPEED_ESTIMATE_MAX_RPM) {
+        return FOC_SPEED_ESTIMATE_MAX_RPM;
+    }
+    if (speed_rpm < -FOC_SPEED_ESTIMATE_MAX_RPM) {
+        return -FOC_SPEED_ESTIMATE_MAX_RPM;
+    }
+
+    return speed_rpm;
+}
+
+static int16_t FOC_Observer_SpeedToI16(float speed_rpm)
+{
+    if (speed_rpm > 32767.0f) {
+        return 32767;
+    }
+    if (speed_rpm < -32768.0f) {
+        return -32768;
+    }
+
+    return (int16_t)speed_rpm;
+}
 
 static float FOC_Observer_GetHallAngleTrim(uint8_t sector)
 {
@@ -307,6 +358,75 @@ static float FOC_Observer_PreserveRawSpeedSign(float speed_rpm,
 
     return (signed_reference < 0.0f) ? -speed_abs : speed_abs;
 }
+
+static float FOC_Observer_HallPllUpdateSpeed(const FOC_Context_t *ctx,
+                                             float pll_speed_signed,
+                                             float raw_speed_signed,
+                                             uint8_t cur_sector,
+                                             uint8_t edge_matches_direction,
+                                             uint8_t pole_pairs)
+{
+    float alpha = (edge_matches_direction != 0U)
+                ? FOC_HALL_PLL_SPEED_ALPHA
+                : FOC_HALL_PLL_REVERSE_EDGE_ALPHA;
+
+    alpha = FOC_Observer_ClampAlpha(alpha);
+
+    if (edge_matches_direction == 0U) {
+        g_foc_observer_pll_reverse_edge_count++;
+    }
+
+    if (FOC_FABS(pll_speed_signed) < 1.0f) {
+        pll_speed_signed = raw_speed_signed;
+    } else {
+        pll_speed_signed += alpha * (raw_speed_signed - pll_speed_signed);
+    }
+
+    if ((edge_matches_direction != 0U) &&
+        (pole_pairs > 0U) &&
+        (cur_sector >= 1U) &&
+        (cur_sector <= 6U)) {
+        float pll_speed_abs = FOC_FABS(pll_speed_signed);
+        float omega_e = pll_speed_abs * (FOC_2PI / 60.0f) *
+                        (float)pole_pairs;
+        float target = FOC_Observer_GetHallEdgeSyncAngle(ctx, cur_sector,
+                                                         omega_e);
+        float phase_err = FOC_Observer_WrapPi(target - ctx->theta_e_predicted);
+        float correction_rpm =
+            phase_err * FOC_HALL_PLL_PHASE_KP_RPM_PER_RAD;
+        float corr_max = FOC_HALL_PLL_PHASE_CORR_MAX_RPM;
+
+        if (FOC_Observer_GetConfiguredForwardHallDir() == FOC_DIR_CCW) {
+            correction_rpm = -correction_rpm;
+        }
+
+        if (corr_max < 0.0f) {
+            corr_max = -corr_max;
+        }
+        if (corr_max > 0.0f) {
+            if (correction_rpm > corr_max) {
+                correction_rpm = corr_max;
+            } else if (correction_rpm < -corr_max) {
+                correction_rpm = -corr_max;
+            }
+        }
+
+        pll_speed_signed += correction_rpm;
+        g_foc_observer_pll_phase_err_mrad =
+            (int16_t)(phase_err * 1000.0f);
+    }
+
+    return FOC_Observer_ClampSignedSpeed(pll_speed_signed);
+}
+
+static void FOC_Observer_UpdateNoEdgeElapsedDebug(const FOC_Context_t *ctx)
+{
+    uint32_t now_us = FOC_HAL_GetTimestampUs();
+
+    g_foc_observer_no_edge_elapsed_us =
+        (ctx->timestamp_prev != 0U) ? (now_us - ctx->timestamp_prev) : 0U;
+}
+
 static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                                           uint8_t pole_pairs,
                                           uint32_t *elapsed_us,
@@ -402,6 +522,8 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      ctx->speed_ref_ctrl           = 0.0f;
 
+     ctx->speed_pll                = 0.0f;
+
      ctx->speed_filtered           = 0.0f;
 
      ctx->speed_ctrl_fdb           = 0.0f;
@@ -421,6 +543,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      g_foc_observer_no_edge_active = 0U;
      g_foc_observer_resync_count = 0U;
      g_foc_observer_resync_diff_mrad = 0;
+     g_foc_observer_pll_speed_rpm = 0;
+     g_foc_observer_pll_phase_err_mrad = 0;
+     g_foc_observer_pll_reverse_edge_count = 0U;
 
  
 
@@ -518,9 +643,14 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      float speed_rpm = ctx->speed_filtered;
      float speed_raw_signed = ctx->speed_raw;
+     float pll_speed_signed = ctx->speed_pll;
+     uint8_t pll_edge_valid = 0U;
+     uint8_t pll_edge_matches_direction = 1U;
+
+     (void)theta_e;
+     (void)dt;
 
      g_foc_observer_no_edge_active = 0U;
-     g_foc_observer_no_edge_elapsed_us = 0U;
      g_foc_observer_no_edge_speed_limit_rpm = 0U;
 
  
@@ -567,6 +697,10 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                     FOC_Observer_SignRawSpeedByHallStep(speed_rpm,
                                                         prev_sector,
                                                         cur_sector);
+                pll_edge_valid = 1U;
+                pll_edge_matches_direction =
+                    FOC_Observer_HallStepMatchesDirection(ctx, prev_sector,
+                                                          cur_sector);
 
  
 
@@ -589,6 +723,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                                                           speed_raw_signed);
 
                 }
+                speed_rpm = FOC_FABS(speed_raw_signed);
 
             }
 
@@ -628,6 +763,11 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                         FOC_Observer_PreserveRawSpeedSign(no_edge_limit_rpm,
                                                           speed_raw_signed);
                 }
+                if (FOC_FABS(pll_speed_signed) > no_edge_limit_rpm) {
+                    pll_speed_signed =
+                        FOC_Observer_PreserveRawSpeedSign(no_edge_limit_rpm,
+                                                          pll_speed_signed);
+                }
                 g_foc_observer_no_edge_active = 1U;
                 g_foc_observer_no_edge_decay_count++;
                 g_foc_observer_no_edge_elapsed_us = no_edge_elapsed_us;
@@ -652,7 +792,10 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
             speed_rpm = 0.0f;
             ctx->speed_raw = 0.0f;
+            ctx->speed_pll = 0.0f;
             ctx->speed_filtered = 0.0f;
+            g_foc_observer_pll_speed_rpm = 0;
+            FOC_Observer_UpdateNoEdgeElapsedDebug(ctx);
             if (ctx->hall_sector.sector != 0U) {
                 ctx->theta_e_predicted = ctx->hall_sector.theta_e;
             }
@@ -675,9 +818,31 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      ctx->speed_raw = speed_raw_signed;
 
+#if FOC_HALL_PLL_ENABLE
+     if (pll_edge_valid != 0U) {
+         pll_speed_signed =
+             FOC_Observer_HallPllUpdateSpeed(ctx, pll_speed_signed,
+                                             speed_raw_signed, cur_sector,
+                                             pll_edge_matches_direction,
+                                             pole_pairs);
+     } else {
+         pll_speed_signed =
+             FOC_Observer_ClampSignedSpeed(pll_speed_signed);
+     }
+
+     ctx->speed_pll = pll_speed_signed;
+     ctx->speed_filtered = FOC_FABS(pll_speed_signed);
+#else
      ctx->speed_filtered = FOC_SPEED_FILTER_ALPHA * speed_rpm
 
                          + (1.0f - FOC_SPEED_FILTER_ALPHA) * ctx->speed_filtered;
+     ctx->speed_pll =
+         FOC_Observer_PreserveRawSpeedSign(ctx->speed_filtered,
+                                           speed_raw_signed);
+#endif
+     FOC_Observer_UpdateNoEdgeElapsedDebug(ctx);
+     g_foc_observer_pll_speed_rpm =
+         FOC_Observer_SpeedToI16(ctx->speed_pll);
 
  
 

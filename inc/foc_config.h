@@ -582,6 +582,31 @@ extern "C" {
 
 #endif
 
+/* Hall PLL speed observer.
+ * The raw Hall edge speed is still logged as the instantaneous measurement.
+ * The PLL state provides the continuous signed speed used as the filtered
+ * estimate; the speed loop consumes its absolute value.
+ */
+#ifndef FOC_HALL_PLL_ENABLE
+#define FOC_HALL_PLL_ENABLE             1
+#endif
+
+#ifndef FOC_HALL_PLL_SPEED_ALPHA
+#define FOC_HALL_PLL_SPEED_ALPHA        0.22f
+#endif
+
+#ifndef FOC_HALL_PLL_REVERSE_EDGE_ALPHA
+#define FOC_HALL_PLL_REVERSE_EDGE_ALPHA 0.04f
+#endif
+
+#ifndef FOC_HALL_PLL_PHASE_KP_RPM_PER_RAD
+#define FOC_HALL_PLL_PHASE_KP_RPM_PER_RAD  70.0f
+#endif
+
+#ifndef FOC_HALL_PLL_PHASE_CORR_MAX_RPM
+#define FOC_HALL_PLL_PHASE_CORR_MAX_RPM 120.0f
+#endif
+
  
 
 /** Speed estimate clamp (rpm), above motor max to avoid clipping sector-width ripple. */

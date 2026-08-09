@@ -166,10 +166,26 @@ g_foc_sethybrid_speed_log_filtered_rpm
 
 `g_foc_sethybrid_speed_log_actual_rpm` is the signed raw Hall speed estimate
 from the latest accepted sector edge. `g_foc_sethybrid_speed_log_filtered_rpm`
-is the single filtered speed feedback used by the speed PID, signed with the
-same Hall-derived direction for log display.
-Between accepted Hall edges, actual rpm holds the latest raw estimate unless
-no-edge limiting or stop detection reduces it.
+is the signed continuous Hall PLL speed estimate. The speed PID still consumes
+the absolute value of that PLL estimate through `speed_fdb/speed_ctrl_fdb`.
+Between accepted Hall edges, actual rpm holds the latest raw edge estimate;
+`no_edge_elapsed_us` reports how old that edge is, and no-edge limiting or
+stop detection reduces the continuous PLL output.
+
+Current Hall speed observer chain:
+
+```text
+Hall edge
+  -> raw sector-time speed, signed by real Hall step direction
+  -> Hall PLL speed correction
+  -> signed continuous PLL speed for logs
+  -> absolute PLL speed feedback for the speed loop
+```
+
+PLL defaults are controlled by `FOC_HALL_PLL_*` in `inc/foc_config.h`.
+Reverse edges against the commanded Hall direction are still logged in
+`actual_rpm`, but only weakly pull the PLL speed to avoid a single boundary
+bounce flipping the continuous feedback.
 
 The valid range is `[0, g_foc_sethybrid_speed_log_idx)`. Samples are kept in
 time order from oldest to newest. After 2500 points, each new sample discards

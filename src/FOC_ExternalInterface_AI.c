@@ -687,14 +687,9 @@ static int16_t FOC_AI_SignedRawSpeed(const FOC_Context_t *ctx)
   return FOC_AI_SpeedLogToI16(ctx->speed_raw);
 }
 
-static int16_t FOC_AI_SignedSpeedByRawDirection(const FOC_Context_t *ctx,
-                                                float speed_rpm)
+static int16_t FOC_AI_SignedPllSpeed(const FOC_Context_t *ctx)
 {
-  float speed_abs = FOC_FABS(speed_rpm);
-
-  return FOC_AI_SpeedLogToI16((ctx->speed_raw < 0.0f)
-                              ? -speed_abs
-                              : speed_abs);
+  return FOC_AI_SpeedLogToI16(ctx->speed_pll);
 }
 
 static void FOC_AI_SetHybridSpeedLogClearSamples(void)
@@ -822,7 +817,7 @@ static void FOC_AI_SetHybridSpeedLogService(void)
   FOC_AI_SetHybridSpeedLogAppend(
       g_foc_sethybrid_speed_log_current_target_rpm,
       FOC_AI_SignedRawSpeed(ctx),
-      FOC_AI_SignedSpeedByRawDirection(ctx, ctx->speed_ctrl_fdb));
+      FOC_AI_SignedPllSpeed(ctx));
 }
 
 static void FOC_SpeedApiTest_ClearLog(void)
@@ -1971,7 +1966,7 @@ static void FOC_TestCase_RecordFirstCycleLog(void)
   g_foc_test_case_first_cycle_log_actual_rpm[idx] =
       FOC_AI_SignedRawSpeed(ctx);
   g_foc_test_case_first_cycle_log_filtered_rpm[idx] =
-      FOC_AI_SignedSpeedByRawDirection(ctx, ctx->speed_ctrl_fdb);
+      FOC_AI_SignedPllSpeed(ctx);
   g_foc_test_case_first_cycle_log_iq_ref_mA[idx] =
       FOC_AI_SpeedLogToI16(FOC_AI_SignedIqRef(ctx) * 1000.0f);
   g_foc_test_case_first_cycle_log_iq_mA[idx] =

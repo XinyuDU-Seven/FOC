@@ -410,6 +410,8 @@
 
      float                  speed_raw;        /**< Signed raw Hall speed estimate (rpm) */
 
+     float                  speed_pll;        /**< Signed continuous Hall PLL speed estimate (rpm) */
+
      float                  speed_filtered;   /**< 滤波后转速 (rpm) */
 
      float                  speed_ctrl_fdb;   /**< Speed feedback used by speed PID (rpm) */
