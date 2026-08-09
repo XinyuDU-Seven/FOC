@@ -1231,26 +1231,7 @@ static void FOC_CheckSpeedDropFault(void)
 
 static void FOC_UpdateSpeedControlFeedback(void)
 {
-    float alpha = FOC_SPEED_CTRL_FILTER_ALPHA;
-
-    if ((FOC_FABS(s_speed_ref_ctrl) < 1.0f) &&
-        (FOC_FABS(s_ctx.speed_fdb) < 1.0f)) {
-        s_ctx.speed_ctrl_fdb = 0.0f;
-    } else if ((FOC_FABS(s_ctx.speed_ctrl_fdb) < 1.0f) &&
-               (FOC_FABS(s_ctx.speed_fdb) >= 1.0f)) {
-        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
-    } else if (s_ctx.speed_fdb > s_speed_ref_ctrl) {
-        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
-    } else if ((g_foc_observer_no_edge_active != 0U) &&
-               (s_ctx.speed_fdb < s_ctx.speed_ctrl_fdb)) {
-        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
-    } else if (alpha >= 1.0f) {
-        s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
-    } else if (alpha > 0.0f) {
-        s_ctx.speed_ctrl_fdb =
-            alpha * s_ctx.speed_fdb + (1.0f - alpha) * s_ctx.speed_ctrl_fdb;
-    }
-
+    s_ctx.speed_ctrl_fdb = s_ctx.speed_fdb;
     g_foc_speed_ctrl_fdb_rpm = FOC_Log_ToI16(s_ctx.speed_ctrl_fdb, 1.0f);
 }
 

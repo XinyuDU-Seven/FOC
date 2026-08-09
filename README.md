@@ -164,6 +164,11 @@ g_foc_sethybrid_speed_log_actual_rpm
 g_foc_sethybrid_speed_log_filtered_rpm
 ```
 
+`g_foc_sethybrid_speed_log_filtered_rpm` is kept for export compatibility.
+The speed PID now uses the single Hall speed estimate directly, so filtered
+speed feedback mirrors actual speed feedback instead of applying a second
+feedback filter.
+
 The valid range is `[0, g_foc_sethybrid_speed_log_idx)`. Samples are kept in
 time order from oldest to newest. After 2500 points, each new sample discards
 the oldest point and appends the latest point at index 2499. Set

@@ -412,7 +412,7 @@
 
      float                  speed_filtered;   /**< 滤波后转速 (rpm) */
 
-     float                  speed_ctrl_fdb;   /**< Speed feedback filtered for speed PID (rpm) */
+     float                  speed_ctrl_fdb;   /**< Speed feedback used by speed PID (rpm) */
 
      uint32_t               timestamp_prev;   /**< 上一次扇区跳变时间戳 (us) */
 

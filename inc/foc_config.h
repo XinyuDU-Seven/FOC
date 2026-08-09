@@ -582,12 +582,6 @@ extern "C" {
 
 #endif
 
-#ifndef FOC_SPEED_CTRL_FILTER_ALPHA
-
-#define FOC_SPEED_CTRL_FILTER_ALPHA     0.10f
-
-#endif
-
  
 
 /** Speed estimate clamp (rpm), above motor max to avoid clipping sector-width ripple. */
