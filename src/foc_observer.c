@@ -260,6 +260,53 @@ static uint8_t FOC_Observer_HallStepMatchesDirection(const FOC_Context_t *ctx,
 
     return (cw_steps <= ccw_steps) ? 1U : 0U;
 }
+
+static float FOC_Observer_SignRawSpeedByHallStep(float speed_rpm,
+                                                  uint8_t prev_sector,
+                                                  uint8_t cur_sector)
+{
+    uint8_t cw_steps;
+    uint8_t ccw_steps;
+    FOC_Dir_e step_dir;
+    FOC_Dir_e forward_dir;
+    float speed_abs = speed_rpm;
+
+    if (speed_abs < 0.0f) {
+        speed_abs = -speed_abs;
+    }
+
+    if ((prev_sector < 1U) || (prev_sector > 6U) ||
+        (cur_sector < 1U) || (cur_sector > 6U) ||
+        (prev_sector == cur_sector)) {
+        return speed_abs;
+    }
+
+    cw_steps = (uint8_t)((cur_sector + 6U - prev_sector) % 6U);
+    ccw_steps = (uint8_t)((prev_sector + 6U - cur_sector) % 6U);
+    forward_dir = FOC_Observer_GetConfiguredForwardHallDir();
+
+    if (cw_steps < ccw_steps) {
+        step_dir = FOC_DIR_CW;
+    } else if (ccw_steps < cw_steps) {
+        step_dir = FOC_DIR_CCW;
+    } else {
+        step_dir = forward_dir;
+    }
+
+    return (step_dir == forward_dir) ? speed_abs : -speed_abs;
+}
+
+static float FOC_Observer_PreserveRawSpeedSign(float speed_rpm,
+                                                float signed_reference)
+{
+    float speed_abs = speed_rpm;
+
+    if (speed_abs < 0.0f) {
+        speed_abs = -speed_abs;
+    }
+
+    return (signed_reference < 0.0f) ? -speed_abs : speed_abs;
+}
 static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                                           uint8_t pole_pairs,
                                           uint32_t *elapsed_us,
@@ -470,6 +517,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
  {
 
      float speed_rpm = ctx->speed_filtered;
+     float speed_raw_signed = ctx->speed_raw;
 
      g_foc_observer_no_edge_active = 0U;
      g_foc_observer_no_edge_elapsed_us = 0U;
@@ -515,6 +563,10 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                 speed_rpm = (delta_theta_e / (float)pole_pairs) / dt_sec
 
                           * (60.0f / FOC_2PI);
+                speed_raw_signed =
+                    FOC_Observer_SignRawSpeedByHallStep(speed_rpm,
+                                                        prev_sector,
+                                                        cur_sector);
 
  
 
@@ -523,12 +575,18 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                 if (speed_rpm > FOC_SPEED_ESTIMATE_MAX_RPM) {
 
                     speed_rpm = FOC_SPEED_ESTIMATE_MAX_RPM;
+                    speed_raw_signed =
+                        FOC_Observer_PreserveRawSpeedSign(speed_rpm,
+                                                          speed_raw_signed);
 
                 }
 
                 if (speed_rpm < -FOC_SPEED_ESTIMATE_MAX_RPM) {
 
                     speed_rpm = -FOC_SPEED_ESTIMATE_MAX_RPM;
+                    speed_raw_signed =
+                        FOC_Observer_PreserveRawSpeedSign(speed_rpm,
+                                                          speed_raw_signed);
 
                 }
 
@@ -566,6 +624,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
                                            &no_edge_limit_rpm) != 0U) {
                 if (speed_rpm > no_edge_limit_rpm) {
                     speed_rpm = no_edge_limit_rpm;
+                    speed_raw_signed =
+                        FOC_Observer_PreserveRawSpeedSign(no_edge_limit_rpm,
+                                                          speed_raw_signed);
                 }
                 g_foc_observer_no_edge_active = 1U;
                 g_foc_observer_no_edge_decay_count++;
@@ -612,7 +673,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      /* 一阶低通滤波 */
 
-     ctx->speed_raw = speed_rpm;
+     ctx->speed_raw = speed_raw_signed;
 
      ctx->speed_filtered = FOC_SPEED_FILTER_ALPHA * speed_rpm
 

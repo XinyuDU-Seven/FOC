@@ -340,7 +340,7 @@
 
      float                  speed_ref_ctrl;   /**< Slew-limited speed reference for control/protection (rpm) */
 
-     float                  speed_fdb;        /**< 实际转速 (rpm) */
+     float                  speed_fdb;        /**< Filtered speed feedback (rpm) */
 
      float                  theta_e;          /**< 电角度 (rad) */
 
@@ -408,7 +408,7 @@
 
      float                  theta_e_prev;     /**< 上一次电角度 (rad) */
 
-     float                  speed_raw;        /**< 原始估算转速 (rpm) */
+     float                  speed_raw;        /**< Signed raw Hall speed estimate (rpm) */
 
      float                  speed_filtered;   /**< 滤波后转速 (rpm) */
 
