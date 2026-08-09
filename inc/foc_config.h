@@ -578,7 +578,7 @@ extern "C" {
 
 #ifndef FOC_SPEED_FILTER_ALPHA
 
-#define FOC_SPEED_FILTER_ALPHA          0.20f
+#define FOC_SPEED_FILTER_ALPHA          0.60f
 
 #endif
 
