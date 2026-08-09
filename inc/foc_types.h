@@ -336,9 +336,9 @@
 
      float                  theta_m;          /**< 机械角度 (rad) [0, 2π) */
 
-     float                  speed_ref;        /**< 目标转速 (rpm) */
+     float                  speed_ref;        /**< Signed target speed (rpm) */
 
-     float                  speed_ref_ctrl;   /**< Slew-limited speed reference for control/protection (rpm) */
+     float                  speed_ref_ctrl;   /**< Signed slew-limited speed reference for control/protection (rpm) */
 
      float                  speed_fdb;        /**< Filtered speed feedback (rpm) */
 
@@ -412,9 +412,9 @@
 
      float                  speed_pll;        /**< Signed continuous Hall PLL speed estimate (rpm) */
 
-     float                  speed_filtered;   /**< 滤波后转速 (rpm) */
+     float                  speed_filtered;   /**< Signed filtered speed feedback (rpm) */
 
-     float                  speed_ctrl_fdb;   /**< Speed feedback used by speed PID (rpm) */
+     float                  speed_ctrl_fdb;   /**< Signed speed feedback used by speed PID (rpm) */
 
      uint32_t               timestamp_prev;   /**< 上一次扇区跳变时间戳 (us) */
 
