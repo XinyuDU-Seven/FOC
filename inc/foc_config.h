@@ -331,7 +331,7 @@ extern "C" {
 #endif
 
 #ifndef FOC_LOW_SPEED_NO_EDGE_MAX_A
-#define FOC_LOW_SPEED_NO_EDGE_MAX_A         0.20f
+#define FOC_LOW_SPEED_NO_EDGE_MAX_A         0.35f
 #endif
 
 /* Regenerative braking guard. Negative speed-loop iq is reduced before OV trips. */
