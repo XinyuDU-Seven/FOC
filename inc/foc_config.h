@@ -292,11 +292,11 @@ extern "C" {
 
 /* Slew-rate limit for the speed reference used by the speed PID. */
 #ifndef FOC_SPEED_REF_RAMP_UP_RPM_PER_S
-#define FOC_SPEED_REF_RAMP_UP_RPM_PER_S     6000.0f
+#define FOC_SPEED_REF_RAMP_UP_RPM_PER_S     25000.0f
 #endif
 
 #ifndef FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S
-#define FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S   6000.0f
+#define FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S   25000.0f
 #endif
 
 /* Low-speed Hall feedback is event-limited. Avoid aggressive reverse torque
