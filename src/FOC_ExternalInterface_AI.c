@@ -44,6 +44,8 @@ extern volatile uint8_t  g_foc_hall_apply_reject_reason;
 #define FOC_TEST_CASE_SETHYBRID_SINE_PERIOD_MS    3000U
 #define FOC_TEST_CASE_SETHYBRID_SINE_DECIMATION   10U
 #define FOC_TEST_CASE_FIXED_SPEED_DECIMATION      10U
+#define FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE        2000U
+#define FOC_TEST_CASE_FIXED_SPEED_LOG_DECIMATION  10U
 #define FOC_TEST_CASE_FIRST_CYCLE_LOG_START_MS    1250U
 #define FOC_TEST_CASE_FIRST_CYCLE_LOG_END_MS      1600U
 #define FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION  2U
@@ -122,6 +124,13 @@ FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_reset = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_active = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_first_cycle_log_done = 0U;
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_idx = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_fixed_speed_log_enable = 1U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_fixed_speed_log_reset = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_fixed_speed_log_active = 0U;
+FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_test_case_fixed_speed_log_done = 0U;
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_fixed_speed_log_idx = 0U;
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_fixed_speed_log_target_rpm[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_fixed_speed_log_actual_rpm[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_t_ms[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_first_cycle_log_target_rpm[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_first_cycle_log_actual_rpm[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
@@ -143,6 +152,8 @@ static uint8_t s_foc_test_case_fixed_speed_decim_count = 0U;
 static uint8_t s_foc_test_case_sethybrid_sine_active = 0U;
 static uint8_t s_foc_test_case_sethybrid_sine_decim_count = 0U;
 static uint32_t s_foc_test_case_sethybrid_sine_start_us = 0U;
+static uint8_t s_foc_test_case_fixed_speed_log_decim_count = 0U;
+static uint8_t s_foc_test_case_fixed_speed_log_last_nonzero = 0U;
 static uint8_t s_foc_test_case_first_cycle_log_decim_count = 0U;
 
 #define FOC_EXT_API_TEST_LOG_SIZE       24U
@@ -1844,6 +1855,87 @@ static FocError FOC_TestCase_SetHybridSpeed(uint8_t unId, float target_rpm)
                                           0U);
 }
 
+static void FOC_TestCase_ClearFixedSpeedLog(void)
+{
+  uint16_t idx;
+
+  g_foc_test_case_fixed_speed_log_active = 0U;
+  g_foc_test_case_fixed_speed_log_done = 0U;
+  g_foc_test_case_fixed_speed_log_idx = 0U;
+  s_foc_test_case_fixed_speed_log_decim_count = 0U;
+
+  for (idx = 0U; idx < FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE; idx++) {
+    g_foc_test_case_fixed_speed_log_target_rpm[idx] = 0;
+    g_foc_test_case_fixed_speed_log_actual_rpm[idx] = 0;
+  }
+}
+
+static void FOC_TestCase_StartFixedSpeedLog(void)
+{
+  FOC_TestCase_ClearFixedSpeedLog();
+
+  if (g_foc_test_case_fixed_speed_log_enable != 0U) {
+    g_foc_test_case_fixed_speed_log_active = 1U;
+  }
+}
+
+static void FOC_TestCase_ServiceFixedSpeedLog(void)
+{
+  const FOC_Context_t *ctx;
+  int16_t target_rpm = FOC_AI_SpeedLogToI16(gfSpeedTarget);
+  uint8_t target_nonzero = (target_rpm != 0) ? 1U : 0U;
+  uint16_t idx;
+
+  if (g_foc_test_case_fixed_speed_log_reset != 0U) {
+    FOC_TestCase_ClearFixedSpeedLog();
+    g_foc_test_case_fixed_speed_log_reset = 0U;
+    s_foc_test_case_fixed_speed_log_last_nonzero = 0U;
+  }
+
+  if (target_nonzero == 0U) {
+    g_foc_test_case_fixed_speed_log_active = 0U;
+    s_foc_test_case_fixed_speed_log_decim_count = 0U;
+    s_foc_test_case_fixed_speed_log_last_nonzero = 0U;
+    return;
+  }
+
+  if (s_foc_test_case_fixed_speed_log_last_nonzero == 0U) {
+    FOC_TestCase_StartFixedSpeedLog();
+  }
+  s_foc_test_case_fixed_speed_log_last_nonzero = 1U;
+
+  if ((g_foc_test_case_fixed_speed_log_enable == 0U) ||
+      (g_foc_test_case_fixed_speed_log_active == 0U)) {
+    return;
+  }
+
+  s_foc_test_case_fixed_speed_log_decim_count++;
+  if (s_foc_test_case_fixed_speed_log_decim_count <
+      FOC_TEST_CASE_FIXED_SPEED_LOG_DECIMATION) {
+    return;
+  }
+  s_foc_test_case_fixed_speed_log_decim_count = 0U;
+
+  idx = g_foc_test_case_fixed_speed_log_idx;
+  if (idx >= FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE) {
+    g_foc_test_case_fixed_speed_log_active = 0U;
+    g_foc_test_case_fixed_speed_log_done = 1U;
+    return;
+  }
+
+  ctx = FOC_Core_GetContextByMotor(FOC_TestCase_GetMotorId());
+  g_foc_test_case_fixed_speed_log_target_rpm[idx] = target_rpm;
+  g_foc_test_case_fixed_speed_log_actual_rpm[idx] =
+      FOC_AI_SignedRawSpeed(ctx);
+
+  idx++;
+  g_foc_test_case_fixed_speed_log_idx = idx;
+  if (idx >= FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE) {
+    g_foc_test_case_fixed_speed_log_active = 0U;
+    g_foc_test_case_fixed_speed_log_done = 1U;
+  }
+}
+
 static void FOC_TestCase_ServiceFixedSpeed(void)
 {
   FocError err;
@@ -1851,6 +1943,8 @@ static void FOC_TestCase_ServiceFixedSpeed(void)
   if (s_foc_test_case_fixed_speed_active == 0U) {
     return;
   }
+
+  FOC_TestCase_ServiceFixedSpeedLog();
 
   s_foc_test_case_fixed_speed_decim_count++;
   if (s_foc_test_case_fixed_speed_decim_count <
@@ -2078,6 +2172,9 @@ static void FOC_TestCase_ClearAutoModes(void)
   g_foc_bidir_speed_reset_stats = 0U;
   s_foc_test_case_fixed_speed_active = 0U;
   s_foc_test_case_fixed_speed_decim_count = 0U;
+  g_foc_test_case_fixed_speed_log_active = 0U;
+  s_foc_test_case_fixed_speed_log_decim_count = 0U;
+  s_foc_test_case_fixed_speed_log_last_nonzero = 0U;
   s_foc_test_case_sethybrid_sine_active = 0U;
   s_foc_test_case_sethybrid_sine_decim_count = 0U;
 }

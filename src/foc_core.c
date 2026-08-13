@@ -233,6 +233,10 @@ FOC_DEBUG_ROOT volatile uint8_t  g_foc_hall_min_time_cur_sector = 0U;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_current_angle_trim_mrad = 0;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_ccw_angle_offset_mrad =
     FOC_CCW_CONTROL_ANGLE_OFFSET_MRAD;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_motor1_cw_angle_offset_mrad =
+    FOC_MOTOR1_CW_CONTROL_ANGLE_OFFSET_MRAD;
+FOC_DEBUG_ROOT volatile int16_t  g_foc_motor1_ccw_angle_offset_mrad =
+    FOC_MOTOR1_CCW_CONTROL_ANGLE_OFFSET_MRAD;
 FOC_DEBUG_ROOT volatile int16_t  g_foc_control_angle_offset_mrad = 0;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_used_count = 0U;
 FOC_DEBUG_ROOT volatile uint32_t g_foc_hall_event_seq = 0U;
@@ -1101,7 +1105,13 @@ static void FOC_DynSpeed_ServiceMetrics(void)
  {
      float offset_rad = 0.0f;
 
-     if (s_ctx.direction == FOC_DIR_CCW) {
+     if (s_foc_core_active_motor == 1U) {
+         if (s_ctx.direction == FOC_DIR_CCW) {
+             offset_rad += (float)g_foc_motor1_ccw_angle_offset_mrad * 0.001f;
+         } else {
+             offset_rad += (float)g_foc_motor1_cw_angle_offset_mrad * 0.001f;
+         }
+     } else if (s_ctx.direction == FOC_DIR_CCW) {
          offset_rad += (float)g_foc_ccw_angle_offset_mrad * 0.001f;
      }
 

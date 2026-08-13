@@ -452,6 +452,18 @@ extern "C" {
 
 #endif
 
+#ifndef FOC_MOTOR1_CW_CONTROL_ANGLE_OFFSET_MRAD
+
+#define FOC_MOTOR1_CW_CONTROL_ANGLE_OFFSET_MRAD   (-200)
+
+#endif
+
+#ifndef FOC_MOTOR1_CCW_CONTROL_ANGLE_OFFSET_MRAD
+
+#define FOC_MOTOR1_CCW_CONTROL_ANGLE_OFFSET_MRAD  (-200)
+
+#endif
+
 #ifndef FOC_CURRENT_ANGLE_TRIM_GAIN
 
 #define FOC_CURRENT_ANGLE_TRIM_GAIN     1.0f
@@ -578,7 +590,7 @@ extern "C" {
 
 #ifndef FOC_SPEED_FILTER_ALPHA
 
-#define FOC_SPEED_FILTER_ALPHA          0.20f
+#define FOC_SPEED_FILTER_ALPHA          0.60f
 
 #endif
 
