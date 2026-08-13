@@ -1365,8 +1365,8 @@ void Foc_Init_AI(void)
   config.current_q_pid.out_max = 10.0f;
   config.current_q_pid.out_min = -10.0f;
 
-  config.speed_pid.kp = 0.0060f;
-  config.speed_pid.ki = 0.0040f;
+  config.speed_pid.kp = 0.0080f;
+  config.speed_pid.ki = 0.0050f;
   config.speed_pid.kd = 0.0f;
   config.speed_pid.out_max = config.motor.max_current_a;
   config.speed_pid.out_min = -config.motor.max_current_a;

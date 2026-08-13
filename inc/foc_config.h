@@ -307,11 +307,11 @@ extern "C" {
 #endif
 
 #ifndef FOC_SPEED_IQ_REF_SLEW_UP_A_PER_S
-#define FOC_SPEED_IQ_REF_SLEW_UP_A_PER_S    80.0f
+#define FOC_SPEED_IQ_REF_SLEW_UP_A_PER_S    200.0f
 #endif
 
 #ifndef FOC_SPEED_IQ_REF_SLEW_DOWN_A_PER_S
-#define FOC_SPEED_IQ_REF_SLEW_DOWN_A_PER_S  120.0f
+#define FOC_SPEED_IQ_REF_SLEW_DOWN_A_PER_S  300.0f
 #endif
 
 /* Low-speed Hall feedback is event-limited. Avoid aggressive reverse torque
