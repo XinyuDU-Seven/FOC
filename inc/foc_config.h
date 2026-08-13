@@ -270,7 +270,14 @@ extern "C" {
 #endif
 
 #ifndef FOC_HALL_NO_EDGE_DECAY_START_RATIO
-#define FOC_HALL_NO_EDGE_DECAY_START_RATIO  4.0f
+#define FOC_HALL_NO_EDGE_DECAY_START_RATIO  1.0f
+#endif
+
+/* Once no Hall edge has arrived for one previous Hall period, decay the
+ * filtered speed estimate on every FOC callback.  At 10 kHz, 0.99 gives an
+ * equivalent time constant of about 9.95 ms. */
+#ifndef FOC_HALL_NO_EDGE_DECAY_FACTOR
+#define FOC_HALL_NO_EDGE_DECAY_FACTOR       0.99f
 #endif
 #ifndef FOC_HALL_STOP_TIMEOUT_RATIO
 #define FOC_HALL_STOP_TIMEOUT_RATIO  8U

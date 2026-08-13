@@ -315,10 +315,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
     uint32_t now_us;
     uint32_t elapsed;
     uint32_t decay_start_us;
-    uint32_t limit_elapsed_us;
     float decay_start_f;
     float ratio = FOC_HALL_NO_EDGE_DECAY_START_RATIO;
-    float limit_rpm;
+    float decay_factor = FOC_HALL_NO_EDGE_DECAY_FACTOR;
     float speed_abs;
 
     if ((ctx->hall_sector_dt_us == 0U) ||
@@ -346,33 +345,25 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
         return 0U;
     }
 
-    limit_elapsed_us = elapsed - decay_start_us + ctx->hall_sector_dt_us;
-    if (limit_elapsed_us == 0U) {
-        return 0U;
+    if (decay_factor < 0.0f) {
+        decay_factor = 0.0f;
+    } else if (decay_factor > 1.0f) {
+        decay_factor = 1.0f;
     }
 
-    limit_rpm = 10000000.0f /
-                ((float)pole_pairs * (float)limit_elapsed_us);
-
-    if (limit_rpm < 0.0f) {
-        limit_rpm = 0.0f;
-    } else if (limit_rpm > FOC_SPEED_ESTIMATE_MAX_RPM) {
-        limit_rpm = FOC_SPEED_ESTIMATE_MAX_RPM;
-    }
-
+    /* Once overdue, the filtered speed estimate is replaced by 99% of
+     * itself once per FOC callback. */
     speed_abs = ctx->speed_filtered;
     if (speed_abs < 0.0f) {
         speed_abs = -speed_abs;
     }
-    if (limit_rpm >= speed_abs) {
-        return 0U;
-    }
+    speed_abs *= decay_factor;
 
     if (elapsed_us != 0) {
         *elapsed_us = elapsed;
     }
     if (speed_limit_rpm != 0) {
-        *speed_limit_rpm = limit_rpm;
+        *speed_limit_rpm = speed_abs;
     }
 
     return 1U;
@@ -518,6 +509,7 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      float speed_rpm = ctx->speed_filtered;
      float speed_raw_signed = ctx->speed_raw;
+     uint8_t no_edge_decay_applied = 0U;
 
      g_foc_observer_no_edge_active = 0U;
      g_foc_observer_no_edge_elapsed_us = 0U;
@@ -622,12 +614,11 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
             if (FOC_Observer_NoEdgeOverdue(ctx, pole_pairs,
                                            &no_edge_elapsed_us,
                                            &no_edge_limit_rpm) != 0U) {
-                if (speed_rpm > no_edge_limit_rpm) {
-                    speed_rpm = no_edge_limit_rpm;
-                    speed_raw_signed =
-                        FOC_Observer_PreserveRawSpeedSign(no_edge_limit_rpm,
-                                                          speed_raw_signed);
-                }
+                speed_rpm = no_edge_limit_rpm;
+                speed_raw_signed =
+                    FOC_Observer_PreserveRawSpeedSign(no_edge_limit_rpm,
+                                                      speed_raw_signed);
+                no_edge_decay_applied = 1U;
                 g_foc_observer_no_edge_active = 1U;
                 g_foc_observer_no_edge_decay_count++;
                 g_foc_observer_no_edge_elapsed_us = no_edge_elapsed_us;
@@ -675,9 +666,12 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
      ctx->speed_raw = speed_raw_signed;
 
-     ctx->speed_filtered = FOC_SPEED_FILTER_ALPHA * speed_rpm
-
-                         + (1.0f - FOC_SPEED_FILTER_ALPHA) * ctx->speed_filtered;
+     if (no_edge_decay_applied != 0U) {
+         ctx->speed_filtered = speed_rpm;
+     } else {
+         ctx->speed_filtered = FOC_SPEED_FILTER_ALPHA * speed_rpm
+                             + (1.0f - FOC_SPEED_FILTER_ALPHA) * ctx->speed_filtered;
+     }
 
  
 
