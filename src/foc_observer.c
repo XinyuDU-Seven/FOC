@@ -389,7 +389,6 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
  void FOC_Observer_Init(FOC_Context_t *ctx)
 
  {
-     uint8_t idx;
 
      ctx->hall_sector.sector       = 0;
 
@@ -406,14 +405,6 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      ctx->speed_filtered           = 0.0f;
 
      ctx->speed_ctrl_fdb           = 0.0f;
-     ctx->hall_speed_dt_sum_us     = 0U;
-     ctx->hall_speed_step_sum      = 0U;
-     ctx->hall_speed_sample_count  = 0U;
-     ctx->hall_speed_sample_index  = 0U;
-     for (idx = 0U; idx < FOC_HALL_SPEED_AVG_SECTORS; idx++) {
-         ctx->hall_speed_dt_us[idx] = 0U;
-         ctx->hall_speed_steps[idx] = 0U;
-     }
 
      ctx->timestamp_prev           = FOC_HAL_GetTimestampUs();
      ctx->hall_sector_timestamp_us = ctx->timestamp_prev;
@@ -509,40 +500,6 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
 
  }
 
-static void FOC_Observer_PushHallSpeedSample(FOC_Context_t *ctx,
-                                             uint32_t dt_us,
-                                             uint8_t sector_steps)
-{
-    uint8_t idx = ctx->hall_speed_sample_index;
-
-    if (sector_steps == 0U) {
-        sector_steps = 1U;
-    }
-    if (idx >= FOC_HALL_SPEED_AVG_SECTORS) {
-        idx = 0U;
-    }
-
-    if (ctx->hall_speed_sample_count >= FOC_HALL_SPEED_AVG_SECTORS) {
-        ctx->hall_speed_dt_sum_us -= ctx->hall_speed_dt_us[idx];
-        ctx->hall_speed_step_sum =
-            (uint8_t)(ctx->hall_speed_step_sum - ctx->hall_speed_steps[idx]);
-    } else {
-        ctx->hall_speed_sample_count++;
-    }
-
-    ctx->hall_speed_dt_us[idx] = dt_us;
-    ctx->hall_speed_steps[idx] = sector_steps;
-    ctx->hall_speed_dt_sum_us += dt_us;
-    ctx->hall_speed_step_sum =
-        (uint8_t)(ctx->hall_speed_step_sum + sector_steps);
-
-    idx++;
-    if (idx >= FOC_HALL_SPEED_AVG_SECTORS) {
-        idx = 0U;
-    }
-    ctx->hall_speed_sample_index = idx;
-}
-
  
 
  /* ===================================================================
@@ -601,24 +558,9 @@ static void FOC_Observer_PushHallSpeedSample(FOC_Context_t *ctx,
                 uint8_t sector_steps = FOC_Observer_GetSectorStepCount(ctx,
                                                                         prev_sector,
                                                                         cur_sector);
-                uint32_t avg_dt_us;
-                uint8_t avg_steps;
-                float avg_dt_sec;
-                float delta_theta_e;
+                float delta_theta_e = (FOC_PI / 3.0f) * (float)sector_steps;
 
-                FOC_Observer_PushHallSpeedSample(ctx, dt_us, sector_steps);
-
-                avg_dt_us = ctx->hall_speed_dt_sum_us;
-                avg_steps = ctx->hall_speed_step_sum;
-                if ((avg_dt_us == 0U) || (avg_steps == 0U)) {
-                    avg_dt_us = dt_us;
-                    avg_steps = sector_steps;
-                }
-
-                avg_dt_sec = (float)avg_dt_us * 1e-6f;
-                delta_theta_e = (FOC_PI / 3.0f) * (float)avg_steps;
-
-                speed_rpm = (delta_theta_e / (float)pole_pairs) / avg_dt_sec
+                speed_rpm = (delta_theta_e / (float)pole_pairs) / dt_sec
 
                           * (60.0f / FOC_2PI);
                 speed_raw_signed =
@@ -711,10 +653,6 @@ static void FOC_Observer_PushHallSpeedSample(FOC_Context_t *ctx,
             speed_rpm = 0.0f;
             ctx->speed_raw = 0.0f;
             ctx->speed_filtered = 0.0f;
-            ctx->hall_speed_dt_sum_us = 0U;
-            ctx->hall_speed_step_sum = 0U;
-            ctx->hall_speed_sample_count = 0U;
-            ctx->hall_speed_sample_index = 0U;
             if (ctx->hall_sector.sector != 0U) {
                 ctx->theta_e_predicted = ctx->hall_sector.theta_e;
             }

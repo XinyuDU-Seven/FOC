@@ -23,10 +23,6 @@
 
  #include <stdint.h>
 
-#ifndef FOC_HALL_SPEED_AVG_SECTORS
-#define FOC_HALL_SPEED_AVG_SECTORS 6U
-#endif
-
  
 
  #ifdef __cplusplus
@@ -417,12 +413,6 @@
      float                  speed_filtered;   /**< 滤波后转速 (rpm) */
 
      float                  speed_ctrl_fdb;   /**< Speed feedback used by speed PID (rpm) */
-     uint32_t               hall_speed_dt_us[FOC_HALL_SPEED_AVG_SECTORS]; /**< Hall speed average dt samples (us) */
-     uint8_t                hall_speed_steps[FOC_HALL_SPEED_AVG_SECTORS]; /**< Hall speed average sector-step samples */
-     uint32_t               hall_speed_dt_sum_us; /**< Sum of Hall speed average dt samples (us) */
-     uint8_t                hall_speed_step_sum; /**< Sum of Hall speed average sector steps */
-     uint8_t                hall_speed_sample_count; /**< Active Hall speed average sample count */
-     uint8_t                hall_speed_sample_index; /**< Next Hall speed average sample index */
 
      uint32_t               timestamp_prev;   /**< 上一次扇区跳变时间戳 (us) */
 

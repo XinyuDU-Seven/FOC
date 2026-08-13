@@ -2573,9 +2573,6 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              speed_iq_ref =
                  FOC_LimitLowSpeedBrakingIq(speed_iq_ref, speed_ref_ctrl);
-             speed_iq_ref = FOC_CLAMP(speed_iq_ref,
-                                       s_ctx.pid_speed.out_min,
-                                       s_ctx.pid_speed.out_max);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
                                       s_ctx.pid_speed.out_min,
                                       s_ctx.pid_speed.out_max);
