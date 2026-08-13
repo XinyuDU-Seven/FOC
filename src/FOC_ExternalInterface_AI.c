@@ -132,6 +132,16 @@ FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_fixed_speed_log_idx = 0U;
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_fixed_speed_log_target_rpm[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_fixed_speed_log_ctrl_ref_rpm[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_fixed_speed_log_actual_rpm[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_fixed_speed_log_filtered_rpm[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_fixed_speed_log_iq_ref_mA[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_fixed_speed_log_iq_mA[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_fixed_speed_log_no_edge_limit_rpm[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_fixed_speed_log_sector_no_change[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_fixed_speed_log_flags[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_fixed_speed_log_hall_dt_us[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_fixed_speed_log_no_edge_elapsed_us[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_fixed_speed_log_hall_event_seq[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
+FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_fixed_speed_log_hall_debug[FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile uint16_t g_foc_test_case_first_cycle_log_t_ms[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_first_cycle_log_target_rpm[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
 FOC_AI_DEBUG_ROOT volatile int16_t  g_foc_test_case_first_cycle_log_actual_rpm[FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE];
@@ -1869,6 +1879,16 @@ static void FOC_TestCase_ClearFixedSpeedLog(void)
     g_foc_test_case_fixed_speed_log_target_rpm[idx] = 0;
     g_foc_test_case_fixed_speed_log_ctrl_ref_rpm[idx] = 0;
     g_foc_test_case_fixed_speed_log_actual_rpm[idx] = 0;
+    g_foc_test_case_fixed_speed_log_filtered_rpm[idx] = 0;
+    g_foc_test_case_fixed_speed_log_iq_ref_mA[idx] = 0;
+    g_foc_test_case_fixed_speed_log_iq_mA[idx] = 0;
+    g_foc_test_case_fixed_speed_log_no_edge_limit_rpm[idx] = 0U;
+    g_foc_test_case_fixed_speed_log_sector_no_change[idx] = 0U;
+    g_foc_test_case_fixed_speed_log_flags[idx] = 0U;
+    g_foc_test_case_fixed_speed_log_hall_dt_us[idx] = 0U;
+    g_foc_test_case_fixed_speed_log_no_edge_elapsed_us[idx] = 0U;
+    g_foc_test_case_fixed_speed_log_hall_event_seq[idx] = 0U;
+    g_foc_test_case_fixed_speed_log_hall_debug[idx] = 0U;
   }
 }
 
@@ -1887,6 +1907,7 @@ static void FOC_TestCase_ServiceFixedSpeedLog(void)
   int16_t target_rpm = FOC_AI_SpeedLogToI16(gfSpeedTarget);
   uint8_t target_nonzero = (target_rpm != 0) ? 1U : 0U;
   uint16_t idx;
+  uint16_t flags = 0U;
 
   if (g_foc_test_case_fixed_speed_log_reset != 0U) {
     FOC_TestCase_ClearFixedSpeedLog();
@@ -1926,11 +1947,51 @@ static void FOC_TestCase_ServiceFixedSpeedLog(void)
   }
 
   ctx = FOC_Core_GetContextByMotor(FOC_TestCase_GetMotorId());
+
+  if (g_foc_observer_no_edge_active != 0U) {
+    flags |= 0x0001U;
+  }
+  if (g_foc_vbus_brake_active != 0U) {
+    flags |= 0x0002U;
+  }
+  if (ctx->fault != FOC_FAULT_NONE) {
+    flags |= 0x0004U;
+  }
+  if (ctx->direction == FOC_DIR_CCW) {
+    flags |= 0x0008U;
+  }
+  if (g_foc_speed_drop_fault_count != 0U) {
+    flags |= 0x0010U;
+  }
+  if (FOC_FABS((float)target_rpm) <=
+      (float)g_foc_sethybrid_speed_zero_deadband_rpm) {
+    flags |= 0x0020U;
+  }
+
   g_foc_test_case_fixed_speed_log_target_rpm[idx] = target_rpm;
   g_foc_test_case_fixed_speed_log_ctrl_ref_rpm[idx] =
       FOC_AI_SpeedLogToI16(ctx->speed_ref_ctrl);
   g_foc_test_case_fixed_speed_log_actual_rpm[idx] =
       FOC_AI_SignedRawSpeed(ctx);
+  g_foc_test_case_fixed_speed_log_filtered_rpm[idx] =
+      FOC_AI_SignedSpeedByRawDirection(ctx, ctx->speed_ctrl_fdb);
+  g_foc_test_case_fixed_speed_log_iq_ref_mA[idx] =
+      FOC_AI_SpeedLogToI16(FOC_AI_SignedIqRef(ctx) * 1000.0f);
+  g_foc_test_case_fixed_speed_log_iq_mA[idx] =
+      FOC_AI_SpeedLogToI16(ctx->i_dq.q * 1000.0f);
+  g_foc_test_case_fixed_speed_log_no_edge_limit_rpm[idx] =
+      g_foc_observer_no_edge_speed_limit_rpm;
+  g_foc_test_case_fixed_speed_log_sector_no_change[idx] =
+      FOC_TestCase_U32ToU16(ctx->sector_no_change_count);
+  g_foc_test_case_fixed_speed_log_flags[idx] = flags;
+  g_foc_test_case_fixed_speed_log_hall_dt_us[idx] =
+      FOC_TestCase_U32ToU16(ctx->hall_sector_dt_us);
+  g_foc_test_case_fixed_speed_log_no_edge_elapsed_us[idx] =
+      FOC_TestCase_U32ToU16(g_foc_observer_no_edge_elapsed_us);
+  g_foc_test_case_fixed_speed_log_hall_event_seq[idx] =
+      (uint16_t)g_foc_hall_event_seq;
+  g_foc_test_case_fixed_speed_log_hall_debug[idx] =
+      FOC_TestCase_PackHallDebug(ctx);
 
   idx++;
   g_foc_test_case_fixed_speed_log_idx = idx;
