@@ -32,7 +32,7 @@ extern volatile uint8_t  g_foc_hall_apply_reject_reason;
 #define FOC_DYN_SPEED_LOG_SIZE 128U
 #define FOC_SETHYBRID_SPEED_LOG_SIZE       2500U
 #define FOC_SETHYBRID_SPEED_LOG_DECIMATION 10U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE 1800U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_SIZE 3000U
 
 #define FOC_TEST_CASE_STOP              0U
 #define FOC_TEST_CASE_FIXED_SPEED       1U
@@ -46,9 +46,9 @@ extern volatile uint8_t  g_foc_hall_apply_reject_reason;
 #define FOC_TEST_CASE_FIXED_SPEED_DECIMATION      10U
 #define FOC_TEST_CASE_FIXED_SPEED_LOG_SIZE        2000U
 #define FOC_TEST_CASE_FIXED_SPEED_LOG_DECIMATION  10U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_START_MS    1250U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_END_MS      1600U
-#define FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION  2U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_START_MS    0U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_END_MS      3000U
+#define FOC_TEST_CASE_FIRST_CYCLE_LOG_DECIMATION  10U
 
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_enable = 0U;
 FOC_AI_DEBUG_ROOT volatile uint8_t  g_foc_dyn_speed_reverse = 0U;
@@ -1366,7 +1366,7 @@ void Foc_Init_AI(void)
   config.current_q_pid.out_min = -10.0f;
 
   config.speed_pid.kp = 0.0090f;
-  config.speed_pid.ki = 0.0060f;
+  config.speed_pid.ki = 0.0090f;
   config.speed_pid.kd = 0.0f;
   config.speed_pid.out_max = config.motor.max_current_a;
   config.speed_pid.out_min = -config.motor.max_current_a;
