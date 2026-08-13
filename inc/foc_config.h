@@ -299,6 +299,21 @@ extern "C" {
 #define FOC_SPEED_REF_RAMP_DOWN_RPM_PER_S   4900.0f
 #endif
 
+/* Slew-rate limit for speed-loop iq_ref. Hall speed feedback is quantized,
+ * so this prevents large torque jumps when a new Hall edge updates speed.
+ */
+#ifndef FOC_SPEED_IQ_REF_SLEW_ENABLE
+#define FOC_SPEED_IQ_REF_SLEW_ENABLE        1
+#endif
+
+#ifndef FOC_SPEED_IQ_REF_SLEW_UP_A_PER_S
+#define FOC_SPEED_IQ_REF_SLEW_UP_A_PER_S    80.0f
+#endif
+
+#ifndef FOC_SPEED_IQ_REF_SLEW_DOWN_A_PER_S
+#define FOC_SPEED_IQ_REF_SLEW_DOWN_A_PER_S  120.0f
+#endif
+
 /* Low-speed Hall feedback is event-limited. Avoid aggressive reverse torque
  * when the speed loop is slowing toward zero on stale low-speed estimates.
  */

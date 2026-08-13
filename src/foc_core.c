@@ -674,6 +674,32 @@ static float FOC_LimitLowSpeedBrakingIq(float iq_ref, float speed_ref_ctrl)
     return iq_ref;
 }
 
+static float FOC_LimitSpeedIqSlew(float iq_ref, float dt)
+{
+#if FOC_SPEED_IQ_REF_SLEW_ENABLE
+    float delta = iq_ref - s_ctx.iq_ref;
+    float rate = (delta >= 0.0f)
+               ? FOC_SPEED_IQ_REF_SLEW_UP_A_PER_S
+               : FOC_SPEED_IQ_REF_SLEW_DOWN_A_PER_S;
+    float step;
+
+    if ((rate <= 0.0f) || (dt <= 0.0f)) {
+        return iq_ref;
+    }
+
+    step = rate * dt;
+    if (FOC_FABS(delta) <= step) {
+        return iq_ref;
+    }
+
+    return (delta > 0.0f) ? (s_ctx.iq_ref + step)
+                          : (s_ctx.iq_ref - step);
+#else
+    (void)dt;
+    return iq_ref;
+#endif
+}
+
 static uint8_t FOC_DynSpeed_Near(float a, float b)
 {
     return (FOC_FABS(a - b) < 0.5f) ? 1U : 0U;
@@ -2573,6 +2599,10 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
              speed_iq_ref = FOC_LimitRegenBrakingIq(speed_iq_ref);
              speed_iq_ref =
                  FOC_LimitLowSpeedBrakingIq(speed_iq_ref, speed_ref_ctrl);
+             speed_iq_ref = FOC_CLAMP(speed_iq_ref,
+                                       s_ctx.pid_speed.out_min,
+                                       s_ctx.pid_speed.out_max);
+             speed_iq_ref = FOC_LimitSpeedIqSlew(speed_iq_ref, speed_dt);
              s_ctx.iq_ref = FOC_CLAMP(speed_iq_ref,
                                       s_ctx.pid_speed.out_min,
                                       s_ctx.pid_speed.out_max);
