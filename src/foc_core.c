@@ -2412,6 +2412,8 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
 
       * PredictAngle 检测不到扇区跳变，无法同步角度 */
 
+     FOC_UpdateSpeedRefRamp(control_period_us);
+
      if (s_recovery_zero_vector_cycles > 0U) {
          float theta_recovery = FOC_Observer_PredictAngle(&s_ctx, observer_dt,
                                                           s_config.motor.pole_pairs);
@@ -2459,7 +2461,6 @@ static uint8_t FOC_ApplyHallSector(const FOC_HallSector_t *candidate,
      s_ctx.speed_fdb = FOC_Observer_CalcSpeed(&s_ctx, s_ctx.theta_e,
 
                                                observer_dt, s_config.motor.pole_pairs);
-     FOC_UpdateSpeedRefRamp(control_period_us);
      FOC_UpdateSpeedControlFeedback();
 
      if (s_ctx.sector_no_change_count >= FOC_SECTOR_NO_CHANGE_THRESHOLD) {

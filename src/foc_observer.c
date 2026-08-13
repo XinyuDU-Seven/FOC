@@ -734,9 +734,9 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
      }
      /* Always extrapolate by the real control interval first. */
      if ((no_edge_overdue == 0U) &&
-         (ctx->speed_ref > 0.0f) &&
+         (ctx->speed_ref_ctrl > 0.0f) &&
          (speed_for_predict < FOC_STARTUP_PREDICT_MAX_RPM)) {
-         float startup_target = ctx->speed_ref;
+         float startup_target = ctx->speed_ref_ctrl;
          float ramp_step = FOC_STARTUP_PREDICT_RAMP_RPM_PER_S * dt;
 
          if (startup_target > FOC_STARTUP_PREDICT_MAX_RPM) {
@@ -783,7 +783,10 @@ static uint8_t FOC_Observer_NoEdgeOverdue(const FOC_Context_t *ctx,
          float target = ctx->hall_sector.theta_e;
          float sync_factor = FOC_ANGLE_SYNC_FACTOR;
          float sync_step_max = FOC_ANGLE_SYNC_STEP_MAX_RAD;
-         float speed_err = FOC_FABS(ctx->speed_ref - ctx->speed_filtered);
+         float sync_speed_ref = (ctx->speed_ref_ctrl > 0.0f)
+                              ? ctx->speed_ref_ctrl
+                              : ctx->speed_ref;
+         float speed_err = FOC_FABS(sync_speed_ref - ctx->speed_filtered);
          float diff_abs;
          float sync_step;
 
